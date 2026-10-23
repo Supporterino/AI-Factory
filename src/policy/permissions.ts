@@ -71,7 +71,17 @@ export const GRAPH_QUERY_COMMANDS = [
   "graphify god-nodes*",
 ] as const;
 
-const READ_ONLY_GIT = ["git status*", "git diff*", "git log*", "git show*", "git blame *"] as const;
+const READ_ONLY_GIT = [
+  "git status*",
+  "git diff*",
+  "git log*",
+  "git show*",
+  "git blame *",
+  // The contract reviewer reads several repos from the workspace root.
+  "git -C * diff*",
+  "git -C * log*",
+  "git -C * show*",
+] as const;
 
 /**
  * Coarse shell denies. The plugin's parsed blocklist (slice 6) is the precise guard;

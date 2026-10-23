@@ -99,6 +99,12 @@ export const RunState = z.strictObject({
     .record(z.string(), z.strictObject({ passed: z.boolean(), output: z.string() }))
     .default({}),
   /** Provisional pointer bump commit (submodules layout). */
+  /** Contract fix rounds used, whether the cross-repo review ran, last gate results. */
+  contractRounds: z.int().min(0).default(0),
+  contractReviewed: z.boolean().default(false),
+  contractResults: z
+    .record(z.string(), z.strictObject({ passed: z.boolean(), summary: z.string() }))
+    .default({}),
   pointerCommit: z.string().optional(),
   reportPath: z.string().optional(),
 });

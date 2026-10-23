@@ -8,6 +8,7 @@ import { loadRun } from "../src/state/run.ts";
 import { factoryScript, type ScriptedTask } from "./fixtures/factory-script.ts";
 import { ScriptedRuntime } from "./fixtures/scripted-runtime.ts";
 import {
+  BACKEND_FILES,
   createSingleRepoFixture,
   createSubmoduleFixture,
   type Fixture,
@@ -25,7 +26,8 @@ const SUB_TASKS: ScriptedTask[] = [
     deps: [],
     touches: ["api/openapi.yaml"],
     file: "api/openapi.yaml",
-    content: "openapi: 3.0.3\ninfo: {title: Backend API, version: 1.1.0}\npaths: {}\n",
+    // Compatible: same paths, new version.
+    content: (BACKEND_FILES["api/openapi.yaml"] ?? "").replace("version: 1.0.0", "version: 1.1.0"),
   },
   {
     id: "1.2",

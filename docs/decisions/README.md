@@ -23,3 +23,4 @@ Short ADRs for every choice the build prompt did not lock. Format: Context / Dec
 | [0017](0017-scheduler-and-change-lifecycle.md)  | Scheduler semantics and the change lifecycle                        |
 | [0018](0018-enforcement-layers.md)              | Enforcement layers (plugin, CLI, git)                               |
 | [0019](0019-pipeline.md)                        | Pipeline decisions                                                  |
+| [0020](0020-contract-gate.md)                   | Contract gate and contract review                                   |

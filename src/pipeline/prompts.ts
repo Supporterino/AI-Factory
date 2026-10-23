@@ -154,3 +154,16 @@ export function findingPack(f: Finding): string {
 - Impact if skipped: ${f.impact}
 ${f.file ? `- Location: ${f.file}${f.line ? `:${f.line}` : ""}` : ""}`;
 }
+
+export function contractReviewPrompt(input: {
+  contracts: readonly { key: string; summary: string }[];
+  diffs: readonly string[];
+}): string {
+  return `One cross-repo review of the contracts this change touches. The deterministic contract gate already ran:
+${input.contracts.map((c) => c.summary).join("\n")}
+
+Read the provider and consumer changes (run these from the workspace root):
+${input.diffs.map((d) => `- \`${d}\``).join("\n")}
+
+Report only real mismatches between providers and consumers as findings, with \`file\` as a workspace-relative path. Use \`task: "contract-review"\`.`;
+}

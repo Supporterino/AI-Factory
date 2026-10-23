@@ -106,10 +106,10 @@ export async function drive(p: Pipeline, firstId: string): Promise<DriveOutcome>
       case "contracts": {
         const result = await contractPhase(p, id);
         if (!result.ok) {
-          await setPhase(p, id, "paused", `contract check failed: ${result.issues.join("; ")}`);
+          await setPhase(p, id, "paused", "the contract gate still fails after a fix round");
           return { id, phase: "paused", detail: result.issues.join("\n") };
         }
-        await setPhase(p, id, "full-suite");
+        await setPhase(p, id, result.added > 0 ? "implementing" : "full-suite");
         continue;
       }
       case "full-suite": {
