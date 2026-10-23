@@ -4,14 +4,14 @@ Checked on 2026-10-23 on macOS (arm64). Each fact is tagged with how it was veri
 **[S]** source code at the given tag, **[D]** official docs, **[H]** local `--help`, **[X]** tested in a spike.
 Raw notes with more detail are in [`notes/`](notes/). Pinned versions live in [`src/versions.ts`](../../src/versions.ts).
 
-| Tool | Installed | Latest | Factory pin | Primary sources |
-|---|---|---|---|---|
-| opencode v2 | 2.1.2 | 2.1.3 (2026-10-23) | `>=2.1.2 <2.2.0`, tested 2.1.2 | github.com/anomalyco/opencode @ `v2.1.2` (a517687f), opencode.ai/v2/docs |
-| OpenSpec | 1.10.0 | 1.14.3 | `>=1.10.0 <2`, tested 1.10.0 + 1.14.3 | github.com/Fission-AI/OpenSpec @ `v1.10.0`, npm `@fission-ai/openspec` |
-| Graphify | 0.9.93 | 0.9.94 | `>=0.9.93 <0.10`, tested 0.9.93 | PyPI `graphifyy`, github.com/Graphify-Labs/graphify, docs.graphify.com |
-| Ponytail | n/a | v5.3.2 | `v5.3.2` @ `16352ac2…` | github.com/DietrichGebert/ponytail, npm `@dietrichgebert/ponytail` |
-| git | 2.54.0 | | `>=2.31` (needs `GIT_CONFIG_COUNT`) | git-scm docs, spikes |
-| Bun | 1.3.11 | | `>=1.3.0` | |
+| Tool        | Installed | Latest             | Factory pin                           | Primary sources                                                          |
+| ----------- | --------- | ------------------ | ------------------------------------- | ------------------------------------------------------------------------ |
+| opencode v2 | 2.1.2     | 2.1.3 (2026-10-23) | `>=2.1.2 <2.2.0`, tested 2.1.2        | github.com/anomalyco/opencode @ `v2.1.2` (a517687f), opencode.ai/v2/docs |
+| OpenSpec    | 1.10.0    | 1.14.3             | `>=1.10.0 <2`, tested 1.10.0 + 1.14.3 | github.com/Fission-AI/OpenSpec @ `v1.10.0`, npm `@fission-ai/openspec`   |
+| Graphify    | 0.9.93    | 0.9.94             | `>=0.9.93 <0.10`, tested 0.9.93       | PyPI `graphifyy`, github.com/Graphify-Labs/graphify, docs.graphify.com   |
+| Ponytail    | n/a       | v5.3.2             | `v5.3.2` @ `16352ac2…`                | github.com/DietrichGebert/ponytail, npm `@dietrichgebert/ponytail`       |
+| git         | 2.54.0    |                    | `>=2.31` (needs `GIT_CONFIG_COUNT`)   | git-scm docs, spikes                                                     |
+| Bun         | 1.3.11    |                    | `>=1.3.0`                             |                                                                          |
 
 > **opencode.ai/docs is still the V1 documentation.** V2 docs live at **opencode.ai/v2/docs**. V1 plugins do not load in V2 [X].
 
@@ -20,18 +20,22 @@ Raw notes with more detail are in [`notes/`](notes/). Pinned versions live in [`
 ## 1. opencode v2 (2.1.2)
 
 ### Install
+
 - `npm install --global @opencode/cli` or the curl installer, which replaces the V1 binary [D v2/docs]. The npm package `opencode-ai` is the **V1** line (`latest` = 1.19.4); never use it.
 
 ### Config [S `packages/schema/src/config.ts`, D v2/docs/config]
+
 - Files: `opencode.json` / `opencode.jsonc`. Precedence: global `~/.config/opencode/` < project files (farthest → closest) < `.opencode/` < system/managed. `$schema`: `https://opencode.ai/config.json`.
 - V2 keys the factory uses: `model`, `default_agent`, `update` (`"disable"`), `permissions`, `agents`, `plugins`, `instructions`, `skills`, `commands`, `mcp{timeout,servers}`, `providers`, `formatter`, `experimental`.
 - V1 keys (`agent`, `permission`, `tools`, `plugin`, `provider`, `autoupdate` …) are converted in memory [S `normalize.ts`, X]. **The factory writes V2 keys only.**
 
 ### Agents [S `config/plugin/agent.ts`, D, X]
+
 - `.opencode/agents/<id>.md`. Frontmatter: `description`, `mode` (`primary|subagent|all`), `model` (`provider/model#variant`), `permissions`, `steps`, `hidden`, `disabled`, `color`, `request{headers,body}`. The body is the system prompt.
 - There is no `tools` key: tools are removed by a final `{action:<tool>, resource:"*", effect:"deny"}` rule [S `tool.ts` `whollyDisabled`].
 
 ### Permissions [S, D v2/docs/permissions]
+
 - `permissions: [{ action, resource, effect: "allow"|"ask"|"deny" }]`. **The last matching rule wins.** No match means `ask`. A deny on any resource denies the whole call.
 - Layering: base defaults → built-in agent → global → agent → **session** (`session.create({permissions})`).
 - Actions: `shell`, `edit` (edit + write + patch), `read`, `glob`, `grep`, `subagent`, `webfetch`, `websearch`, `skill`, `question`, `external_directory`, `<mcp>_<tool>`, `execute`.
@@ -41,6 +45,7 @@ Raw notes with more detail are in [`notes/`](notes/). Pinned versions live in [`
 - Headless `ask`: `opencode run` auto-rejects and the model continues. `--auto` approves; deny is always enforced [S `cli/src/run/noninteractive.ts`].
 
 ### Plugin API [S `core/src/plugin/hooks.ts`, D v2/docs/build_plugins]
+
 - Loaded from `.opencode/plugins/` and the config `plugins` list. Shape: `export default Plugin.define({ id, setup(ctx) })` from `@opencode/plugin`.
 - Hooks:
   - `tool.execute.before`, `tool.execute.after`
@@ -58,6 +63,7 @@ Raw notes with more detail are in [`notes/`](notes/). Pinned versions live in [`
 - Only the `experimental.*` hooks are marked unstable, but 2.1.0 deliberately broke plugin/SDK contracts, so the API is young (**gap G1**).
 
 ### Headless and server [H, S, X]
+
 - `opencode run [--standalone] [--server <url>] [-s <id>] [-c] [--fork] [-m p/m] [--agent a] [--format json] [-f file] [--title] [--thinking] [--auto]`. Exit codes: 0 ok, 1 error, 130 SIGINT [X].
 - JSON events: `step_start`, `text`, `reasoning`, `tool_use`, `step_finish` (`part.tokens`, `part.cost`), `error`.
 - `opencode serve [--hostname] [--port] [--cors] [--stdio]` requires `OPENCODE_PASSWORD` (HTTP Basic, user `opencode`); without it, requests get 401 [X].
@@ -71,11 +77,13 @@ Raw notes with more detail are in [`notes/`](notes/). Pinned versions live in [`
   - permission reply: `POST session/{id}/permission/{req}/reply`
 
 ### Parallel sessions [S, X]
+
 - One server runs many concurrent sessions, each with its own `location.directory` [X].
 - All processes share the SQLite DB `~/.local/share/opencode/opencode.db` (WAL). `OPENCODE_DB` relocates it.
 - **Risk (code-read):** a `--standalone` server resumes every "in progress" session it is not running, so concurrent standalone processes can hijack each other's sessions. Hence the factory's concurrency model in §6.
 
 ### Subagents, usage, caching
+
 - Subagents use the `subagent` tool `{agent, description, prompt, model?, background?}`. Depth comes from `experimental.subagent_depth` (default 1). Same-step calls may run concurrently [S].
 - Usage: `tokens{input, output, reasoning, cache{read,write}}` + `cost` (USD). It appears in `session.step.ended` / `session.usage.updated` events, on the session object and in `opencode stats --json` [S, X shape].
 - Caching [S `packages/ai/src/cache-policy.ts`]:
@@ -84,6 +92,7 @@ Raw notes with more detail are in [`notes/`](notes/). Pinned versions live in [`
   - **So static content must sit in the agent body (the first system part) to share a cache prefix across worktrees.**
 
 ### Skills, commands, AGENTS.md
+
 - Skills: `.opencode/skills/<id>/SKILL.md` (also `.claude/skills`, `.agents/skills`). Commands: `.opencode/commands/<name>.md` with `$ARGUMENTS` [X].
 - AGENTS.md: global, then each AGENTS.md from cwd upward. Nested files load when reading in that area. **CLAUDE.md is no longer read.**
 
@@ -92,17 +101,17 @@ Raw notes with more detail are in [`notes/`](notes/). Pinned versions live in [`
 Sources: local `--help` for both versions; the installed `dist/` of 1.10.0; `docs/cli.md` @ v1.10.0 (exit codes ~L1272, env vars L1283-1293); spikes on 1.10.0 and 1.14.3 with an isolated `XDG_CONFIG_HOME`.
 
 ### Commands the factory relies on
-| Purpose | Command |
-|---|---|
-| Install opencode files | `openspec init --tools opencode --profile core --no-animation <path> </dev/null` |
-| Validate | `openspec validate <id> --strict --json` (also `--all --changes --specs`) |
-| Task list / progress | `openspec instructions apply --change <id> --json` → `tasks[{id,description,done,line}]`, `progress{total,complete,remaining}` |
-| Artifact status | `openspec status --change <id> --json` → `artifacts[{id,status:done\|ready\|blocked}]`, `isComplete` |
-| Artifact instructions | `openspec instructions <artifact> --change <id> --json` (includes `context`, `rules`) |
-| List | `openspec list --json` → `changes[{name,completedTasks,totalTasks,status}]` |
-| Archive | `openspec archive <id> --yes --json` → `{archive:{archivedAs,specsUpdated,totals}}` |
-| Refresh tool files | `openspec update <path> [--force]` |
 
+| Purpose                | Command                                                                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Install opencode files | `openspec init --tools opencode --profile core --no-animation <path> </dev/null`                                               |
+| Validate               | `openspec validate <id> --strict --json` (also `--all --changes --specs`)                                                      |
+| Task list / progress   | `openspec instructions apply --change <id> --json` → `tasks[{id,description,done,line}]`, `progress{total,complete,remaining}` |
+| Artifact status        | `openspec status --change <id> --json` → `artifacts[{id,status:done\|ready\|blocked}]`, `isComplete`                           |
+| Artifact instructions  | `openspec instructions <artifact> --change <id> --json` (includes `context`, `rules`)                                          |
+| List                   | `openspec list --json` → `changes[{name,completedTasks,totalTasks,status}]`                                                    |
+| Archive                | `openspec archive <id> --yes --json` → `{archive:{archivedAs,specsUpdated,totals}}`                                            |
+| Refresh tool files     | `openspec update <path> [--force]`                                                                                             |
 - Exit codes: 0 ok, 1 any error, including validation failure [D, X]. **Quirk:** `status --json` without `--change` exits 0 with an error payload.
 - Validate JSON: `{items:[{id,type,valid,issues:[{level,path,line?,message}]}],summary:{totals},version:"1.0"}` [X].
 - Non-interactive: `OPEN_SPEC_INTERACTIVE=0`, `CI`, or non-TTY stdin.
@@ -111,6 +120,7 @@ Sources: local `--help` for both versions; the installed `dist/` of 1.10.0; `doc
 - **`init` strips `<!-- OPENSPEC:START -->…<!-- OPENSPEC:END -->` blocks from root AGENTS.md/CLAUDE.md** [S `legacy-cleanup.js`], so the factory uses its own markers.
 
 ### Layout and format [S, X]
+
 - `openspec/changes/<id>/{.openspec.yaml, proposal.md, design.md, tasks.md, specs/<cap>/spec.md}`. Id regex: `^[a-z0-9]+(?:-[a-z0-9]+)*$`. Archive path: `openspec/changes/archive/YYYY-MM-DD-<id>/`.
 - Delta specs:
   - Section headings: `## ADDED|MODIFIED|REMOVED|RENAMED Requirements`.
@@ -126,16 +136,16 @@ Sources: local `--help` for both versions; the installed `dist/` of 1.10.0; `doc
 - Custom schemas (`openspec/schemas/<name>/schema.yaml`) work but are marked **experimental**; the factory uses the built-in `spec-driven` schema.
 
 ### Telemetry
+
 - PostHog (command and version) to `edge.openspec.dev`, plus an npm update check.
 - The factory sets `OPENSPEC_TELEMETRY=0 DO_NOT_TRACK=1 OPENSPEC_NO_UPDATE_CHECK=1 OPENSPEC_NO_COMPLETIONS=1 OPEN_SPEC_INTERACTIVE=0 NO_COLOR=1` on every call.
 
 ## 3. Graphify (0.9.93)
 
 Sources: installed source `graphify/{__main__,cli,detect,cache,install,serve}.py`; `graphify --help`; docs.graphify.com `/reference/configuration`, `/guides/incremental-updates`; spikes.
-
 - **Install:** `uv tool install graphifyy==<ver>` (Python ≥ 3.10). The MCP server needs the `[mcp]` extra.
 - **Mandatory env on every call:** `GRAPHIFY_NO_AUTO_REFRESH=1 GRAPHIFY_BACKEND=none`.
-  - Without the first, *every* command rewrites installed skills and plugins in `$HOME` and the cwd [S `__main__.py _refresh_stale_skills`]. This happened during research; see the report.
+  - Without the first, _every_ command rewrites installed skills and plugins in `$HOME` and the cwd [S `__main__.py _refresh_stale_skills`]. This happened during research; see the report.
   - The second disables all LLM steps, including a `claude -p` fallback for community labels.
 - **Build or update:** `graphify update <ws>` does a full build if no graph exists, otherwise an incremental one (mtime + sha256 manifest, AST cache). It writes `graphify-out/{graph.json, GRAPH_REPORT.md, graph.html, manifest.json, cache/}`. No LLM is used for code; it works with the network denied [X].
   - `--force` lets the graph shrink after deletions.
@@ -166,7 +176,6 @@ Sources: installed source `graphify/{__main__,cli,detect,cache,install,serve}.py
 ## 4. Ponytail (v5.3.2)
 
 Sources: repo at tag `v5.3.2` (commit `16352ac229eb08a9598dcae48fe9f2b342567d86`, 2026-10-17); npm `@dietrichgebert/ponytail@5.3.2` (same `gitHead`, byte-identical files, no binaries). License: MIT, "Copyright (c) 2026 DietrichGebert".
-
 - **Vendored files (5):**
   - `AGENTS.md` (32 lines, ~680 tokens)
   - `LICENSE`
@@ -221,17 +230,17 @@ Verified: one server with many sessions in different directories [X], server aut
 
 ## 7. Known gaps and the factory's fallback
 
-| # | Gap | Fallback enforced by the factory |
-|---|---|---|
-| G1 | The V2 plugin API is young (contracts broke in 2.1.0); the SDK is new | Exact minor pin; `doctor` refuses versions outside the range; every plugin rule is duplicated by a CLI check (edit scope = post-session `git diff` scope audit; shell blocklist = git env + hooks) |
-| G2 | `lsp` is accepted but nothing runs; `formatter` is off by default | Formatting and type checks are hard gates run by the CLI, never left to the runtime |
-| G3 | Agent `request` (temperature, headers) is accepted but not sent | No per-role temperature in v1; models per role still work via `model` |
-| G4 | `share` is a no-op; `update` auto-upgrade | Config sets `update: "disable"`; the factory pins and upgrades via `ai-factory update --tools` |
-| G5 | `external_directory` is allowed by default | Every agent gets `{external_directory,"*",deny}`; the plugin also rejects absolute paths outside the session dir |
-| G6 | Headless `ask` auto-rejects | No `ask` rules: every rule is allow or deny, so behaviour is deterministic |
-| G7 | OpenSpec `validate` ignores `proposal.md`; `archive --yes` ignores unchecked tasks | The CLI checks proposal headings and requires every task `done` in run state before archive |
-| G8 | OpenSpec `init` depends on global config and strips `OPENSPEC` markers | Private `XDG_CONFIG_HOME` + `--profile core`; factory markers are `<!-- ai-factory:start -->` |
-| G9 | Graphify auto-refreshes files in `$HOME`; can shell out to `claude -p` | `GRAPHIFY_NO_AUTO_REFRESH=1 GRAPHIFY_BACKEND=none` on every call; `doctor` checks the exec wrapper sets them |
-| G10 | `pre-push` is bypassable (`--no-verify`, husky `core.hooksPath`) | Env-injected `pushInsteadOf` block + blocklist + hook (installed only when hooksPath is untracked) |
-| G11 | Graphify update takes 40–60 s on ~1M LOC | Updates are serialised and coalesced: merges that land during a running update are covered by the next one; tasks start only after the update that covers their deps finishes (ADR-0007) |
-| G12 | Ponytail levels need its runtime | Static `AGENTS.md` + selected level row |
+| #   | Gap                                                                               | Fallback enforced by the factory                                                                                                                                                                   |
+| --- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G1  | The V2 plugin API is young (contracts broke in 2.1.0); the SDK is new             | Exact minor pin; `doctor` refuses versions outside the range; every plugin rule is duplicated by a CLI check (edit scope = post-session `git diff` scope audit; shell blocklist = git env + hooks) |
+| G2  | `lsp` is accepted but nothing runs; `formatter` is off by default                 | Formatting and type checks are hard gates run by the CLI, never left to the runtime                                                                                                                |
+| G3  | Agent `request` (temperature, headers) is accepted but not sent                   | No per-role temperature in v1; models per role still work via `model`                                                                                                                              |
+| G4  | `share` is a no-op; `update` auto-upgrade                                         | Config sets `update: "disable"`; the factory pins and upgrades via `ai-factory update --tools`                                                                                                     |
+| G5  | `external_directory` is allowed by default                                        | Every agent gets `{external_directory,"*",deny}`; the plugin also rejects absolute paths outside the session dir                                                                                   |
+| G6  | Headless `ask` auto-rejects                                                       | No `ask` rules: every rule is allow or deny, so behaviour is deterministic                                                                                                                         |
+| G7  | OpenSpec`validate` ignores `proposal.md`; `archive --yes` ignores unchecked tasks | The CLI checks proposal headings and requires every task `done` in run state before archive                                                                                                        |
+| G8  | OpenSpec`init` depends on global config and strips `OPENSPEC` markers             | Private `XDG_CONFIG_HOME` + `--profile core`; factory markers are `<!-- ai-factory:start -->`                                                                                                      |
+| G9  | Graphify auto-refreshes files in `$HOME`; can shell out to `claude -p`            | `GRAPHIFY_NO_AUTO_REFRESH=1 GRAPHIFY_BACKEND=none` on every call; `doctor` checks the exec wrapper sets them                                                                                       |
+| G10 | `pre-push` is bypassable (`--no-verify`, husky `core.hooksPath`)                  | Env-injected `pushInsteadOf` block + blocklist + hook (installed only when hooksPath is untracked)                                                                                                 |
+| G11 | Graphify update takes 40–60 s on ~1M LOC                                          | Updates are serialised and coalesced: merges that land during a running update are covered by the next one; tasks start only after the update that covers their deps finishes (ADR-0007)           |
+| G12 | Ponytail levels need its runtime                                                  | Static `AGENTS.md` + selected level row                                                                                                                                                            |

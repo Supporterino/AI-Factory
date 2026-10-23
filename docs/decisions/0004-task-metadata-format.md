@@ -5,11 +5,13 @@
 **Decision.**
 ```markdown
 ## 1. Backend
+
 - [ ] 1.1 Add health handler
   - repo: backend
   - deps: none
   - touches: internal/http/**, cmd/server/main.go
 ```
+
 - The factory parses this itself with a small, strict parser and zod.
 - Task ids are OpenSpec's `N.M` numbers.
 - `deps` is a comma list of task ids or `none`.

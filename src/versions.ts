@@ -31,7 +31,10 @@ export const OPENSPEC: VersionRange & { readonly npm: string } = {
 };
 
 /** Graphify (PyPI package is "graphifyy"). */
-export const GRAPHIFY: VersionRange & { readonly pypi: string; readonly graphSchemaVersion: number } = {
+export const GRAPHIFY: VersionRange & {
+  readonly pypi: string;
+  readonly graphSchemaVersion: number;
+} = {
   min: "0.9.93",
   maxExclusive: "0.10.0",
   tested: "0.9.93",
