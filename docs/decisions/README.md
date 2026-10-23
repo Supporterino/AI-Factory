@@ -18,3 +18,4 @@ Short ADRs for every choice the build prompt did not lock. Format: Context / Dec
 | [0012](0012-repoint-detection.md)               | `repoint` detection order                                           |
 | [0013](0013-cli-runtime-and-detection-rules.md) | CLI runtime target and detection rules                              |
 | [0014](0014-install-commits-and-lock-bases.md)  | Install commits and merge bases in the lock                         |
+| [0015](0015-gate-resolution-and-scope.md)       | Gate resolution, scope and the check-only guard                     |

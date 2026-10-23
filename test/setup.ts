@@ -1,3 +1,4 @@
+import { setDefaultTimeout } from "bun:test";
 import { join } from "node:path";
 
 // Tool binaries for tests: the pinned OpenSpec devDependency, and version stubs for tools
@@ -11,3 +12,6 @@ process.env.AI_FACTORY_GRAPHIFY_BIN ??= join(root, "test/fixtures/bin/graphify")
 // no global hooksPath, signing, templates or identity leak into the tests.
 process.env.GIT_CONFIG_GLOBAL = join(root, "test/fixtures/gitconfig");
 process.env.GIT_CONFIG_NOSYSTEM = "1";
+
+// Fixture workspaces run real git, OpenSpec and toolchains; 5s is too tight.
+setDefaultTimeout(60_000);

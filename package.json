@@ -20,12 +20,12 @@
   "scripts": {
     "build": "bun build src/cli/main.ts --target=node --outfile dist/cli.js",
     "dev": "bun src/cli/main.ts",
-    "test": "bun test",
+    "test": "bun test --timeout 60000",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "check": "biome check . && tsc --noEmit && bun test"
+    "check": "biome check . && tsc --noEmit && bun test --timeout 60000"
   },
   "dependencies": {
     "jsonc-parser": "3.3.1",

@@ -8,12 +8,28 @@ import type { GateType, Language } from "../config/schema.ts";
 
 /**
  * Language profiles. The prose lives in templates/standards/<id>.md; the machine-readable
- * parts (test globs, gate defaults, install steps) live here and are rendered into the
+ * parts (test globs, gate candidates, install steps) live here and are rendered into the
  * same file, so the agent and the CLI read one source.
  *
- * Gate commands may contain placeholders filled by the gate runner:
- * {files} changed files, {packages} Go packages, {crates} Rust crates, {charts} chart dirs.
+ * Gate commands run with `sh -c` in a target directory and may contain placeholders:
+ * {files} changed files, {testFiles} test files related to them, {packages} Go packages,
+ * {crates} Rust `-p` flags, {charts} chart dirs, {base} the change's base commit.
  */
+
+/** When a gate candidate applies. Paths are relative to the target directory. */
+export type Requirement =
+  | { readonly file: readonly string[] }
+  | { readonly dependency: readonly string[] }
+  | { readonly fileContains: { readonly file: string; readonly text: string } };
+
+export interface GateCandidate {
+  readonly when?: Requirement;
+  /** Checks the whole target. */
+  readonly command: string;
+  /** Checks only the task's changed files; used per task when present. */
+  readonly scoped?: string;
+}
+
 export interface Profile {
   readonly id: Language;
   readonly title: string;
@@ -23,9 +39,20 @@ export interface Profile {
    * `/` in opencode, so `*_test.go` matches at any depth).
    */
   readonly testGlobs: readonly string[];
-  /** Default gate commands in preference order; the gate resolver picks the first usable. */
-  readonly gates: Readonly<Record<GateType, readonly string[]>>;
-  /** Worktree install steps: first lockfile present wins. */
+  /** Files that mark a target directory (a package, module, crate or chart). */
+  readonly markers: readonly string[];
+  /**
+   * "dir": gates run in each top-most marker dir ("nested" also keeps marker dirs inside
+   * other ones, e.g. separate Go modules). "charts": once at the repo root over all charts.
+   */
+  readonly targets: "dir" | "nested" | "charts";
+  /** Source files the profile's tools check; drives {files} and affected targets. */
+  readonly extensions: readonly string[];
+  /** Tool directories (relative to the target) prepended to PATH. */
+  readonly binDirs: readonly string[];
+  /** Gate candidates per type in preference order; the first whose requirement holds wins. */
+  readonly gates: Readonly<Record<GateType, readonly GateCandidate[]>>;
+  /** Install step per marker dir: the first lockfile present wins. */
   readonly install: readonly { readonly lockfile: string; readonly command: string }[];
 }
 
@@ -52,31 +79,78 @@ const TS_INSTALL = [
   { lockfile: "package-lock.json", command: "npm ci" },
 ] as const;
 
-const TS_GATES = {
-  format: ["biome format .", "prettier --check ."],
-  lint: ["biome lint .", "eslint ."],
-  types: ["tsc --noEmit"],
-  test: ["vitest run", "jest", "bun test"],
-  testAffected: ["vitest run --changed", "jest --findRelatedTests {files}", "bun test {files}"],
+const BIOME = { file: ["biome.json", "biome.jsonc"] } as const;
+const PRETTIER = {
+  file: [
+    ".prettierrc",
+    ".prettierrc.json",
+    ".prettierrc.yaml",
+    ".prettierrc.js",
+    "prettier.config.js",
+    "prettier.config.mjs",
+  ],
+} as const;
+const ESLINT = {
+  file: [
+    "eslint.config.js",
+    "eslint.config.mjs",
+    "eslint.config.cjs",
+    "eslint.config.ts",
+    ".eslintrc",
+    ".eslintrc.json",
+    ".eslintrc.js",
+    ".eslintrc.cjs",
+  ],
+} as const;
+
+const TS_GATES: Profile["gates"] = {
+  format: [
+    {
+      when: BIOME,
+      command: "biome format .",
+      scoped: "biome format --no-errors-on-unmatched {files}",
+    },
+    {
+      when: PRETTIER,
+      command: "prettier --check .",
+      scoped: "prettier --check --ignore-unknown {files}",
+    },
+    {
+      when: { dependency: ["prettier"] },
+      command: "prettier --check .",
+      scoped: "prettier --check --ignore-unknown {files}",
+    },
+  ],
+  lint: [
+    { when: BIOME, command: "biome lint .", scoped: "biome lint --no-errors-on-unmatched {files}" },
+    { when: ESLINT, command: "eslint .", scoped: "eslint --no-warn-ignored {files}" },
+  ],
+  types: [{ when: { file: ["tsconfig.json"] }, command: "tsc --noEmit" }],
+  test: [
+    { when: { dependency: ["vitest"] }, command: "vitest run" },
+    { when: { dependency: ["jest"] }, command: "jest" },
+    { when: { file: ["bun.lock", "bun.lockb", "bunfig.toml"] }, command: "bun test" },
+  ],
+  testAffected: [
+    { when: { dependency: ["vitest"] }, command: "vitest related --run {files}" },
+    { when: { dependency: ["jest"] }, command: "jest --findRelatedTests {files}" },
+    { when: { file: ["bun.lock", "bun.lockb", "bunfig.toml"] }, command: "bun test {testFiles}" },
+  ],
+};
+
+const TS_BASE = {
+  testGlobs: TS_TEST_GLOBS,
+  markers: ["package.json"],
+  targets: "dir",
+  extensions: [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"],
+  binDirs: ["node_modules/.bin"],
+  gates: TS_GATES,
+  install: TS_INSTALL,
 } as const;
 
 export const PROFILES: Readonly<Record<Language, Profile>> = {
-  typescript: {
-    id: "typescript",
-    title: "TypeScript / JavaScript",
-    prose: typescript,
-    testGlobs: TS_TEST_GLOBS,
-    gates: TS_GATES,
-    install: TS_INSTALL,
-  },
-  react: {
-    id: "react",
-    title: "React",
-    prose: react,
-    testGlobs: TS_TEST_GLOBS,
-    gates: TS_GATES,
-    install: TS_INSTALL,
-  },
+  typescript: { id: "typescript", title: "TypeScript / JavaScript", prose: typescript, ...TS_BASE },
+  react: { id: "react", title: "React", prose: react, ...TS_BASE },
   python: {
     id: "python",
     title: "Python",
@@ -90,12 +164,23 @@ export const PROFILES: Readonly<Record<Language, Profile>> = {
       "conftest.py",
       "*/conftest.py",
     ],
+    markers: ["pyproject.toml", "requirements.txt"],
+    targets: "dir",
+    extensions: [".py", ".pyi"],
+    binDirs: [".venv/bin"],
     gates: {
-      format: ["ruff format --check ."],
-      lint: ["ruff check ."],
-      types: ["mypy --strict .", "pyright"],
-      test: ["pytest"],
-      testAffected: ["pytest {files}"],
+      format: [{ command: "ruff format --check .", scoped: "ruff format --check {files}" }],
+      lint: [{ command: "ruff check .", scoped: "ruff check {files}" }],
+      types: [
+        { when: { file: ["pyrightconfig.json"] }, command: "pyright" },
+        {
+          when: { fileContains: { file: "pyproject.toml", text: "[tool.pyright]" } },
+          command: "pyright",
+        },
+        { command: "mypy --strict ." },
+      ],
+      test: [{ command: "pytest" }],
+      testAffected: [{ command: "pytest {testFiles}" }],
     },
     install: [{ lockfile: "uv.lock", command: "uv sync --frozen" }],
   },
@@ -104,13 +189,24 @@ export const PROFILES: Readonly<Record<Language, Profile>> = {
     title: "Go",
     prose: go,
     testGlobs: ["*_test.go", "testdata/*", "*/testdata/*"],
+    markers: ["go.mod"],
+    targets: "nested",
+    extensions: [".go"],
+    binDirs: [],
     gates: {
-      // gofmt -l exits 0 even when files need formatting, so test its output.
-      format: ['test -z "$(gofmt -l .)"'],
-      lint: ["golangci-lint run"],
-      types: ["go vet ./..."],
-      test: ["go test -race ./..."],
-      testAffected: ["go test -race {packages}"],
+      // gofmt -l exits 0 even when files need formatting, so fail on its output.
+      format: [
+        {
+          command:
+            'out="$(gofmt -l .)"; [ -z "$out" ] || { echo "needs gofmt:"; echo "$out"; exit 1; }',
+          scoped:
+            'out="$(gofmt -l {files})"; [ -z "$out" ] || { echo "needs gofmt:"; echo "$out"; exit 1; }',
+        },
+      ],
+      lint: [{ command: "golangci-lint run", scoped: "golangci-lint run --new-from-rev={base}" }],
+      types: [{ command: "go vet ./...", scoped: "go vet {packages}" }],
+      test: [{ command: "go test -race ./..." }],
+      testAffected: [{ command: "go test -race {packages}" }],
     },
     install: [{ lockfile: "go.sum", command: "go mod download" }],
   },
@@ -119,12 +215,16 @@ export const PROFILES: Readonly<Record<Language, Profile>> = {
     title: "Rust",
     prose: rust,
     testGlobs: ["tests/*", "*/tests/*", "*/tests.rs", "benches/*", "*/benches/*"],
+    markers: ["Cargo.toml"],
+    targets: "dir",
+    extensions: [".rs"],
+    binDirs: [],
     gates: {
-      format: ["cargo fmt --all --check"],
-      lint: ["cargo clippy --all-targets -- -D warnings"],
-      types: ["cargo check --all-targets"],
-      test: ["cargo test --workspace"],
-      testAffected: ["cargo test {crates}"],
+      format: [{ command: "cargo fmt --all --check" }],
+      lint: [{ command: "cargo clippy --all-targets -- -D warnings" }],
+      types: [{ command: "cargo check --all-targets" }],
+      test: [{ command: "cargo test --workspace" }],
+      testAffected: [{ command: "cargo test {crates}" }],
     },
     install: [{ lockfile: "Cargo.lock", command: "cargo fetch --locked" }],
   },
@@ -138,14 +238,23 @@ export const PROFILES: Readonly<Record<Language, Profile>> = {
       "ci/*-values.yaml",
       "*/ci/*-values.yaml",
     ],
+    markers: ["Chart.yaml"],
+    targets: "charts",
+    extensions: [".yaml", ".yml", ".tpl", ".json"],
+    binDirs: [],
     gates: {
-      format: ["yamllint {charts}"],
-      lint: ["helm lint {charts}"],
-      types: ["helm template {charts} | kubeconform -strict -summary"],
-      test: ["helm unittest {charts}"],
-      testAffected: ["helm unittest {charts}"],
+      format: [{ command: "yamllint {charts}" }],
+      lint: [{ command: "helm lint {charts}" }],
+      types: [
+        {
+          command:
+            'for c in {charts}; do helm template "$c" | kubeconform -strict -summary || exit 1; done',
+        },
+      ],
+      test: [{ command: "helm unittest {charts}" }],
+      testAffected: [{ command: "helm unittest {charts}" }],
     },
-    install: [{ lockfile: "Chart.lock", command: "helm dependency build {charts}" }],
+    install: [{ lockfile: "Chart.lock", command: "helm dependency build ." }],
   },
 };
 
@@ -162,10 +271,21 @@ export function profileSummary(profile: Profile): string[] {
   return out;
 }
 
+function describe(req: Requirement): string {
+  if ("file" in req) return `with ${req.file.join(" or ")}`;
+  if ("dependency" in req) return `with dependency ${req.dependency.join(" or ")}`;
+  return `when ${req.fileContains.file} has ${req.fileContains.text}`;
+}
+
 /** The full standards file: prose plus generated test-path and gate sections. */
 export function renderStandard(profile: Profile): string {
   const gates = (Object.keys(profile.gates) as GateType[])
-    .map((g) => `- ${g}: ${profile.gates[g].map((c) => `\`${c}\``).join(" or ")}`)
+    .map((g) => {
+      const options = profile.gates[g].map(
+        (c) => `\`${c.command}\`${c.when ? ` (${describe(c.when)})` : ""}`,
+      );
+      return `- ${g}: ${options.join("; or ")}`;
+    })
     .join("\n");
   return `${profile.prose.trimEnd()}
 
