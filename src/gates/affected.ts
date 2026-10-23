@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { git } from "../exec.ts";
 import type { Profile } from "../profiles/index.ts";
+import { opencodeGlobRegExp as globToRegExp } from "../tasks/glob.ts";
 import { isWithinDir, type Target } from "./targets.ts";
 
 /**
@@ -16,14 +17,7 @@ export async function changedFiles(worktree: string, base: string): Promise<stri
   return [...new Set(all)].sort();
 }
 
-/** opencode-style glob (`*` matches `/` too) to a regex. */
-export function globToRegExp(glob: string): RegExp {
-  const body = glob
-    .split("")
-    .map((ch) => (ch === "*" ? ".*" : ch === "?" ? "." : ch.replace(/[.+^${}()|[\]\\]/g, "\\$&")))
-    .join("");
-  return new RegExp(`^${body}$`);
-}
+export { globToRegExp };
 
 export function isTestFile(profile: Profile, path: string): boolean {
   return profile.testGlobs.some((g) => globToRegExp(g).test(path));

@@ -1,0 +1,289 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { bundlePlugin, PLUGIN_OUT } from "../scripts/build-plugin.ts";
+import { approvalFile, specHash } from "../src/approval/approval.ts";
+import { pruneLogs } from "../src/logs/log.ts";
+import { redact, secretEnvValues } from "../src/logs/redact.ts";
+import { auditChanges, type SessionContext } from "../src/policy/scope.ts";
+import { sessionContextFile } from "../src/policy/session-files.ts";
+import { writeFiles } from "./fixtures/workspaces.ts";
+
+type Hook = (event: {
+  tool: string;
+  sessionID: string;
+  agent: string;
+  input: unknown;
+  status?: string;
+}) => unknown;
+
+let ws: string;
+let wt: string;
+const hooks = new Map<string, Hook>();
+
+const ID = "add-x";
+const TASKS = "- [ ] 1.1 Add health\n  - repo: app\n  - deps: none\n  - touches: src/**\n";
+
+function session(
+  id: string,
+  ctx: Omit<SessionContext, "sessionId" | "changeId" | "workspace">,
+): void {
+  const file = sessionContextFile(ws, id);
+  mkdirSync(join(ws, ".factory", "sessions"), { recursive: true });
+  writeFileSync(file, JSON.stringify({ sessionId: id, changeId: ID, workspace: ws, ...ctx }));
+}
+
+function approve(): void {
+  mkdirSync(join(ws, ".factory", "approvals"), { recursive: true });
+  writeFileSync(
+    approvalFile(ws, ID),
+    JSON.stringify({
+      changeId: ID,
+      approver: "dev@example.com",
+      specCommit: "a".repeat(40),
+      hash: specHash(ws, ID),
+      approvedAt: "now",
+    }),
+  );
+}
+
+async function call(
+  sessionID: string,
+  agent: string,
+  tool: string,
+  input: unknown,
+): Promise<string | undefined> {
+  const before = hooks.get("execute.before");
+  if (!before) throw new Error("no hook");
+  try {
+    await before({ tool, sessionID, agent, input });
+    return undefined;
+  } catch (err) {
+    return (err as Error).message;
+  }
+}
+
+beforeAll(async () => {
+  ws = mkdtempSync(join(tmpdir(), "ai-factory-plugin-"));
+  wt = join(ws, ".factory", "worktrees", ID, "app", "1.1");
+  writeFiles(ws, {
+    [`openspec/changes/${ID}/proposal.md`]: "## Why\nBecause.\n",
+    [`openspec/changes/${ID}/tasks.md`]: TASKS,
+    [`openspec/changes/${ID}/specs/health/spec.md`]: "## ADDED Requirements\n",
+  });
+  writeFiles(wt, { "src/sum.ts": "x", "src/sum.test.ts": "y", "factory.config.jsonc": "{}" });
+  session("impl", {
+    role: "implementer",
+    directory: wt,
+    repo: "app",
+    task: "1.1",
+    touches: ["src/**"],
+  });
+  session("tester", { role: "tester", directory: wt, repo: "app", testGlobs: ["*.test.ts"] });
+  session("arch", { role: "architect", directory: ws });
+  session("rev", { role: "reviewer", directory: wt });
+
+  // Load the committed bundle exactly as opencode would: a plain ES module file.
+  const file = join(ws, "factory.mjs");
+  writeFileSync(file, readFileSync(PLUGIN_OUT, "utf8"));
+  process.env.AI_FACTORY_WORKSPACE = ws;
+  const plugin = (await import(file)).default as {
+    id: string;
+    setup: (ctx: unknown) => Promise<void>;
+  };
+  expect(plugin.id).toBe("ai-factory");
+  await plugin.setup({ tool: { hook: (name: string, cb: Hook) => void hooks.set(name, cb) } });
+  delete process.env.AI_FACTORY_WORKSPACE;
+});
+afterAll(() => rmSync(ws, { recursive: true, force: true }));
+beforeEach(() => rmSync(approvalFile(ws, ID), { force: true }));
+
+describe("plugin bundle", () => {
+  test("the committed bundle is up to date (run `bun run build:plugin`)", async () => {
+    expect(readFileSync(PLUGIN_OUT, "utf8")).toBe(await bundlePlugin());
+  });
+});
+
+describe("plugin guards", () => {
+  test("ignores agents that are not factory agents", async () => {
+    expect(await call("whatever", "build", "shell", { command: "git push" })).toBeUndefined();
+  });
+
+  test("refuses factory agents without a session context", async () => {
+    expect(await call("nope", "implementer-app", "shell", { command: "ls" })).toContain(
+      "no session context",
+    );
+  });
+
+  test("shell blocklist, including evasions and workdirs", async () => {
+    expect(
+      await call("impl", "implementer-app", "shell", { command: "go test ./..." }),
+    ).toBeUndefined();
+    expect(
+      await call("impl", "implementer-app", "shell", { command: "sh -c 'git push'" }),
+    ).toContain("git push is not allowed");
+    expect(
+      await call("impl", "implementer-app", "shell", { command: "ls", workdir: "/" }),
+    ).toContain("outside your directory");
+  });
+
+  test("no implementation edits before a valid approval; checkbox ticks keep it valid", async () => {
+    expect(await call("impl", "implementer-app", "edit", { path: "src/sum.ts" })).toContain(
+      "change add-x is not approved; implementation edits are blocked",
+    );
+    approve();
+    expect(await call("impl", "implementer-app", "edit", { path: "src/sum.ts" })).toBeUndefined();
+    const tasks = join(ws, "openspec/changes", ID, "tasks.md");
+    writeFileSync(tasks, TASKS.replace("- [ ]", "- [x]"));
+    expect(
+      await call("impl", "implementer-app", "write", { path: "src/new.ts", content: "z" }),
+    ).toBeUndefined();
+    writeFileSync(tasks, TASKS.replace("touches: src/**", "touches: **"));
+    expect(await call("impl", "implementer-app", "edit", { path: "src/sum.ts" })).toContain(
+      "changed after approval",
+    );
+    writeFileSync(tasks, TASKS);
+  });
+
+  test("implementer scope: touches, factory files, outside paths, patches", async () => {
+    approve();
+    expect(await call("impl", "implementer-app", "edit", { path: "README.md" })).toContain(
+      "outside this task's touches",
+    );
+    expect(
+      await call("impl", "implementer-app", "edit", { path: "factory.config.jsonc" }),
+    ).toContain("managed by the factory");
+    expect(
+      await call("impl", "implementer-app", "edit", { path: join(ws, ".opencode/agents/x.md") }),
+    ).toContain("outside your worktree");
+    expect(await call("impl", "implementer-app", "edit", { path: "../1.2/src/a.ts" })).toContain(
+      "outside your worktree",
+    );
+    expect(await call("impl", "implementer-app", "edit", { path: "src/.env" })).toContain(
+      "secret file",
+    );
+    const patch =
+      "*** Begin Patch\n*** Update File: src/sum.ts\n*** Add File: docs/x.md\n*** End Patch";
+    expect(await call("impl", "implementer-app", "patch", { patchText: patch })).toContain(
+      "docs/x.md",
+    );
+  });
+
+  test("tester, architect and read-only roles", async () => {
+    approve();
+    expect(await call("tester", "tester", "edit", { path: "src/sum.test.ts" })).toBeUndefined();
+    expect(await call("tester", "tester", "edit", { path: "src/sum.ts" })).toContain(
+      "only edit test files",
+    );
+    expect(
+      await call("arch", "architect", "write", { path: `openspec/changes/${ID}/design.md` }),
+    ).toBeUndefined();
+    expect(
+      await call("arch", "architect", "write", { path: `.factory/context/${ID}/1.1.md` }),
+    ).toBeUndefined();
+    expect(
+      await call("arch", "architect", "write", { path: "openspec/specs/health/spec.md" }),
+    ).toContain("may only write");
+    expect(
+      await call("arch", "architect", "write", { path: ".factory/runs/add-x.json" }),
+    ).toContain("may only write");
+    expect(await call("rev", "reviewer", "edit", { path: "src/sum.ts" })).toContain("read-only");
+  });
+
+  test("secret reads are refused; repeated reads are logged as waste; logs are redacted", async () => {
+    expect(await call("impl", "implementer-app", "read", { path: ".env" })).toContain(
+      "secret file",
+    );
+    await call("impl", "implementer-app", "read", { path: "src/sum.ts" });
+    await call("impl", "implementer-app", "read", { path: "src/sum.ts" });
+    await call("impl", "implementer-app", "shell", {
+      command: "echo ghp_abcdefghijklmnopqrstuvwxyz0123456789AB",
+    });
+    const dir = join(ws, ".factory", "logs", ID);
+    const lines = readdirSync(dir).flatMap((f) =>
+      readFileSync(join(dir, f), "utf8").trim().split("\n"),
+    );
+    const entries = lines.map(
+      (l) => JSON.parse(l) as { kind: string; note?: string; input?: { command?: string } },
+    );
+    expect(
+      entries.some((e) => e.kind === "waste" && e.note === "repeated read of an unchanged file"),
+    ).toBe(true);
+    expect(entries.some((e) => e.kind === "blocked")).toBe(true);
+    expect(lines.join("\n")).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789AB");
+    expect(lines.join("\n")).toContain("[REDACTED:github-token]");
+  });
+});
+
+describe("post-session audit", () => {
+  test("flags changed files outside the session's scope", () => {
+    const ctx: SessionContext = {
+      sessionId: "s",
+      changeId: ID,
+      role: "implementer",
+      directory: "/w",
+      workspace: "/ws",
+      touches: ["src/**"],
+    };
+    expect(auditChanges(ctx, ["src/a.ts", "README.md", ".opencode/x", "AGENTS.md"], true)).toEqual([
+      {
+        path: "README.md",
+        reason:
+          '`README.md` is outside this task\'s touches (src/**); if you need it, stop with status "blocked"',
+      },
+      { path: ".opencode/x", reason: "`.opencode/x` is managed by the factory" },
+      { path: "AGENTS.md", reason: "`AGENTS.md` is managed by the factory" },
+    ]);
+  });
+});
+
+describe("redaction and log pruning", () => {
+  test("redacts tokens, keys, URL credentials, key=value secrets and env values", () => {
+    const env = { MY_API_TOKEN: "s3cr3t-value-123", SHORT_TOKEN: "abc", PATH: "/usr/bin" };
+    const text = [
+      "token=ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+      "AKIAABCDEFGHIJKLMNOP",
+      "https://user:hunter22@example.com/repo.git",
+      'password: "correct-horse"',
+      "-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----",
+      "using s3cr3t-value-123 now",
+      "keep abc and /usr/bin",
+    ].join("\n");
+    expect(redact(text, secretEnvValues(env))).toBe(
+      [
+        "token=[REDACTED:secret]",
+        "[REDACTED:aws-key]",
+        "https://[REDACTED:credentials]@example.com/repo.git",
+        'password: "[REDACTED:secret]"',
+        "[REDACTED:private-key]",
+        "using [REDACTED:env] now",
+        "keep abc and /usr/bin",
+      ].join("\n"),
+    );
+  });
+
+  test("prunes logs older than the retention", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-factory-logs-"));
+    try {
+      writeFiles(root, {
+        ".factory/logs/a/old.jsonl": "{}\n",
+        ".factory/logs/b/new.jsonl": "{}\n",
+      });
+      const old = (Date.now() - 20 * 86_400_000) / 1000;
+      utimesSync(join(root, ".factory/logs/a/old.jsonl"), old, old);
+      expect(pruneLogs(root, 14)).toEqual([join(root, ".factory/logs/a/old.jsonl")]);
+      expect(readdirSync(join(root, ".factory/logs"))).toEqual(["b"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

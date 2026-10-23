@@ -77,3 +77,12 @@ export function globsOverlap(a: string, b: string): boolean {
 export function touchesOverlap(a: readonly string[], b: readonly string[]): boolean {
   return a.some((x) => b.some((y) => globsOverlap(x, y)));
 }
+
+/** opencode permission-glob semantics: `*` matches anything including `/`, `?` one char. */
+export function opencodeGlobRegExp(glob: string): RegExp {
+  const body = glob
+    .split("")
+    .map((ch) => (ch === "*" ? ".*" : ch === "?" ? "." : ch.replace(/[.+^${}()|[\]\\]/g, "\\$&")))
+    .join("");
+  return new RegExp(`^${body}$`);
+}

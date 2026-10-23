@@ -1,0 +1,1572 @@
+// ai-factory opencode plugin — generated from src/plugin/entry.ts; do not edit.
+// @bun
+// src/plugin/entry.ts
+import { existsSync as existsSync3, readFileSync as readFileSync2, statSync as statSync3 } from "fs";
+import { isAbsolute as isAbsolute3, join as join4, resolve as resolve3 } from "path";
+
+// src/approval/approval.ts
+import { createHash } from "crypto";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { join } from "path";
+
+// src/tasks/parse.ts
+var TASK_LINE = /^- \[( |x|X)\] (\d+(?:\.\d+)+)\s+(.+?)\s*$/;
+function normalizeCheckboxes(text) {
+  return text.split(`
+`).map((l) => TASK_LINE.test(l) ? l.replace(/^- \[[xX]\]/, "- [ ]") : l).join(`
+`);
+}
+
+// src/approval/approval.ts
+function parseApproval(value) {
+  if (typeof value !== "object" || value === null)
+    return;
+  const v = value;
+  const ok = typeof v.changeId === "string" && typeof v.approver === "string" && typeof v.specCommit === "string" && /^[0-9a-f]{40,64}$/.test(v.specCommit) && typeof v.hash === "string" && /^[0-9a-f]{64}$/.test(v.hash) && typeof v.approvedAt === "string";
+  return ok ? value : undefined;
+}
+var changeDir = (root, id) => join(root, "openspec", "changes", id);
+var approvalFile = (root, id) => join(root, ".factory", "approvals", `${id}.json`);
+function filesUnder(dir, prefix = "") {
+  if (!existsSync(dir))
+    return [];
+  return readdirSync(dir).sort().flatMap((name) => {
+    const rel = prefix === "" ? name : `${prefix}/${name}`;
+    const abs = join(dir, name);
+    return statSync(abs).isDirectory() ? filesUnder(abs, rel) : [rel];
+  });
+}
+function approvedFiles(root, id) {
+  const dir = changeDir(root, id);
+  const top = ["proposal.md", "design.md", "tasks.md"].filter((f) => existsSync(join(dir, f)));
+  const specs = filesUnder(join(dir, "specs"), "specs").filter((f) => f.endsWith(".md"));
+  return [...top, ...specs].sort();
+}
+function specHash(root, id) {
+  const hash = createHash("sha256");
+  const dir = changeDir(root, id);
+  for (const rel of approvedFiles(root, id)) {
+    let content = readFileSync(join(dir, rel), "utf8").replace(/\r\n/g, `
+`);
+    if (rel === "tasks.md")
+      content = normalizeCheckboxes(content);
+    hash.update(rel).update("\x00").update(content).update("\x00");
+  }
+  return hash.digest("hex");
+}
+function readApproval(root, id) {
+  const file = approvalFile(root, id);
+  if (!existsSync(file))
+    return;
+  try {
+    return parseApproval(JSON.parse(readFileSync(file, "utf8")));
+  } catch {
+    return;
+  }
+}
+function checkApprovalHash(root, id) {
+  const approval = readApproval(root, id);
+  if (approval === undefined)
+    return { valid: false, reason: `change ${id} is not approved` };
+  if (approvedFiles(root, id).length === 0)
+    return { valid: false, reason: `change ${id} has no spec files` };
+  if (specHash(root, id) !== approval.hash) {
+    return { valid: false, reason: `the spec of ${id} changed after approval; approve it again` };
+  }
+  return { valid: true, approval };
+}
+
+// src/logs/log.ts
+import {
+  appendFileSync,
+  existsSync as existsSync2,
+  mkdirSync,
+  readdirSync as readdirSync2,
+  rmdirSync,
+  rmSync,
+  statSync as statSync2
+} from "fs";
+import { join as join2 } from "path";
+
+// src/logs/redact.ts
+var MARK = (kind) => `[REDACTED:${kind}]`;
+var PATTERNS = [
+  [
+    /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+    MARK("private-key")
+  ],
+  [/\bAKIA[0-9A-Z]{16}\b/g, MARK("aws-key")],
+  [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b/g, MARK("github-token")],
+  [/\bgithub_pat_[A-Za-z0-9_]{40,}\b/g, MARK("github-token")],
+  [/\bglpat-[A-Za-z0-9_-]{20,}\b/g, MARK("gitlab-token")],
+  [/\bxox[abposr]-[A-Za-z0-9-]{10,}\b/g, MARK("slack-token")],
+  [/\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}\b/g, MARK("api-key")],
+  [/\bAIza[0-9A-Za-z_-]{35}\b/g, MARK("google-key")],
+  [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, MARK("jwt")],
+  [/(https?:\/\/)[^/\s:@]+:[^/\s@]+@/g, `$1${MARK("credentials")}@`],
+  [
+    /\b((?:[A-Za-z0-9_]*_)?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)["']?\s*[:=]\s*["']?)([^\s"',;]{6,})/gi,
+    `$1${MARK("secret")}`
+  ]
+];
+var SECRET_ENV_NAME = /(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL|AUTH)/i;
+function secretEnvValues(env) {
+  return Object.entries(env).filter(([name, value]) => SECRET_ENV_NAME.test(name) && value !== undefined && value.length >= 8).map(([, value]) => value).sort((a, b) => b.length - a.length);
+}
+function redact(text, envValues = []) {
+  let out = text;
+  for (const value of envValues)
+    out = out.split(value).join(MARK("env"));
+  for (const [re, replacement] of PATTERNS)
+    out = out.replace(re, replacement);
+  return out;
+}
+
+// src/logs/log.ts
+var logDir = (root, changeId) => join2(root, ".factory", "logs", changeId);
+function appendLog(root, changeId, entry, options = {}) {
+  const dir = logDir(root, changeId);
+  mkdirSync(dir, { recursive: true });
+  const at = new Date;
+  let line = JSON.stringify({ at: at.toISOString(), ...entry });
+  if (options.redact ?? true)
+    line = redact(line, secretEnvValues(options.env ?? process.env));
+  appendFileSync(join2(dir, `${at.toISOString().slice(0, 10)}.jsonl`), `${line}
+`);
+}
+
+// src/policy/paths.ts
+var PROTECTED = [
+  /^openspec\/specs(\/|$)/,
+  /^\.opencode(\/|$)/,
+  /^\.factory(\/|$)/,
+  /^factory\.config\.jsonc$/,
+  /^factory\.lock\.json$/,
+  /(^|\/)AGENTS\.md$/,
+  /(^|\/)\.git(\/|$)/,
+  /^\.gitmodules$/
+];
+function isProtectedPath(rel) {
+  const p = rel.replace(/^\.\//, "");
+  return PROTECTED.some((re) => re.test(p));
+}
+var SECRET_BASENAMES = [
+  /^\.env$/,
+  /^\.env\.(?!(example|sample|template|dist|defaults)$).+/,
+  /\.pem$/,
+  /\.key$/,
+  /\.p12$/,
+  /\.pfx$/,
+  /^id_(rsa|dsa|ecdsa|ed25519)(\..*)?$/,
+  /kubeconfig/i,
+  /^\.netrc$/,
+  /^\.npmrc$/,
+  /^\.pypirc$/,
+  /^\.git-credentials$/,
+  /\.tfstate(\.backup)?$/
+];
+var SECRET_SEGMENTS = [
+  /(^|\/)\.kube\/config$/,
+  /(^|\/)\.aws\/(credentials|config)$/,
+  /(^|\/)\.config\/gcloud(\/|$)/,
+  /(^|\/)\.azure(\/|$)/,
+  /(^|\/)\.docker\/config\.json$/,
+  /(^|\/)\.ssh(\/|$)/
+];
+function isSecretPath(path) {
+  const p = path.replace(/\\/g, "/");
+  const base = p.slice(p.lastIndexOf("/") + 1);
+  return SECRET_BASENAMES.some((re) => re.test(base)) || SECRET_SEGMENTS.some((re) => re.test(p));
+}
+
+// src/policy/scope.ts
+import { isAbsolute, normalize, relative, resolve } from "path";
+
+// src/tasks/glob.ts
+var cache = new Map;
+function globRegExp(glob) {
+  const cached = cache.get(glob);
+  if (cached)
+    return cached;
+  let re = "";
+  for (let i = 0;i < glob.length; i++) {
+    const ch = glob.charAt(i);
+    if (ch === "*" && glob.charAt(i + 1) === "*") {
+      if (glob.charAt(i + 2) === "/") {
+        re += "(?:.*/)?";
+        i += 2;
+      } else {
+        re += ".*";
+        i += 1;
+      }
+    } else if (ch === "*") {
+      re += "[^/]*";
+    } else if (ch === "?") {
+      re += "[^/]";
+    } else {
+      re += ch.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  const compiled = new RegExp(`^${re}$`);
+  cache.set(glob, compiled);
+  return compiled;
+}
+function matchGlob(glob, path) {
+  return globRegExp(glob).test(path);
+}
+function matchesAny(globs, path) {
+  return globs.some((g) => matchGlob(g, path));
+}
+function opencodeGlobRegExp(glob) {
+  const body = glob.split("").map((ch) => ch === "*" ? ".*" : ch === "?" ? "." : ch.replace(/[.+^${}()|[\]\\]/g, "\\$&")).join("");
+  return new RegExp(`^${body}$`);
+}
+
+// src/policy/scope.ts
+var ROLES = [
+  "orchestrator",
+  "architect",
+  "explorer",
+  "reviewer",
+  "contract-reviewer",
+  "tester",
+  "implementer"
+];
+var isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === "string");
+function parseSessionContext(value) {
+  if (typeof value !== "object" || value === null)
+    return;
+  const v = value;
+  const str = (k) => typeof v[k] === "string";
+  if (!str("sessionId") || !str("changeId") || !str("directory") || !str("workspace"))
+    return;
+  if (!ROLES.includes(v.role))
+    return;
+  for (const k of ["repo", "task"])
+    if (v[k] !== undefined && !str(k))
+      return;
+  for (const k of ["touches", "testGlobs"])
+    if (v[k] !== undefined && !isStringArray(v[k]))
+      return;
+  return value;
+}
+var architectDirs = (changeId) => [
+  `openspec/changes/${changeId}/`,
+  `.factory/context/${changeId}/`
+];
+var IMPLEMENTING_ROLES = new Set(["implementer", "tester"]);
+function checkEdit(ctx, path, approval) {
+  const abs = normalize(isAbsolute(path) ? path : resolve(ctx.directory, path));
+  const rel = relative(ctx.directory, abs);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+    return {
+      allowed: false,
+      reason: `\`${path}\` is outside your ${ctx.role === "architect" ? "workspace" : "worktree"}`
+    };
+  }
+  if (isSecretPath(rel))
+    return { allowed: false, reason: `\`${rel}\` is a secret file` };
+  if (ctx.role === "architect") {
+    if (architectDirs(ctx.changeId).some((d) => rel.startsWith(d)))
+      return { allowed: true, rel };
+    return {
+      allowed: false,
+      reason: `the architect may only write ${architectDirs(ctx.changeId).join(" and ")} (not \`${rel}\`)`
+    };
+  }
+  if (isProtectedPath(rel))
+    return { allowed: false, reason: `\`${rel}\` is managed by the factory` };
+  if (!IMPLEMENTING_ROLES.has(ctx.role))
+    return { allowed: false, reason: `the ${ctx.role} is read-only` };
+  const approved = approval();
+  if (approved !== true)
+    return { allowed: false, reason: `${approved}; implementation edits are blocked` };
+  if (ctx.role === "tester") {
+    const globs = ctx.testGlobs ?? [];
+    if (globs.some((g) => opencodeGlobRegExp(g).test(rel)))
+      return { allowed: true, rel };
+    return {
+      allowed: false,
+      reason: `the tester may only edit test files (${globs.join(", ")}), not \`${rel}\``
+    };
+  }
+  if (ctx.touches !== undefined && !matchesAny(ctx.touches, rel)) {
+    return {
+      allowed: false,
+      reason: `\`${rel}\` is outside this task's touches (${ctx.touches.join(", ")}); if you need it, stop with status "blocked"`
+    };
+  }
+  return { allowed: true, rel };
+}
+function patchPaths(patchText) {
+  const out = [];
+  for (const line of patchText.split(`
+`)) {
+    const m = line.match(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+?)\s*$/);
+    if (m?.[1])
+      out.push(m[1]);
+  }
+  return out;
+}
+
+// src/policy/session-files.ts
+import { join as join3 } from "path";
+var sessionContextFile = (workspace, sessionId) => join3(workspace, ".factory", "sessions", `${sessionId}.json`);
+
+// src/policy/shell.ts
+import { isAbsolute as isAbsolute2, normalize as normalize2, relative as relative2, resolve as resolve2 } from "path";
+
+// src/policy/shell-parse.ts
+class ShellParseError extends Error {
+}
+var OPS = ["&&", "||", ";;", ";", "|&", "|", "&", "(", ")", `
+`];
+
+class Lexer {
+  src;
+  pos = 0;
+  tokens = [];
+  pendingHeredocs = [];
+  constructor(src) {
+    this.src = src;
+  }
+  peek(n = 0) {
+    return this.src.charAt(this.pos + n);
+  }
+  readParenBody() {
+    let depth = 1;
+    const start = this.pos;
+    let quote;
+    while (this.pos < this.src.length) {
+      const ch = this.src.charAt(this.pos);
+      if (quote) {
+        if (ch === "\\" && quote === '"')
+          this.pos++;
+        else if (ch === quote)
+          quote = undefined;
+      } else if (ch === "'" || ch === '"')
+        quote = ch;
+      else if (ch === "\\")
+        this.pos++;
+      else if (ch === "(")
+        depth++;
+      else if (ch === ")") {
+        depth--;
+        if (depth === 0) {
+          const body = this.src.slice(start, this.pos);
+          this.pos++;
+          return body;
+        }
+      }
+      this.pos++;
+    }
+    throw new ShellParseError("unterminated $( \u2026 )");
+  }
+  readBacktick() {
+    let out = "";
+    while (this.pos < this.src.length) {
+      const ch = this.src.charAt(this.pos++);
+      if (ch === "\\" && this.pos < this.src.length)
+        out += this.src.charAt(this.pos++);
+      else if (ch === "`")
+        return out;
+      else
+        out += ch;
+    }
+    throw new ShellParseError("unterminated backtick");
+  }
+  readWord() {
+    let value = "";
+    const subs = [];
+    const sub = (body) => subs.push(parseScript(body));
+    while (this.pos < this.src.length) {
+      const ch = this.peek();
+      if (/\s/.test(ch) || OPS.some((op) => this.src.startsWith(op, this.pos)) || this.isRedirStart())
+        break;
+      this.pos++;
+      if (ch === "\\") {
+        const next = this.src.charAt(this.pos++);
+        if (next !== `
+`)
+          value += next;
+      } else if (ch === "'") {
+        const end = this.src.indexOf("'", this.pos);
+        if (end === -1)
+          throw new ShellParseError("unterminated single quote");
+        value += this.src.slice(this.pos, end);
+        this.pos = end + 1;
+      } else if (ch === "$" && this.peek() === "'") {
+        this.pos++;
+        value += this.readAnsiC();
+      } else if (ch === '"') {
+        value += this.readDouble(sub);
+      } else if (ch === "$" && this.peek() === "(" && this.peek(1) !== "(") {
+        this.pos++;
+        const body = this.readParenBody();
+        sub(body);
+        value += `$(${body})`;
+      } else if ((ch === "<" || ch === ">") && this.peek() === "(") {
+        this.pos++;
+        const body = this.readParenBody();
+        sub(body);
+        value += `${ch}(${body})`;
+      } else if (ch === "`") {
+        const body = this.readBacktick();
+        sub(body);
+        value += `$(${body})`;
+      } else {
+        value += ch;
+      }
+    }
+    return { t: "word", value, subs };
+  }
+  readAnsiC() {
+    let out = "";
+    const map = {
+      n: `
+`,
+      t: "\t",
+      r: "\r",
+      "\\": "\\",
+      "'": "'",
+      '"': '"',
+      a: "\x07",
+      e: "\x1B"
+    };
+    while (this.pos < this.src.length) {
+      const ch = this.src.charAt(this.pos++);
+      if (ch === "'")
+        return out;
+      if (ch !== "\\") {
+        out += ch;
+        continue;
+      }
+      const esc = this.src.charAt(this.pos++);
+      if (esc === "x") {
+        const hex = this.src.slice(this.pos).match(/^[0-9a-fA-F]{1,2}/)?.[0] ?? "";
+        this.pos += hex.length;
+        out += String.fromCharCode(Number.parseInt(hex || "0", 16));
+      } else if (/[0-7]/.test(esc)) {
+        const oct = esc + (this.src.slice(this.pos).match(/^[0-7]{0,2}/)?.[0] ?? "");
+        this.pos += oct.length - 1;
+        out += String.fromCharCode(Number.parseInt(oct, 8));
+      } else {
+        out += map[esc] ?? esc;
+      }
+    }
+    throw new ShellParseError("unterminated $'\u2026'");
+  }
+  readDouble(sub) {
+    let out = "";
+    while (this.pos < this.src.length) {
+      const ch = this.src.charAt(this.pos++);
+      if (ch === '"')
+        return out;
+      if (ch === "\\") {
+        const next = this.src.charAt(this.pos++);
+        out += '$`"\\\n'.includes(next) ? next === `
+` ? "" : next : `\\${next}`;
+      } else if (ch === "$" && this.peek() === "(" && this.peek(1) !== "(") {
+        this.pos++;
+        const body = this.readParenBody();
+        sub(body);
+        out += `$(${body})`;
+      } else if (ch === "`") {
+        const body = this.readBacktick();
+        sub(body);
+        out += `$(${body})`;
+      } else {
+        out += ch;
+      }
+    }
+    throw new ShellParseError("unterminated double quote");
+  }
+  isRedirStart() {
+    const rest = this.src.slice(this.pos);
+    if (/^\d*(<<<|<<-|<<|>>|>&|<&|<>|>\||>|<)/.test(rest) && !/^\d*[<>]\(/.test(rest)) {
+      return /^\d+[<>]/.test(rest) ? true : /^[<>]/.test(rest);
+    }
+    return /^&>/.test(rest);
+  }
+  readHeredocs() {
+    for (const doc of this.pendingHeredocs.splice(0)) {
+      const lines = [];
+      for (;; ) {
+        if (this.pos >= this.src.length)
+          throw new ShellParseError(`here-document ${doc.delim} not terminated`);
+        const nl = this.src.indexOf(`
+`, this.pos);
+        const line = this.src.slice(this.pos, nl === -1 ? undefined : nl);
+        this.pos = nl === -1 ? this.src.length : nl + 1;
+        const check = doc.strip ? line.replace(/^\t+/, "") : line;
+        if (check === doc.delim)
+          break;
+        lines.push(check);
+      }
+      doc.set(lines.join(`
+`));
+    }
+  }
+  lex() {
+    while (this.pos < this.src.length) {
+      const ch = this.peek();
+      if (ch === `
+`) {
+        this.pos++;
+        this.tokens.push({ t: "op", value: `
+` });
+        this.readHeredocs();
+        continue;
+      }
+      if (/\s/.test(ch)) {
+        this.pos++;
+        continue;
+      }
+      if (ch === "#" && (this.tokens.length === 0 || this.src.charAt(this.pos - 1).match(/\s|;/))) {
+        const nl = this.src.indexOf(`
+`, this.pos);
+        this.pos = nl === -1 ? this.src.length : nl;
+        continue;
+      }
+      if (this.isRedirStart()) {
+        const m = this.src.slice(this.pos).match(/^(\d*)(<<<|<<-|<<|&>>|&>|>>|>&|<&|<>|>\||>|<)/);
+        if (!m)
+          throw new ShellParseError("bad redirection");
+        this.pos += m[0].length;
+        this.tokens.push({ t: "redir", op: m[2] ?? "", ...m[1] ? { fd: m[1] } : {} });
+        continue;
+      }
+      const op = OPS.find((o) => this.src.startsWith(o, this.pos));
+      if (op) {
+        this.pos += op.length;
+        this.tokens.push({ t: "op", value: op });
+        continue;
+      }
+      const word = this.readWord();
+      const prev = this.tokens.at(-1);
+      if (prev?.t === "redir" && (prev.op === "<<" || prev.op === "<<-")) {
+        this.pendingHeredocs.push({
+          delim: word.value,
+          strip: prev.op === "<<-",
+          set: (body) => {
+            prev.body = body;
+          }
+        });
+      }
+      this.tokens.push(word);
+    }
+    if (this.pendingHeredocs.length > 0)
+      this.readHeredocs();
+    return this.tokens;
+  }
+}
+var SKIP_WORDS = new Set([
+  "then",
+  "else",
+  "elif",
+  "do",
+  "done",
+  "fi",
+  "esac",
+  "{",
+  "}",
+  "!",
+  "in"
+]);
+var HEADER_WORDS = new Set(["for", "select", "case"]);
+
+class Parser {
+  tokens;
+  i = 0;
+  constructor(tokens) {
+    this.tokens = tokens;
+  }
+  peek() {
+    return this.tokens[this.i];
+  }
+  script(stopAtParen) {
+    const pipelines = [];
+    for (;; ) {
+      const tok = this.peek();
+      if (tok === undefined)
+        break;
+      if (tok.t === "op" && tok.value === ")") {
+        if (stopAtParen)
+          break;
+        throw new ShellParseError("unexpected )");
+      }
+      if (tok.t === "op" && [";", `
+`, "&", "&&", "||", ";;"].includes(tok.value)) {
+        this.i++;
+        continue;
+      }
+      pipelines.push(this.pipeline());
+    }
+    return { pipelines };
+  }
+  pipeline() {
+    const commands = [this.command()];
+    for (;; ) {
+      const tok = this.peek();
+      if (tok?.t === "op" && (tok.value === "|" || tok.value === "|&")) {
+        this.i++;
+        commands.push(this.command());
+      } else {
+        return { commands };
+      }
+    }
+  }
+  redirect(tok, redirects) {
+    const target = this.tokens[this.i++];
+    if (target?.t !== "word")
+      throw new ShellParseError(`missing target for ${tok.op}`);
+    const body = tok.op === "<<<" ? target.value : tok.body;
+    redirects.push({ op: tok.op, target: target.value, ...body === undefined ? {} : { body } });
+  }
+  command() {
+    const first = this.peek();
+    if (first?.t === "op" && first.value === "(") {
+      this.i++;
+      const script = this.script(true);
+      const close = this.tokens[this.i++];
+      if (close?.t !== "op" || close.value !== ")")
+        throw new ShellParseError("unterminated (");
+      const redirects2 = [];
+      while (this.peek()?.t === "redir") {
+        const r = this.tokens[this.i++];
+        this.redirect(r, redirects2);
+      }
+      return { kind: "subshell", script, redirects: redirects2 };
+    }
+    const assigns = [];
+    const words = [];
+    const redirects = [];
+    const substitutions = [];
+    for (;; ) {
+      const tok = this.peek();
+      if (tok === undefined || tok.t === "op") {
+        if (tok?.t === "op" && tok.value === "(" && words.length === 1 && this.tokens[this.i + 1]?.t === "op") {
+          this.i += 2;
+          words.length = 0;
+          continue;
+        }
+        break;
+      }
+      this.i++;
+      if (tok.t === "redir") {
+        this.redirect(tok, redirects);
+        continue;
+      }
+      substitutions.push(...tok.subs);
+      if (words.length === 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tok.value))
+        assigns.push(tok.value);
+      else if (words.length === 0 && SKIP_WORDS.has(tok.value))
+        continue;
+      else
+        words.push(tok.value);
+    }
+    if (words.length > 0 && HEADER_WORDS.has(words[0] ?? "")) {
+      return { kind: "simple", assigns, words: [], redirects, substitutions };
+    }
+    return { kind: "simple", assigns, words, redirects, substitutions };
+  }
+}
+function parseScript(src) {
+  return new Parser(new Lexer(src).lex()).script(false);
+}
+
+// src/policy/shell.ts
+class Blocked extends Error {
+}
+function block(reason) {
+  throw new Blocked(reason);
+}
+var SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "ash", "busybox"]);
+var INTERPRETERS = {
+  python: ["-c"],
+  python3: ["-c"],
+  node: ["-e", "--eval", "-p", "--print"],
+  bun: ["-e", "--eval", "-p", "--print"],
+  deno: ["eval"],
+  perl: ["-e", "-E"],
+  ruby: ["-e"],
+  php: ["-r"]
+};
+var DOWNLOADERS = new Set(["curl", "wget", "fetch", "http", "https", "aria2c"]);
+var PRIVILEGE = new Set(["sudo", "doas", "su", "pkexec", "runas"]);
+var ENV_DUMPS = new Set(["printenv"]);
+var PROTECTED_ENV = /^(AI_FACTORY_|GIT_CONFIG_|GIT_DIR$|GIT_WORK_TREE$|GIT_INDEX_FILE$)/;
+var SAFE_WRITE_TARGETS = /^\/dev\/(null|stdout|stderr|tty|fd\/\d+)$/;
+function scanText(text) {
+  if (/\bgit\b[\s"',[\]()]+push\b/.test(text))
+    return "embedded code runs `git push`";
+  if (/\b(curl|wget)\b[^\n|]*\|\s*(ba|z|da)?sh\b/.test(text))
+    return "embedded code pipes a download into a shell";
+  return;
+}
+function home(state) {
+  return state.ctx.env?.HOME;
+}
+function resolvePath(state, word) {
+  let w = word;
+  if (w === "~" || w.startsWith("~/")) {
+    const h = home(state);
+    if (h === undefined)
+      return;
+    w = h + w.slice(1);
+  }
+  w = w.replace(/\$\{?(HOME|TMPDIR|PWD)\}?/g, (m, name) => {
+    if (name === "PWD")
+      return state.ctx.cwd;
+    return state.ctx.env?.[name] ?? m;
+  });
+  if (w.includes("$"))
+    return;
+  return normalize2(isAbsolute2(w) ? w : resolve2(state.ctx.cwd, w));
+}
+var within = (abs, dir) => {
+  const rel = relative2(dir, abs);
+  return rel === "" || !rel.startsWith("..") && !isAbsolute2(rel);
+};
+function tempDirs(state) {
+  return ["/tmp", "/private/tmp", state.ctx.env?.TMPDIR].filter((d) => !!d).map((d) => normalize2(d));
+}
+function checkWrite(state, word, what) {
+  if (SAFE_WRITE_TARGETS.test(word))
+    return;
+  const abs = resolvePath(state, word);
+  if (abs === undefined)
+    block(`${what} \`${word}\` depends on an unknown variable`);
+  else {
+    if (tempDirs(state).some((t) => within(abs, t)))
+      return;
+    if (!within(abs, state.ctx.root))
+      block(`${what} \`${word}\` is outside the session directory`);
+    const rel = relative2(state.ctx.root, abs);
+    if (rel === "")
+      block(`${what} the session directory itself`);
+    if (isProtectedPath(rel))
+      block(`${what} protected path \`${rel}\``);
+    if (isSecretPath(rel))
+      block(`${what} secret file \`${rel}\``);
+    state.written.add(abs);
+  }
+}
+function checkSecretArgs(words) {
+  for (const w of words) {
+    const value = w.startsWith("-") ? w.includes("=") ? w.slice(w.indexOf("=") + 1) : "" : w;
+    if (value !== "" && isSecretPath(value))
+      block(`touches secret file \`${value}\``);
+  }
+}
+function checkRedirects(state, redirects) {
+  for (const r of redirects) {
+    if (r.op === "<<" || r.op === "<<-" || r.op === "<<<")
+      continue;
+    if (r.op === ">&" || r.op === "<&") {
+      if (/^\d+-?$|^-$/.test(r.target))
+        continue;
+    }
+    if (isSecretPath(r.target))
+      block(`redirects to or from secret file \`${r.target}\``);
+    if (r.op !== "<")
+      checkWrite(state, r.target, "writes");
+  }
+}
+var flags = (words) => {
+  const out = new Set;
+  for (const w of words) {
+    if (w === "--")
+      break;
+    if (w.startsWith("--"))
+      out.add(w.split("=")[0] ?? w);
+    else if (w.startsWith("-") && w.length > 1)
+      for (const ch of w.slice(1))
+        out.add(`-${ch}`);
+  }
+  return out;
+};
+var positionals = (words) => {
+  const out = [];
+  let dashdash = false;
+  for (const w of words) {
+    if (!dashdash && w === "--")
+      dashdash = true;
+    else if (dashdash || !w.startsWith("-") || w === "-")
+      out.push(w);
+  }
+  return out;
+};
+var GIT_READ_ONLY = new Set([
+  "status",
+  "diff",
+  "log",
+  "show",
+  "blame",
+  "grep",
+  "ls-files",
+  "ls-tree",
+  "ls-remote",
+  "rev-parse",
+  "rev-list",
+  "merge-base",
+  "cat-file",
+  "describe",
+  "shortlog",
+  "show-ref",
+  "for-each-ref",
+  "name-rev",
+  "check-ignore",
+  "check-attr",
+  "var",
+  "help",
+  "version",
+  "whatchanged",
+  "range-diff",
+  "count-objects",
+  "verify-commit",
+  "verify-tag",
+  "cherry",
+  "show-branch",
+  "hash-object",
+  "archive",
+  "format-patch",
+  "difftool",
+  "annotate",
+  "patch-id",
+  "fsck"
+]);
+var GIT_LOCAL_WRITES = new Set([
+  "add",
+  "rm",
+  "mv",
+  "restore",
+  "stash",
+  "apply",
+  "fetch",
+  "commit",
+  "clean",
+  "reset",
+  "checkout"
+]);
+var SAFE_GIT_CONFIG_KEYS = /^(color\.|core\.quotepath$|advice\.|diff\.|log\.|format\.|pager\.|grep\.|status\.)/i;
+function checkGit(state, args) {
+  let i = 0;
+  while (i < args.length) {
+    const a = args[i] ?? "";
+    if (a === "-C") {
+      const dir = args[i + 1] ?? "";
+      const abs = resolvePath(state, dir);
+      if (abs === undefined || !within(abs, state.ctx.root))
+        block(`git -C \`${dir}\` points outside the session directory`);
+      i += 2;
+    } else if (a === "-c") {
+      const kv = args[i + 1] ?? "";
+      if (!SAFE_GIT_CONFIG_KEYS.test(kv))
+        block(`git -c ${kv.split("=")[0]} is not allowed`);
+      i += 2;
+    } else if (/^--(git-dir|work-tree|namespace|exec-path|config-env|super-prefix)/.test(a)) {
+      block(`git ${a.split("=")[0]} is not allowed`);
+    } else if (a.startsWith("-")) {
+      i += 1;
+    } else {
+      break;
+    }
+  }
+  const sub = args[i];
+  const rest = args.slice(i + 1);
+  if (sub === undefined || sub === "--version" || sub === "--help")
+    return;
+  const f = flags(rest);
+  const pos = positionals(rest);
+  switch (sub) {
+    case "push":
+      return block("git push is not allowed: the factory never pushes");
+    case "remote": {
+      const action = pos[0];
+      if (action === undefined || ["show", "get-url"].includes(action) || f.has("-v") && pos.length === 0)
+        return;
+      return block(`git remote ${action} changes remotes`);
+    }
+    case "config": {
+      const reads = [
+        "--get",
+        "--get-all",
+        "--get-regexp",
+        "--list",
+        "-l",
+        "--get-urlmatch",
+        "--show-origin",
+        "--show-scope"
+      ];
+      if (reads.some((r) => f.has(r)) || pos[0] === "get" || pos[0] === "list" || pos.length === 1)
+        return;
+      return block("git config writes are not allowed");
+    }
+    case "reset":
+      if (f.has("--hard") || f.has("--merge") || f.has("--keep") || f.has("--soft"))
+        return block(`git reset ${[...f].join(" ")} rewrites the branch`);
+      if (rest.includes("--") || pos.length === 0 || pos[0] === "HEAD" && pos.length > 1)
+        return;
+      return block("git reset to another commit rewrites the branch");
+    case "clean":
+      if (f.has("-f") || f.has("--force"))
+        return block("git clean -f deletes untracked files");
+      return;
+    case "checkout": {
+      if (f.has("-f") || f.has("--force") || f.has("-b") || f.has("-B") || f.has("--orphan") || f.has("--detach")) {
+        return block("git checkout may only restore files");
+      }
+      if (rest.includes("--"))
+        return;
+      const exists = state.ctx.exists;
+      if (pos.length > 0 && exists && pos.every((p) => exists(resolvePath(state, p) ?? "")))
+        return;
+      return block("git checkout may only restore files (use `git checkout -- <path>`)");
+    }
+    case "switch":
+      return block("switching branches is the factory's job");
+    case "branch": {
+      const mutating = [
+        "-d",
+        "-D",
+        "--delete",
+        "-m",
+        "-M",
+        "--move",
+        "-c",
+        "-C",
+        "--copy",
+        "-f",
+        "--force",
+        "-u",
+        "--set-upstream-to",
+        "--unset-upstream",
+        "--edit-description"
+      ];
+      if (mutating.some((m) => f.has(m)))
+        return block("git branch may only list branches");
+      if (pos.length > 0 && !f.has("--list") && !f.has("-l") && !f.has("--contains") && !f.has("--merged") && !f.has("--no-merged") && !f.has("--points-at")) {
+        return block("creating branches is the factory's job");
+      }
+      return;
+    }
+    case "tag":
+      if (f.has("-d") || f.has("--delete") || f.has("-f") || f.has("--force"))
+        return block("git tag deletion/force is not allowed");
+      if (pos.length > 0 && !f.has("-l") && !f.has("--list"))
+        return block("creating tags is not allowed");
+      return;
+    case "commit":
+      if (f.has("--amend") || f.has("--fixup") || f.has("--squash"))
+        return block("rewriting commits is not allowed");
+      if (f.has("--no-verify") || f.has("-n"))
+        return block("skipping commit hooks is not allowed");
+      return;
+    case "reflog":
+      if (pos[0] === "expire" || pos[0] === "delete")
+        return block("expiring the reflog destroys history");
+      return;
+    case "stash":
+      if (pos[0] === "clear" || pos[0] === "drop")
+        return block(`git stash ${pos[0]} discards work`);
+      return;
+    case "worktree":
+      if (pos[0] === "list")
+        return;
+      return block("worktrees are managed by the factory");
+    case "submodule":
+      if (pos[0] === undefined || pos[0] === "status" || pos[0] === "summary")
+        return;
+      return block(`git submodule ${pos[0]} is managed by the factory`);
+    case "lfs":
+      if (["ls-files", "status", "env", "version"].includes(pos[0] ?? ""))
+        return;
+      return block(`git lfs ${pos[0] ?? ""} is not allowed`);
+    case "gc":
+    case "prune":
+    case "repack":
+      if ([...f].some((x) => x.startsWith("--prune")))
+        return block("pruning objects destroys history");
+      return sub === "prune" ? block("git prune destroys history") : undefined;
+    case "rebase":
+    case "filter-branch":
+    case "filter-repo":
+    case "replace":
+    case "update-ref":
+    case "symbolic-ref":
+    case "merge":
+    case "pull":
+    case "cherry-pick":
+    case "revert":
+    case "am":
+    case "bisect":
+    case "init":
+    case "clone":
+    case "sparse-checkout":
+    case "notes":
+    case "mergetool":
+    case "send-email":
+    case "request-pull":
+    case "daemon":
+    case "http-push":
+    case "send-pack":
+      return block(`git ${sub} is not allowed for agents (history and branches belong to the factory)`);
+    default:
+      if (GIT_READ_ONLY.has(sub) || GIT_LOCAL_WRITES.has(sub))
+        return;
+      return block(`unknown git subcommand \`${sub}\` (git aliases are not allowed for agents)`);
+  }
+}
+function checkRm(state, args) {
+  for (const t of positionals(args)) {
+    const abs = resolvePath(state, t);
+    if (abs === undefined)
+      block(`rm \`${t}\` depends on an unknown variable`);
+    else if (!within(abs, state.ctx.root) && !tempDirs(state).some((d) => within(abs, d))) {
+      block(`rm \`${t}\` is outside the session directory`);
+    } else if (within(abs, state.ctx.root)) {
+      const rel = relative2(state.ctx.root, abs);
+      if (rel === "" || rel === ".")
+        block("rm of the whole session directory");
+      if (isProtectedPath(rel))
+        block(`rm of protected path \`${rel}\``);
+    }
+  }
+}
+function checkScriptFile(state, word, interpreter) {
+  const abs = resolvePath(state, word);
+  if (abs === undefined)
+    return block(`executes \`${word}\`, which depends on an unknown variable`);
+  if (state.written.has(abs))
+    return block(`executes \`${word}\`, which this same command writes`);
+  const text = state.ctx.readFile?.(abs);
+  if (text === undefined)
+    return;
+  const shebang = text.startsWith("#!") ? text.split(`
+`)[0] ?? "" : "";
+  const isShell = interpreter === "shell" ? shebang === "" || /\b(sh|bash|zsh|dash|ksh)\b/.test(shebang) : false;
+  if (isShell) {
+    checkScript(state, text);
+  } else {
+    const found = scanText(text);
+    if (found)
+      block(`${word}: ${found}`);
+  }
+}
+function unwrap(state, words) {
+  let w = words;
+  for (let guard = 0;guard < 20 && w.length > 0; guard++) {
+    const [head = "", ...rest] = w;
+    const alias = state.aliases.get(head);
+    if (alias) {
+      state.aliases.delete(head);
+      w = [...alias, ...rest];
+      continue;
+    }
+    const base = head.slice(head.lastIndexOf("/") + 1);
+    if (PRIVILEGE.has(base))
+      return block(`${base} is not allowed`);
+    if (base === "env") {
+      let i = 0;
+      while (i < rest.length) {
+        const a = rest[i] ?? "";
+        if (a === "-u" || a === "--unset") {
+          if (PROTECTED_ENV.test(rest[i + 1] ?? ""))
+            block(`unsets the factory's environment (${rest[i + 1]})`);
+          i += 2;
+        } else if (a.startsWith("--unset=")) {
+          if (PROTECTED_ENV.test(a.slice(8)))
+            block("unsets the factory's environment");
+          i += 1;
+        } else if (a === "-C" || a === "--chdir")
+          i += 2;
+        else if (a === "-S" || a === "--split-string") {
+          w = [...(rest[i + 1] ?? "").split(/\s+/).filter(Boolean), ...rest.slice(i + 2)];
+          i = -1;
+          break;
+        } else if (a.startsWith("-"))
+          i += 1;
+        else if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) {
+          if (PROTECTED_ENV.test(a.split("=")[0] ?? ""))
+            block(`overrides the factory's environment (${a.split("=")[0]})`);
+          i += 1;
+        } else
+          break;
+      }
+      if (i === -1)
+        continue;
+      if (i >= rest.length)
+        return block("printing the environment may expose secrets");
+      w = rest.slice(i);
+      continue;
+    }
+    if (["nohup", "time", "command", "builtin", "exec", "chronic", "caffeinate", "unbuffer"].includes(base)) {
+      if (base === "command" && (rest[0] === "-v" || rest[0] === "-V"))
+        return [];
+      w = rest.filter((x, idx) => !(idx === 0 && x.startsWith("-") && x.length <= 3));
+      continue;
+    }
+    if (base === "nice" || base === "ionice" || base === "stdbuf" || base === "timeout" || base === "flock") {
+      let i = 0;
+      while (i < rest.length && (rest[i] ?? "").startsWith("-")) {
+        const a = rest[i] ?? "";
+        i += /^-(n|c|p|k|s|i|o|e|w)$/.test(a) || ["--signal", "--kill-after", "--adjustment"].includes(a) ? 2 : 1;
+      }
+      if (base === "timeout")
+        i += 1;
+      if (base === "flock") {
+        const c = rest.indexOf("-c");
+        if (c !== -1) {
+          checkScript(state, rest[c + 1] ?? "");
+          return [];
+        }
+        i += 1;
+      }
+      w = rest.slice(i);
+      continue;
+    }
+    if (base === "xargs") {
+      let i = 0;
+      while (i < rest.length && (rest[i] ?? "").startsWith("-")) {
+        const a = rest[i] ?? "";
+        i += /^-[IdEnLPsa]$/.test(a) || /^--(replace|delimiter|eof|max-args|max-lines|max-procs|max-chars|arg-file)$/.test(a) ? 2 : 1;
+      }
+      w = rest.slice(i);
+      if (w.length === 0)
+        return [];
+      continue;
+    }
+    if (base === "watch") {
+      let i = 0;
+      while (i < rest.length && (rest[i] ?? "").startsWith("-"))
+        i += /^-(n|d)$/.test(rest[i] ?? "") ? 2 : 1;
+      checkScript(state, rest.slice(i).join(" "));
+      return [];
+    }
+    return w;
+  }
+  return w;
+}
+function checkSimple(state, cmd, stdin) {
+  for (const sub of cmd.substitutions)
+    checkScriptAst(state, sub);
+  checkRedirects(state, cmd.redirects);
+  for (const a of cmd.assigns) {
+    if (PROTECTED_ENV.test(a.split("=")[0] ?? ""))
+      block(`overrides the factory's environment (${a.split("=")[0]})`);
+  }
+  const words = unwrap(state, cmd.words);
+  if (words.length === 0)
+    return;
+  checkSecretArgs(words);
+  const [head = "", ...args] = words;
+  if (head.includes("$"))
+    block(`runs a command whose name is generated at run time (\`${head}\`)`);
+  const base = head.slice(head.lastIndexOf("/") + 1);
+  const heredoc = cmd.redirects.find((r) => r.body !== undefined)?.body;
+  if (base === "alias") {
+    for (const def of args) {
+      const m = def.match(/^([^=]+)=(.*)$/s);
+      if (m?.[1] && m[2] !== undefined) {
+        const value = m[2];
+        checkScript(state, value);
+        state.aliases.set(m[1], value.split(/\s+/).filter(Boolean));
+      }
+    }
+    return;
+  }
+  if (base === "unset" || base === "export" || base === "declare" || base === "typeset" || base === "readonly") {
+    if (args.length === 0 || args.every((a) => a.startsWith("-")))
+      block(`${base} without names dumps the environment`);
+    for (const a of args)
+      if (PROTECTED_ENV.test(a.split("=")[0] ?? ""))
+        block(`changes the factory's environment (${a.split("=")[0]})`);
+    return;
+  }
+  if (base === "set" && args.length === 0)
+    block("set without arguments dumps the environment");
+  if (ENV_DUMPS.has(base))
+    block("printing the environment may expose secrets");
+  if (SHELLS.has(base)) {
+    const f = args.findIndex((a) => /^-[a-z]*c[a-z]*$/.test(a));
+    if (f !== -1)
+      return checkScript(state, args[f + 1] ?? "");
+    const file = args.find((a) => !a.startsWith("-"));
+    if (file !== undefined)
+      return checkScriptFile(state, file, "shell");
+    const text = heredoc ?? stdin;
+    if (text === null)
+      block(`pipes generated input into ${base}`);
+    if (text !== undefined)
+      checkScript(state, text);
+    return;
+  }
+  if (base === "source" || base === ".") {
+    if (args[0] !== undefined)
+      checkScriptFile(state, args[0], "shell");
+    return;
+  }
+  if (base === "eval")
+    return checkScript(state, args.join(" "));
+  const inline = INTERPRETERS[base.replace(/\d+(\.\d+)*$/, "")] ?? INTERPRETERS[base];
+  if (inline) {
+    const i = args.findIndex((a) => inline.includes(a));
+    if (i !== -1) {
+      const found = scanText(args[i + 1] ?? "");
+      if (found)
+        block(found);
+      return;
+    }
+    const file = args.find((a) => !a.startsWith("-"));
+    if (file !== undefined)
+      checkScriptFile(state, file, "other");
+    else if (stdin === null)
+      block(`pipes generated input into ${base}`);
+    return;
+  }
+  if (head.includes("/"))
+    checkScriptFile(state, head, "shell");
+  switch (base) {
+    case "git":
+      return checkGit(state, args);
+    case "rm":
+    case "rmdir":
+    case "unlink":
+    case "shred":
+      return checkRm(state, args);
+    case "find": {
+      const exec = args.findIndex((a) => ["-exec", "-execdir", "-ok", "-okdir"].includes(a));
+      if (exec !== -1) {
+        const end = args.findIndex((a, i) => i > exec && (a === ";" || a === "+"));
+        checkSimple(state, {
+          kind: "simple",
+          assigns: [],
+          words: args.slice(exec + 1, end === -1 ? undefined : end),
+          redirects: [],
+          substitutions: []
+        }, undefined);
+      }
+      if (args.includes("-delete"))
+        for (const p of args.filter((a) => !a.startsWith("-")).slice(0, 1))
+          checkRm(state, [p]);
+      return;
+    }
+    case "tee":
+      for (const p of positionals(args))
+        checkWrite(state, p, "writes");
+      return;
+    case "cp":
+    case "install":
+    case "ln":
+    case "rsync": {
+      const p = positionals(args);
+      const dest = p.at(-1);
+      if (dest !== undefined && p.length > 1)
+        checkWrite(state, dest, "writes");
+      return;
+    }
+    case "mv":
+      for (const p of positionals(args))
+        checkWrite(state, p, "moves");
+      return;
+    case "touch":
+    case "mkdir":
+    case "truncate":
+    case "chmod":
+    case "chown":
+    case "chgrp": {
+      const p = positionals(args);
+      for (const t of base === "chmod" || base === "chown" || base === "chgrp" ? p.slice(1) : p)
+        checkWrite(state, t, "writes");
+      return;
+    }
+    case "sed":
+    case "perl":
+      if (flags(args).has("-i") || args.some((a) => a.startsWith("-i"))) {
+        for (const p of positionals(args).slice(1))
+          checkWrite(state, p, "edits");
+      }
+      return;
+    case "dd":
+      for (const a of args.filter((x) => x.startsWith("of=")))
+        checkWrite(state, a.slice(3), "writes");
+      return;
+    case "graphify": {
+      const sub = args.find((a) => !a.startsWith("-"));
+      if (sub && ["query", "explain", "path", "affected", "god-nodes"].includes(sub))
+        return;
+      return block(`graphify ${sub ?? ""} is not allowed: the factory updates the graph`);
+    }
+    case "npm":
+    case "pnpm":
+    case "yarn":
+    case "bun":
+      if (args.some((a) => a === "publish" || a === "login" || a === "adduser" || a === "unpublish" || a === "deprecate")) {
+        return block(`${base} publishing is not allowed`);
+      }
+      return;
+    case "cargo":
+    case "twine":
+    case "gem":
+    case "poetry":
+    case "uv":
+      if (args.some((a) => a === "publish" || a === "upload" || a === "push" || a === "yank"))
+        return block(`${base} publishing is not allowed`);
+      return;
+    case "gh":
+    case "glab":
+      return block(`${base} is not available to agents (no MRs, no remote changes)`);
+    case "ssh":
+    case "scp":
+    case "sftp":
+      return block(`${base} is not allowed`);
+    default:
+      return;
+  }
+}
+function literalOutput(cmd) {
+  if (cmd.kind !== "simple" || cmd.substitutions.length > 0)
+    return;
+  const [head, ...args] = cmd.words;
+  if (head === "echo")
+    return args.filter((a) => !/^-[neE]+$/.test(a)).join(" ");
+  if (head === "printf")
+    return args[0]?.replace(/\\n/g, `
+`);
+  if (head === "cat" && args.length === 0)
+    return cmd.redirects.find((r) => r.body !== undefined)?.body;
+  return;
+}
+function checkPipeline(state, pipeline) {
+  const { commands } = pipeline;
+  commands.forEach((cmd, i) => {
+    const prev = commands[i - 1];
+    let stdin;
+    if (prev !== undefined) {
+      const prevWords = prev.kind === "simple" ? prev.words : [];
+      const prevBase = (prevWords[0] ?? "").slice((prevWords[0] ?? "").lastIndexOf("/") + 1);
+      if (DOWNLOADERS.has(prevBase) && cmd.kind === "simple") {
+        const base = (cmd.words[0] ?? "").slice((cmd.words[0] ?? "").lastIndexOf("/") + 1);
+        if (SHELLS.has(base) || base in INTERPRETERS || base === "eval" || base === "source") {
+          block(`pipes a download (${prevBase}) into ${base}`);
+        }
+      }
+      stdin = literalOutput(prev) ?? null;
+    }
+    if (cmd.kind === "subshell") {
+      checkRedirects(state, cmd.redirects);
+      checkScriptAst(state, cmd.script);
+    } else {
+      checkSimple(state, cmd, stdin);
+    }
+  });
+}
+function checkScriptAst(state, script) {
+  if (++state.depth > 25)
+    block("command nests too deeply to inspect");
+  try {
+    for (const p of script.pipelines)
+      checkPipeline(state, p);
+  } finally {
+    state.depth--;
+  }
+}
+function checkScript(state, text) {
+  checkScriptAst(state, parseScript(text));
+  return;
+}
+function checkShell(command, ctx) {
+  const state = { ctx, aliases: new Map, depth: 0, written: new Set };
+  try {
+    checkScript(state, command);
+    return { allowed: true };
+  } catch (err) {
+    if (err instanceof Blocked)
+      return { allowed: false, reason: err.message };
+    if (err instanceof ShellParseError)
+      return { allowed: false, reason: `cannot parse the command (${err.message}); simplify it` };
+    throw err;
+  }
+}
+
+// src/plugin/entry.ts
+var FACTORY_AGENTS = new Set([
+  "orchestrator",
+  "architect",
+  "explorer",
+  "reviewer",
+  "contract-reviewer",
+  "tester"
+]);
+var isFactoryAgent = (agent) => FACTORY_AGENTS.has(agent) || agent.startsWith("implementer-");
+var MAX_SCRIPT_BYTES = 256 * 1024;
+function readText(abs) {
+  try {
+    if (statSync3(abs).size > MAX_SCRIPT_BYTES)
+      return;
+    const text = readFileSync2(abs, "utf8");
+    return text.includes("\x00") ? undefined : text;
+  } catch {
+    return;
+  }
+}
+function loadContext(workspace, sessionID) {
+  try {
+    return parseSessionContext(JSON.parse(readFileSync2(sessionContextFile(workspace, sessionID), "utf8")));
+  } catch {
+    return;
+  }
+}
+var str = (v) => typeof v === "string" ? v : undefined;
+var field = (input, ...keys) => {
+  if (typeof input !== "object" || input === null)
+    return;
+  const rec = input;
+  for (const k of keys) {
+    const v = str(rec[k]);
+    if (v !== undefined)
+      return v;
+  }
+  return;
+};
+
+class Refused extends Error {
+  constructor(reason) {
+    super(`ai-factory blocked this call: ${reason}`);
+  }
+}
+var reads = new Map;
+function guard(workspace, event) {
+  const ctx = loadContext(workspace, event.sessionID);
+  if (ctx === undefined)
+    throw new Refused(`no session context for ${event.sessionID}`);
+  const approved = () => {
+    const check = checkApprovalHash(workspace, ctx.changeId);
+    return check.valid ? true : check.reason;
+  };
+  const input = event.input;
+  switch (event.tool) {
+    case "shell": {
+      const command = field(input, "command") ?? "";
+      const workdir = field(input, "workdir");
+      const cwd = workdir === undefined ? ctx.directory : resolve3(ctx.directory, workdir);
+      const root = ctx.role === "architect" ? ctx.workspace : ctx.directory;
+      if (!`${cwd}/`.startsWith(`${root}/`) && cwd !== root)
+        throw new Refused(`workdir ${workdir} is outside your directory`);
+      const verdict = checkShell(command, {
+        cwd,
+        root,
+        env: process.env,
+        readFile: readText,
+        exists: (abs) => existsSync3(abs)
+      });
+      if (!verdict.allowed)
+        throw new Refused(verdict.reason);
+      return { ctx };
+    }
+    case "edit":
+    case "write": {
+      const path = field(input, "path", "filePath") ?? "";
+      const verdict = checkEdit(ctx, path, approved);
+      if (!verdict.allowed)
+        throw new Refused(verdict.reason);
+      return { ctx };
+    }
+    case "patch":
+    case "apply_patch": {
+      for (const path of patchPaths(field(input, "patchText", "patch") ?? "")) {
+        const verdict = checkEdit(ctx, path, approved);
+        if (!verdict.allowed)
+          throw new Refused(verdict.reason);
+      }
+      return { ctx };
+    }
+    case "read": {
+      const path = field(input, "path", "filePath") ?? "";
+      if (isSecretPath(path))
+        throw new Refused(`\`${path}\` is a secret file`);
+      const abs = isAbsolute3(path) ? path : join4(ctx.directory, path);
+      try {
+        const st = statSync3(abs);
+        const stamp = `${st.mtimeMs}:${st.size}`;
+        const seen = reads.get(event.sessionID) ?? new Map;
+        reads.set(event.sessionID, seen);
+        const note = seen.get(abs) === stamp ? "repeated read of an unchanged file" : undefined;
+        seen.set(abs, stamp);
+        return note === undefined ? { ctx } : { ctx, note };
+      } catch {
+        return { ctx };
+      }
+    }
+    case "glob":
+    case "grep": {
+      const path = field(input, "path", "pattern");
+      if (path !== undefined && isSecretPath(path))
+        throw new Refused(`\`${path}\` is a secret file`);
+      return { ctx };
+    }
+    default:
+      return { ctx };
+  }
+}
+var summarize = (input) => {
+  if (typeof input !== "object" || input === null)
+    return input;
+  const out = {};
+  for (const [k, v] of Object.entries(input)) {
+    out[k] = typeof v === "string" && v.length > 2000 ? `${v.slice(0, 2000)}\u2026 (${v.length} chars)` : k === "content" ? `(${String(v).length} chars)` : v;
+  }
+  return out;
+};
+var entry_default = {
+  id: "ai-factory",
+  async setup(ctx) {
+    const workspace = process.env.AI_FACTORY_WORKSPACE;
+    if (workspace === undefined)
+      return;
+    await ctx.tool.hook("execute.before", (event) => {
+      if (!isFactoryAgent(event.agent))
+        return;
+      let changeId = "unknown";
+      try {
+        const { ctx: session, note } = guard(workspace, event);
+        changeId = session.changeId;
+        appendLog(workspace, changeId, {
+          kind: note === undefined ? "tool" : "waste",
+          session: event.sessionID,
+          agent: event.agent,
+          tool: event.tool,
+          input: summarize(event.input),
+          ...note === undefined ? {} : { note }
+        });
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        appendLog(workspace, changeId === "unknown" ? loadContext(workspace, event.sessionID)?.changeId ?? "unknown" : changeId, {
+          kind: "blocked",
+          session: event.sessionID,
+          agent: event.agent,
+          tool: event.tool,
+          input: summarize(event.input),
+          reason
+        });
+        throw err instanceof Refused ? err : new Refused(reason);
+      }
+    });
+    await ctx.tool.hook("execute.after", (event) => {
+      if (!isFactoryAgent(event.agent))
+        return;
+      const session = loadContext(workspace, event.sessionID);
+      appendLog(workspace, session?.changeId ?? "unknown", {
+        kind: "tool-result",
+        session: event.sessionID,
+        agent: event.agent,
+        tool: event.tool,
+        status: event.status
+      });
+    });
+  }
+};
+export {
+  entry_default as default
+};

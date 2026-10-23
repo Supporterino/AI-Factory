@@ -10,6 +10,7 @@ import graphRules from "../../templates/agents/shared/graph.md" with { type: "te
 import handoffRules from "../../templates/agents/shared/handoff.md" with { type: "text" };
 import untrusted from "../../templates/agents/shared/untrusted.md" with { type: "text" };
 import tester from "../../templates/agents/tester.md" with { type: "text" };
+import factoryPlugin from "../../templates/plugin/factory-plugin.txt" with { type: "text" };
 import {
   FactoryConfig,
   LANGUAGES,
@@ -270,6 +271,12 @@ export function renderWorkspace(config: FactoryConfig): ManagedFile[] {
       template: "opencode-config",
       mode: "file",
       content: renderOpencodeConfig(),
+    },
+    {
+      path: ".opencode/plugins/factory.js",
+      template: "plugin",
+      mode: "file",
+      content: factoryPlugin,
     },
     {
       path: ".opencode/schemas/handoff.schema.json",
