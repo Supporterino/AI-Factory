@@ -2,7 +2,7 @@ import { z } from "zod";
 import { PONYTAIL } from "../versions.ts";
 
 /** Current `factory.config.jsonc` schema version. Bump only together with a migration. */
-export const CONFIG_SCHEMA_VERSION = 1;
+export const CONFIG_SCHEMA_VERSION = 2;
 
 export const CONFIG_FILE = "factory.config.jsonc";
 
@@ -136,10 +136,16 @@ const LogsConfig = z.strictObject({
   redact: z.boolean().default(true),
 });
 
+/** v2 default: also vendored deps, build caches and coverage output (migration 001). */
 export const DEFAULT_GRAPH_EXCLUDE = [
   "**/node_modules/**",
+  "**/vendor/**",
   "**/target/**",
   "**/dist/**",
+  "**/build/**",
+  "**/coverage/**",
+  "**/.next/**",
+  "**/__pycache__/**",
   "**/.venv/**",
   ".factory/**",
   "graphify-out/**",

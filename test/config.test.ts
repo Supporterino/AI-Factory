@@ -17,7 +17,7 @@ const MODELS = {
 };
 
 const submodules = (): FactoryConfigInput => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   layout: "submodules",
   repos: [
     { name: "ai", path: ".", role: "orchestration", languages: [] },
@@ -73,7 +73,7 @@ describe("FactoryConfig schema", () => {
 
   test("rejects unknown keys and bad values", () => {
     expect(issues({ ...submodules(), extra: 1 })).toEqual([': Unrecognized key: "extra"']);
-    expect(issues({ ...submodules(), schemaVersion: 2 })[0]).toStartWith("schemaVersion:");
+    expect(issues({ ...submodules(), schemaVersion: 3 })[0]).toStartWith("schemaVersion:");
     expect(issues({ ...submodules(), models: { ...MODELS, implementer: "sonnet" } })).toEqual([
       'models.implementer: expected "provider/model"',
     ]);
@@ -125,7 +125,7 @@ describe("FactoryConfig schema", () => {
 
   test("single layout needs exactly one code repo at '.'", () => {
     const single: FactoryConfigInput = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       layout: "single",
       repos: [{ name: "app", path: ".", languages: ["typescript"] }],
       models: MODELS,
@@ -146,7 +146,7 @@ describe("FactoryConfig schema", () => {
 describe("JSONC config text", () => {
   const TEXT = `{
   // Layout of the workspace
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "layout": "single", /* detected */
   "repos": [
     { "name": "app", "path": ".", "languages": ["typescript"] }, // the only repo
@@ -170,7 +170,7 @@ describe("JSONC config text", () => {
   });
 
   test("reports schema errors per field", () => {
-    expect(() => parseConfigText('{"schemaVersion": 1}', "f.jsonc")).toThrow(ConfigError);
+    expect(() => parseConfigText('{"schemaVersion": 2}', "f.jsonc")).toThrow(ConfigError);
   });
 
   test("targeted edits keep comments", () => {

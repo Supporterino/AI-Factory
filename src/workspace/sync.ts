@@ -31,11 +31,15 @@ export interface SyncOptions {
   readonly force?: boolean;
   readonly restore?: boolean;
   readonly adopt?: readonly string[];
+  /** Three-way merge user-edited files with the new templates (`update`). */
+  readonly merge?: boolean;
 }
 
 export interface SyncResult {
   readonly plan: PlannedChange[];
   readonly lock: Lock;
+  readonly merged: string[];
+  readonly conflicts: string[];
   readonly hooks: { repo: string; result: HookStatus }[];
 }
 
@@ -80,7 +84,9 @@ export async function syncWorkspace(
   const previous = readLock(root)?.managed ?? {};
   const plan = planWorkspace(root, config, options);
 
-  const managed = await executeSync(root, plan, previous);
+  const { managed, merged, conflicts } = await executeSync(root, plan, previous, {
+    ...(options.merge ? { merge: true } : {}),
+  });
   const ponytail = config.addons.ponytail;
   const lock = buildLock(
     managed,
@@ -100,7 +106,7 @@ export async function syncWorkspace(
   for (const repo of config.repos) {
     hooks.push({ repo: repo.name, result: await installPrePush(join(root, repo.path)) });
   }
-  return { plan, lock, hooks };
+  return { plan, lock, hooks, merged, conflicts };
 }
 
 /** Install paths with uncommitted changes, which an install commit would sweep in. */

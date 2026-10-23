@@ -13,7 +13,7 @@ import { type Files, writeFiles } from "./fixtures/workspaces.ts";
 const M = "a/b";
 function config(extra: Partial<FactoryConfigInput> = {}, languages: Language[] = ["typescript"]) {
   return FactoryConfig.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     layout: "single",
     repos: [{ name: "app", path: ".", languages }],
     models: { orchestrator: M, architect: M, reviewer: M, implementer: M, tester: M, explorer: M },

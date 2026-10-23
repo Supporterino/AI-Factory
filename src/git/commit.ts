@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { git, gitOk } from "../exec.ts";
 
 /**
@@ -48,18 +50,29 @@ export async function commitAll(
   return gitOk(["rev-parse", "HEAD"], { cwd: dir });
 }
 
-/** Commits only `paths` (other staged work is left alone). */
+/**
+ * Commits only `paths` (other staged work is left alone). Paths that neither exist nor are
+ * tracked are skipped (git rejects pathspecs that match nothing).
+ */
 export async function commitPaths(
   dir: string,
   paths: readonly string[],
   subject: string,
   trailers: Trailers = {},
 ): Promise<string | undefined> {
-  if (paths.length === 0) return undefined;
-  await gitOk(["add", "-A", "--", ...paths], { cwd: dir });
-  if ((await git(["diff", "--cached", "--quiet", "--", ...paths], { cwd: dir })).code === 0)
+  const usable: string[] = [];
+  for (const p of paths) {
+    if (
+      existsSync(join(dir, p)) ||
+      (await git(["ls-files", "--error-unmatch", "--", p], { cwd: dir })).code === 0
+    )
+      usable.push(p);
+  }
+  if (usable.length === 0) return undefined;
+  await gitOk(["add", "-A", "--", ...usable], { cwd: dir });
+  if ((await git(["diff", "--cached", "--quiet", "--", ...usable], { cwd: dir })).code === 0)
     return undefined;
-  await gitOk(["commit", "-q", "--no-verify", ...message(subject, trailers), "--", ...paths], {
+  await gitOk(["commit", "-q", "--no-verify", ...message(subject, trailers), "--", ...usable], {
     cwd: dir,
   });
   return gitOk(["rev-parse", "HEAD"], { cwd: dir });

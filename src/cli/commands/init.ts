@@ -1,14 +1,15 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { findWorkspaceRoot, loadConfig, parseConfigText } from "../../config/load.ts";
 import { renderInitialConfig } from "../../config/render.ts";
 import { CONFIG_FILE } from "../../config/schema.ts";
 import { detectWorkspace } from "../../detect/workspace.ts";
 import { PreconditionError } from "../../errors.ts";
-import { execOk, gitOk } from "../../exec.ts";
+import { gitOk } from "../../exec.ts";
 import { graphFile, updateGraph } from "../../graph/graph.ts";
 import type { SyncAction } from "../../managed/sync.ts";
-import { checkTools, type ToolName, toolBin, toolEnv } from "../../tools.ts";
+import { initOpenspec } from "../../openspec/cli.ts";
+import { checkTools, type ToolName } from "../../tools.ts";
 import { FACTORY_VERSION } from "../../version.ts";
 import {
   commitInstall,
@@ -45,25 +46,6 @@ const REPORTED: Partial<Record<SyncAction, string>> = {
   "keep-deleted": "kept deleted",
   "keep-removed-edit": "no longer managed; kept your edited copy",
 };
-
-/** OpenSpec's opencode files, with a private config dir so output does not depend on ~/.config. */
-async function openspecInit(root: string): Promise<void> {
-  const xdg = join(root, ".factory", "cache", "openspec-xdg");
-  mkdirSync(xdg, { recursive: true });
-  await execOk(
-    [
-      toolBin("openspec"),
-      "init",
-      "--tools",
-      "opencode",
-      "--profile",
-      "core",
-      "--no-animation",
-      root,
-    ],
-    { cwd: root, env: { ...toolEnv("openspec"), XDG_CONFIG_HOME: xdg }, timeoutMs: 120_000 },
-  );
-}
 
 export const initCommand: Command = {
   name: "init",
@@ -120,7 +102,7 @@ export const initCommand: Command = {
       .filter((c) => c.action === "create")
       .map((c) => c.path);
     if (configText !== undefined) writeFileSync(configPath, configText);
-    await openspecInit(root);
+    await initOpenspec(root);
     const result = await syncWorkspace(root, config, { force: values.force, adopt: created });
     const commit = values["no-commit"]
       ? undefined

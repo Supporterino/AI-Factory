@@ -1,7 +1,7 @@
 import type { Detection } from "../detect/workspace.ts";
 import { toRepoConfig } from "../detect/workspace.ts";
 import { PONYTAIL } from "../versions.ts";
-import { DEFAULT_GRAPH_EXCLUDE } from "./schema.ts";
+import { CONFIG_SCHEMA_VERSION, DEFAULT_GRAPH_EXCLUDE } from "./schema.ts";
 
 /** Default model per role: strong models plan and review, fast ones do the volume (§11). */
 export const DEFAULT_MODELS = {
@@ -29,7 +29,7 @@ export function renderInitialConfig(detection: Detection): string {
 // Detection only proposes values: edit freely, and use \`ai-factory detect\` to see drift.
 {
   "$schema": "./.opencode/schemas/factory.config.schema.json",
-  "schemaVersion": 1,
+  "schemaVersion": ${CONFIG_SCHEMA_VERSION},
   "layout": ${json(detection.layout)},
 
   // Repos are matched by path. "languages" selects the stacked standards per implementer.

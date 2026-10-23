@@ -4,7 +4,7 @@ import type { z } from "zod";
 import { ConfigError } from "../errors.ts";
 import { git } from "../exec.ts";
 import { parseJsonc } from "./jsonc.ts";
-import { CONFIG_FILE, FactoryConfig } from "./schema.ts";
+import { CONFIG_FILE, CONFIG_SCHEMA_VERSION, FactoryConfig } from "./schema.ts";
 
 export interface LoadedConfig {
   readonly root: string;
@@ -52,6 +52,13 @@ export function parseConfigText(text: string, file: string): FactoryConfig {
   const { value, errors } = parseJsonc(text);
   if (errors.length > 0) {
     throw new ConfigError(`${file} is not valid JSONC`, errors);
+  }
+  const version = (value as { schemaVersion?: unknown } | undefined)?.schemaVersion;
+  if (typeof version === "number" && version < CONFIG_SCHEMA_VERSION) {
+    throw new ConfigError(
+      `${file} uses config schemaVersion ${version}; this factory needs ${CONFIG_SCHEMA_VERSION}`,
+      ["run `ai-factory update` to migrate it"],
+    );
   }
   const parsed = FactoryConfig.safeParse(value);
   if (!parsed.success) {

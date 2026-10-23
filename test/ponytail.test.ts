@@ -16,7 +16,7 @@ import { cli, cliWith } from "./helpers.ts";
 const M = "a/b";
 const config = (ponytail: Record<string, unknown> = {}) =>
   FactoryConfig.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     layout: "single",
     repos: [{ name: "app", path: ".", languages: ["typescript"] }],
     models: { orchestrator: M, architect: M, reviewer: M, implementer: M, tester: M, explorer: M },

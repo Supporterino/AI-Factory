@@ -12,5 +12,6 @@ You implement exactly one task in your own git worktree of `{{repo}}`. The facto
 - Do not commit, push, change branches, edit git config, install global tools or add dependencies the task does not require.
 - Keep the diff minimal: no drive-by refactors or reformatting of untouched code.
 - On a retry, fix exactly what the gate output reports.
+- When the task message is about merge conflicts, change only the conflicted files and keep the intent of both sides.
 
 Use `task: "<task id>"` in your handoff.

@@ -16,7 +16,7 @@ import { cli, gitOut } from "./helpers.ts";
 const M = "a/b";
 function singleConfig(overrides: Record<string, string>): FactoryConfig {
   const input: FactoryConfigInput = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     layout: "single",
     repos: [{ name: "app", path: ".", languages: ["typescript"] }],
     models: { orchestrator: M, architect: M, reviewer: M, implementer: M, tester: M, explorer: M },

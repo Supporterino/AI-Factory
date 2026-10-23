@@ -7,7 +7,7 @@ import { changedFiles } from "./affected.ts";
 import { compactOutput } from "./compact.ts";
 import { changedSince, restore, snapshot } from "./guard.ts";
 import { cacheEnv, QUIET_ENV } from "./install.ts";
-import { type GateMode, type ResolvedGate, resolveGates } from "./resolve.ts";
+import { type GateMode, type ResolvedGate, type ResolveInput, resolveGates } from "./resolve.ts";
 import { worktreeFiles } from "./targets.ts";
 
 export type GateStatus = "pass" | "fail" | "missing" | "skipped" | "not-check-only" | "timeout";
@@ -53,6 +53,8 @@ export interface RunGatesInput {
   readonly graph?: { readonly root: string; readonly repoPath: string };
   /** `addons.ponytail.shortcutComments: "forbid"`: new `shortcut:` comments fail lint. */
   readonly forbidShortcuts?: boolean;
+  /** Gate tables from the change's snapshot. */
+  readonly gateTables?: ResolveInput["gateTables"];
 }
 
 const FAILING: ReadonlySet<GateStatus> = new Set(["fail", "missing", "not-check-only", "timeout"]);
@@ -129,6 +131,7 @@ export async function runGates(input: RunGatesInput): Promise<GateReport> {
     changed,
     files: worktreeFiles(input.worktree),
     related,
+    ...(input.gateTables ? { gateTables: input.gateTables } : {}),
   });
 
   const results: GateResult[] = [

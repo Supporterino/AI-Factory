@@ -12,10 +12,13 @@ import { initCommand } from "./commands/init.ts";
 import { approveCommand, resumeCommand, runCommand } from "./commands/pipeline-commands.ts";
 import { repointCommand } from "./commands/repoint.ts";
 import { abortCommand, retryCommand, statusCommand } from "./commands/state-commands.ts";
+import { rollbackCommand, updateCommand } from "./commands/update.ts";
 import { ExitCode } from "./exit-codes.ts";
 
 export const COMMANDS: readonly Command[] = [
   initCommand,
+  updateCommand,
+  rollbackCommand,
   detectCommand,
   runCommand,
   approveCommand,

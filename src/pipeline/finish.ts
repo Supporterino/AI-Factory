@@ -16,7 +16,7 @@ import { type RunState, recordTask, TaskState } from "../state/run.ts";
 import { setTaskChecked } from "../tasks/parse.ts";
 import { summarizeUsage, usageReport } from "../usage/usage.ts";
 import type { Pipeline } from "./context.ts";
-import { forbidShortcuts, packPath, specText } from "./implement.ts";
+import { forbidShortcuts, gateDefinitions, packPath, specText } from "./implement.ts";
 import { findingPack, findingTaskTitle, reviewPrompt } from "./prompts.ts";
 
 const MAX_SUITE_ROUNDS = 2;
@@ -118,7 +118,7 @@ export async function fullSuite(p: Pipeline, id: string): Promise<string[]> {
       const report = await p.gates.run(() =>
         runGates({
           root: p.root,
-          config: p.config,
+          ...gateDefinitions(p, id),
           repo,
           worktree: p.repoDir(repo),
           mode: "full",

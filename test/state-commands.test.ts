@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ExitCode } from "../src/cli/exit-codes.ts";
 import { claimActive, enqueue, readActive, readQueue } from "../src/state/active.ts";
 import { loadRun, newRun, saveRun, TaskState } from "../src/state/run.ts";
+import { FACTORY_VERSION } from "../src/version.ts";
 import { createSingleRepoFixture, type Fixture } from "./fixtures/workspaces.ts";
 import { cli } from "./helpers.ts";
 
@@ -42,7 +43,7 @@ describe("status, retry and abort", () => {
     const run = await cli(fx.root, "status", "add-x");
     expect(run.code).toBe(ExitCode.Ok);
     expect(run.out.split("\n")).toEqual([
-      `change add-x — paused (active, driven by pid ${process.pid}; factory 0.1.0)`,
+      `change add-x — paused (active, driven by pid ${process.pid}; factory ${FACTORY_VERSION})`,
       "  paused: failed: 1.1; cancelled: 1.2",
       "  branches: . change/add-x @0123456789ab",
       "  tasks: 1/3 merged (merge seq 0)",

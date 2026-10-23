@@ -1,7 +1,16 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { execOk } from "../exec.ts";
+import { exec, execOk } from "../exec.ts";
 import type { LockEntry } from "../lock/lock.ts";
 import { BLOCK_MARKERS, type BlockMarkers, type ManagedFile } from "../render/workspace.ts";
 import { FACTORY_VERSION } from "../version.ts";
@@ -158,13 +167,80 @@ async function writeBlob(root: string, content: string): Promise<string> {
   return execOk(["git", "hash-object", "-w", "--stdin"], { cwd: root, input: content });
 }
 
-/** Applies a plan; returns the new lock entries for every managed path. */
+export interface SyncOutcome {
+  /** New lock entries for every managed path. */
+  readonly managed: Record<string, LockEntry>;
+  /** User-edited files that were merged cleanly with the new template. */
+  readonly merged: string[];
+  /** User-edited files now holding conflict markers (`update` does not commit them). */
+  readonly conflicts: string[];
+}
+
+async function blobText(root: string, blob: string): Promise<string | undefined> {
+  const res = await exec(["git", "cat-file", "-p", blob], { cwd: root });
+  return res.code === 0 ? res.stdout : undefined;
+}
+
+/**
+ * Three-way merge (§10): base = the template as last rendered (its git blob, recorded in
+ * the lock), ours = the user's version, theirs = the new render.
+ */
+async function mergeThree(
+  root: string,
+  ours: string,
+  base: string,
+  theirs: string,
+): Promise<{ text: string; conflicts: boolean }> {
+  const dir = mkdtempSync(join(tmpdir(), "ai-factory-merge-"));
+  try {
+    const files = { ours: join(dir, "ours"), base: join(dir, "base"), theirs: join(dir, "theirs") };
+    writeFileSync(files.ours, ours);
+    writeFileSync(files.base, base);
+    writeFileSync(files.theirs, theirs);
+    const res = await exec(
+      [
+        "git",
+        "merge-file",
+        "-p",
+        "-L",
+        "yours",
+        "-L",
+        "previous template",
+        "-L",
+        "new template",
+        files.ours,
+        files.base,
+        files.theirs,
+      ],
+      { cwd: root },
+    );
+    if (res.code === null || res.code < 0) throw new Error(`git merge-file failed: ${res.stderr}`);
+    return { text: res.stdout, conflicts: res.code > 0 };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Applies a plan. With `merge`, files the user edited are three-way merged with the new
+ * render instead of kept as they are.
+ */
 export async function executeSync(
   root: string,
   plan: readonly PlannedChange[],
   previous: Readonly<Record<string, LockEntry>>,
-): Promise<Record<string, LockEntry>> {
+  options: { merge?: boolean } = {},
+): Promise<SyncOutcome> {
   const managed: Record<string, LockEntry> = {};
+  const merged: string[] = [];
+  const conflicts: string[] = [];
+  const entry = async (file: ManagedFile): Promise<LockEntry> => ({
+    template: file.template,
+    templateVersion: FACTORY_VERSION,
+    mode: file.mode,
+    sha256: sha256(file.content),
+    blob: await writeBlob(root, file.content),
+  });
   for (const change of plan) {
     const prev = previous[change.path];
     const file = change.file;
@@ -179,18 +255,28 @@ export async function executeSync(
           if (file.mode === "block") writeBlock(abs, file.path, file.content);
           else writeAtomic(abs, file.content);
         }
-        managed[file.path] = {
-          template: file.template,
-          templateVersion: FACTORY_VERSION,
-          mode: file.mode,
-          sha256: sha256(file.content),
-          blob: await writeBlob(root, file.content),
-        };
+        managed[file.path] = await entry(file);
         break;
       }
-      case "keep-user-edit":
+      case "keep-user-edit": {
+        const base = options.merge && prev && file ? await blobText(root, prev.blob) : undefined;
+        const ours = file ? currentOwned(root, file.path, file.mode) : undefined;
+        if (file === undefined || base === undefined || ours === undefined) {
+          // Not merging (init), or no merge base: keep the old entry for a later update.
+          if (prev !== undefined) managed[change.path] = prev;
+          break;
+        }
+        const result = await mergeThree(root, ours, base, file.content);
+        const abs = join(root, file.path);
+        if (file.mode === "block") writeBlock(abs, file.path, result.text.replace(/\n$/, ""));
+        else writeAtomic(abs, result.text);
+        // The lock records the new render: it is the merge base of the next update.
+        managed[file.path] = await entry(file);
+        (result.conflicts ? conflicts : merged).push(file.path);
+        break;
+      }
       case "keep-deleted":
-        // Keep the old entry: it is the merge base for `update`.
+        // Keep the old entry: deletion is respected until `--restore`.
         if (prev !== undefined) managed[change.path] = prev;
         break;
       case "remove":
@@ -202,5 +288,5 @@ export async function executeSync(
         break;
     }
   }
-  return managed;
+  return { managed, merged, conflicts };
 }

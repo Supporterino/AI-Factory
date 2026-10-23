@@ -88,7 +88,7 @@ describe("workspace graph (stub graphify)", () => {
   test("graph dependents widen bun's affected tests", () => {
     writeFiles(fx.root, { "bun.lock": "", "src/report.ts": "x", "src/report.test.ts": "y" });
     const config = FactoryConfig.parse({
-      schemaVersion: 1,
+      schemaVersion: 2,
       layout: "single",
       repos: [{ name: "app", path: ".", languages: ["typescript"] }],
       models: {

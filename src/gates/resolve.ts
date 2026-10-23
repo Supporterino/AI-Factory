@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { FactoryConfig, GateType, Language, RepoConfig } from "../config/schema.ts";
+import type { Profile } from "../profiles/index.ts";
 import {
   fillPlaceholders,
   type PlaceholderValues,
@@ -65,6 +66,8 @@ export interface ResolveInput {
   readonly files: readonly string[];
   /** Worktree-relative files that depend on the changes, from the graph (optional). */
   readonly related?: readonly string[];
+  /** Gate tables per language from the change's snapshot (`update --force` safety). */
+  readonly gateTables?: Partial<Record<Language, Profile["gates"]>>;
 }
 
 export const SKIP = "skip";
@@ -143,9 +146,8 @@ function scriptCommand(
 }
 
 function profileGate(input: ResolveInput, type: GateType, target: Target): ResolvedGate | GateGap {
-  const candidate = target.profile.gates[type].find((c) =>
-    requirementHolds(c.when, input.worktree, target.dir),
-  );
+  const table = input.gateTables?.[target.profile.id] ?? target.profile.gates;
+  const candidate = table[type].find((c) => requirementHolds(c.when, input.worktree, target.dir));
   if (candidate === undefined) {
     return {
       type,

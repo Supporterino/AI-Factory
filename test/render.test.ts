@@ -10,7 +10,7 @@ import { renderWorkspace } from "../src/render/workspace.ts";
 
 const M = "anthropic/claude-sonnet-5-5";
 const config = FactoryConfig.parse({
-  schemaVersion: 1,
+  schemaVersion: 2,
   layout: "submodules",
   repos: [
     { name: "ai", path: ".", role: "orchestration", languages: [] },

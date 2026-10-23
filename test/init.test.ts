@@ -5,6 +5,7 @@ import { ExitCode } from "../src/cli/exit-codes.ts";
 import { parseConfigText } from "../src/config/load.ts";
 import { PRE_PUSH_HOOK } from "../src/git/hooks.ts";
 import { LOCK_FILE, readLock } from "../src/lock/lock.ts";
+import { FACTORY_VERSION } from "../src/version.ts";
 import {
   bareRepo,
   createSingleRepoFixture,
@@ -33,7 +34,9 @@ describe("init: AI repo with submodules", () => {
     expect(run.err).toBe("");
     expect(run.code).toBe(ExitCode.Ok);
 
-    expect(await gitOut(fx.root, "log", "-1", "--format=%s")).toBe("chore(factory): init v0.1.0");
+    expect(await gitOut(fx.root, "log", "-1", "--format=%s")).toBe(
+      `chore(factory): init v${FACTORY_VERSION}`,
+    );
     expect(await gitOut(fx.root, "status", "--porcelain")).toBe("");
 
     for (const rel of [
@@ -122,7 +125,7 @@ describe("init: AI repo with submodules", () => {
     expect(apply.code).toBe(ExitCode.Ok);
     expect(apply.out).toContain("+ repo worker (repos/worker) languages [python]");
     expect(await gitOut(fx.root, "log", "-1", "--format=%s")).toBe(
-      "chore(factory): apply detected changes (v0.1.0)",
+      `chore(factory): apply detected changes (v${FACTORY_VERSION})`,
     );
     expect(read(fx.root, ".opencode/agents/implementer-worker.md")).toContain("# Python standard");
     expect(read(fx.root, "openspec/config.yaml")).toContain("- worker (repos/worker): python");

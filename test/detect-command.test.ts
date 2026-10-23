@@ -40,7 +40,7 @@ const MODELS = `{
 function submoduleConfig(backendName = "backend"): string {
   return `{
   // ai-factory workspace config
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "layout": "submodules",
   "repos": [
     { "name": "ai", "path": ".", "role": "orchestration", "languages": [] },
@@ -168,7 +168,7 @@ describe("ai-factory detect (submodules)", () => {
   });
 
   test("an invalid config exits with ConfigInvalid", async () => {
-    writeFileSync(configFile, '{ "schemaVersion": 1, "layout": "nope" }');
+    writeFileSync(configFile, '{ "schemaVersion": 2, "layout": "nope" }');
     const run = await cli(fx.root, "detect");
     expect(run.code).toBe(ExitCode.ConfigInvalid);
     expect(run.err).toContain("factory.config.jsonc is invalid");

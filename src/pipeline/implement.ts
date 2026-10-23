@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import type { FactoryConfig } from "../config/schema.ts";
 import { PreconditionError } from "../errors.ts";
 import { git, gitOk } from "../exec.ts";
 import { changedFiles } from "../gates/affected.ts";
@@ -36,6 +37,7 @@ import {
 } from "../scheduler/scheduler.ts";
 import { claimActive, enqueue } from "../state/active.ts";
 import { loadRun, type TaskState } from "../state/run.ts";
+import { type GateSnapshot, loadGateSnapshot, snapshotDefinitions } from "../update/snapshot.ts";
 import { verifyApproval } from "./approve.ts";
 import type { Pipeline } from "./context.ts";
 import { conflictPrompt, packsPrompt, taskPrompt, testerPrompt } from "./prompts.ts";
@@ -43,6 +45,16 @@ import { conflictPrompt, packsPrompt, taskPrompt, testerPrompt } from "./prompts
 /** `addons.ponytail.shortcutComments: "forbid"` turns new `shortcut:` comments into a lint failure. */
 export const forbidShortcuts = (p: Pipeline): boolean =>
   p.config.addons.ponytail.enabled && p.config.addons.ponytail.shortcutComments === "forbid";
+
+/** Gate config and tables for a change: its activation snapshot when there is one. */
+export function gateDefinitions(
+  p: Pipeline,
+  id: string,
+): { config: FactoryConfig; gateTables?: GateSnapshot["tables"] } {
+  const snapshot = loadGateSnapshot(p.root, id);
+  if (snapshot === undefined) return { config: p.config };
+  return { config: { ...p.config, gates: snapshot.gates }, gateTables: snapshot.tables };
+}
 
 /** Character budget per token, the tokenizer approximation used for packs (§11). */
 export const CHARS_PER_TOKEN = 4;
@@ -86,6 +98,8 @@ export async function activate(p: Pipeline, id: string): Promise<Activation> {
     await gitOk(["switch", "-q", branch], { cwd: p.root });
   }
   await verifyApproval(p, id, p.root);
+  // The change runs on the definitions it started with, even across `update --force`.
+  snapshotDefinitions(p.root, id, p.config, p.run(id).factoryVersion);
 
   const repos = [...new Set(p.run(id).tasks.map((t) => t.repo))];
   const branches: Record<string, { branch: string; base: string }> = {};
@@ -231,7 +245,7 @@ export class PipelineTaskRunner implements TaskRunner {
     const report = await this.p.gates.run(() =>
       runGates({
         root: this.p.root,
-        config: this.p.config,
+        ...gateDefinitions(this.p, this.id),
         repo,
         worktree: dir,
         mode: "task",
