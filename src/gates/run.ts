@@ -1,6 +1,7 @@
 import { delimiter, join } from "node:path";
 import type { FactoryConfig, GateType, RepoConfig } from "../config/schema.ts";
 import { exec } from "../exec.ts";
+import { dependentFiles } from "../graph/graph.ts";
 import { changedFiles } from "./affected.ts";
 import { compactOutput } from "./compact.ts";
 import { changedSince, restore, snapshot } from "./guard.ts";
@@ -44,6 +45,11 @@ export interface RunGatesInput {
   /** Commit the changes are measured against. */
   readonly base: string;
   readonly timeoutMs?: number;
+  /**
+   * Widen affected tests with the workspace graph: tests whose code depends on the changed
+   * files. `repoPath` maps worktree paths to the graph's workspace-relative paths.
+   */
+  readonly graph?: { readonly root: string; readonly repoPath: string };
 }
 
 const FAILING: ReadonlySet<GateStatus> = new Set(["fail", "missing", "not-check-only", "timeout"]);
@@ -94,9 +100,23 @@ async function runOne(input: RunGatesInput, gate: ResolvedGate): Promise<GateRes
   };
 }
 
+/** Worktree-relative files the graph says depend on `changed`. */
+function relatedFiles(root: string, repoPath: string, changed: readonly string[]): string[] {
+  const prefix = repoPath === "." ? "" : `${repoPath}/`;
+  return [
+    ...dependentFiles(
+      root,
+      changed.map((f) => prefix + f),
+    ),
+  ]
+    .filter((f) => f.startsWith(prefix))
+    .map((f) => f.slice(prefix.length));
+}
+
 /** Resolves and runs one repo's gates in a worktree, sequentially. */
 export async function runGates(input: RunGatesInput): Promise<GateReport> {
   const changed = input.mode === "task" ? await changedFiles(input.worktree, input.base) : [];
+  const related = input.graph ? relatedFiles(input.graph.root, input.graph.repoPath, changed) : [];
   const plan = resolveGates({
     config: input.config,
     repo: input.repo,
@@ -105,6 +125,7 @@ export async function runGates(input: RunGatesInput): Promise<GateReport> {
     base: input.base,
     changed,
     files: worktreeFiles(input.worktree),
+    related,
   });
 
   const results: GateResult[] = [

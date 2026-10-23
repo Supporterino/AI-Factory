@@ -20,7 +20,7 @@ The source of truth is `src/cli/exit-codes.ts`; numbers are never reused.
 ## init
 
 ```
-ai-factory init [--force] [--no-commit] [--json]
+ai-factory init [--force] [--no-commit] [--no-graph] [--json]
 ```
 
 Installs or refreshes the factory. It runs these steps in order:
@@ -138,3 +138,11 @@ ai-factory resume <change-id>
 ```
 
 Continues a paused, aborted, interrupted or queued change from its last consistent state. The spec is re-checked against its approval first, and any edit other than a task checkbox voids the approval.
+
+## graph
+
+```
+ai-factory graph [--full] [--json]
+```
+
+Builds or incrementally updates the one workspace graph (`graphify-out/`, gitignored) over the AI repo and every submodule. `--full` rebuilds from scratch. The pipeline updates it after every task merge (serialised and coalesced), so running it by hand is rarely needed. Graphify always runs with `GRAPHIFY_NO_AUTO_REFRESH=1 GRAPHIFY_BACKEND=none`.

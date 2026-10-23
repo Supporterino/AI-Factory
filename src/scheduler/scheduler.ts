@@ -264,6 +264,7 @@ export class Scheduler {
               if (t) {
                 t.status = "merged";
                 t.commit = merge.commit;
+                t.mergeSeq = draft.mergeSeq;
                 recordTask(t, "merged", merge.commit);
               }
             })

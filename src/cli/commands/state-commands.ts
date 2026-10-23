@@ -94,6 +94,12 @@ function printRun(
   );
   if (branches.length > 0) io.out(`  branches: ${branches.join(" · ")}`);
   const merged = run.tasks.filter((t) => t.status === "merged").length;
+  if (run.mergeSeq > 0) {
+    const lag = run.mergeSeq - run.graphSeq;
+    io.out(
+      `  graph: covers ${run.graphSeq} of ${run.mergeSeq} merges${lag > 0 ? ` (${lag} pending)` : ""}`,
+    );
+  }
   if (run.tasks.length > 0) {
     io.out(`  tasks: ${merged}/${run.tasks.length} merged (merge seq ${run.mergeSeq})`);
     const idWidth = Math.max(...run.tasks.map((t) => t.id.length));

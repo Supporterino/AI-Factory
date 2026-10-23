@@ -63,6 +63,8 @@ export interface ResolveInput {
   readonly changed: readonly string[];
   /** Worktree-relative files of the checkout. */
   readonly files: readonly string[];
+  /** Worktree-relative files that depend on the changes, from the graph (optional). */
+  readonly related?: readonly string[];
 }
 
 export const SKIP = "skip";
@@ -159,6 +161,7 @@ function profileGate(input: ResolveInput, type: GateType, target: Target): Resol
     input.files,
     input.base,
     input.mode,
+    input.related,
   );
   const command = fillPlaceholders(template, values);
   if (command === undefined) {

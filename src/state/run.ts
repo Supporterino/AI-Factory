@@ -59,6 +59,8 @@ export const TaskState = z.strictObject({
   worktree: z.string().optional(),
   branch: z.string().optional(),
   commit: z.string().optional(),
+  /** Merge sequence number of this task's merge (graph coverage, ADR-0007). */
+  mergeSeq: z.int().min(0).optional(),
   /** Compacted output of the last failed gate run; fed back on the next attempt. */
   lastGateOutput: z.string().optional(),
   lastError: z.string().optional(),
@@ -83,6 +85,8 @@ export const RunState = z.strictObject({
   tasks: z.array(TaskState).default([]),
   /** Incremented on every task merge; graph updates record the sequence they cover. */
   mergeSeq: z.int().min(0).default(0),
+  /** Highest merge sequence a finished graph update covers. */
+  graphSeq: z.int().min(0).default(0),
   /** Intake result. */
   summary: z.string().default(""),
   likelyRepos: z.array(z.string()).default([]),

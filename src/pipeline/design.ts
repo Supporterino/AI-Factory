@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { gitOk } from "../exec.ts";
 import { branchAiRepo } from "../git/branching.ts";
 import { CHANGE_ID, changeBranch, currentBranch, refExists, revParse } from "../git/repo.ts";
+import { graphStatus, updateGraph } from "../graph/graph.ts";
 import { checkDesign, newChange } from "../openspec/cli.ts";
 import { decisionValues } from "../runtime/handoff.ts";
 import { readActive } from "../state/active.ts";
@@ -104,6 +105,11 @@ export async function design(p: Pipeline, id: string): Promise<{ ok: boolean; is
     .codeRepos()
     .filter((r) => run.likelyRepos.length === 0 || run.likelyRepos.includes(r.name));
 
+  if (graphStatus(p.root).state !== "ok") {
+    p.out("▶ graph: building the workspace graph");
+    const built = await updateGraph(p.root, { full: true, changeId: id });
+    if (!built.ok) p.out(`  ! graph build failed (agents fall back to grep): ${built.error ?? ""}`);
+  }
   p.out(`▶ explore: ${repos.map((r) => r.name).join(", ")}`);
   const explorations: Record<string, string> = {};
   await Promise.all(

@@ -1,2 +1,46 @@
-#!/bin/sh
-echo "graphify 0.9.93"
+#!/usr/bin/env bun
+// Test stand-in for graphify 0.9.93: `--version`, and `update <dir>` writing a graph.json
+// in Graphify's node-link shape (one node per file, `imports` links for relative TS imports).
+// GRAPHIFY_STUB_LOG records invocations; GRAPHIFY_STUB_DELAY (ms) slows updates down.
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, normalize, relative } from "node:path";
+
+const [cmd, dir = "."] = process.argv.slice(2);
+if (cmd === "--version") {
+  console.log("graphify 0.9.93");
+  process.exit(0);
+}
+if (cmd !== "update") process.exit(0);
+
+const log = process.env.GRAPHIFY_STUB_LOG;
+if (log) appendFileSync(log, `start ${Date.now()}\n`);
+const delay = Number(process.env.GRAPHIFY_STUB_DELAY ?? "0");
+if (delay > 0) await Bun.sleep(delay);
+
+const SKIP = new Set([".git", "node_modules", ".factory", "graphify-out", ".opencode", "openspec"]);
+const files: string[] = [];
+const walk = (abs: string): void => {
+  for (const name of readdirSync(abs)) {
+    if (SKIP.has(name)) continue;
+    const child = join(abs, name);
+    if (statSync(child).isDirectory()) walk(child);
+    else files.push(relative(dir, child));
+  }
+};
+walk(dir);
+const nodes = files.map((f) => ({ id: f, label: f, source_file: f }));
+const links: { source: string; target: string; relation: string; source_file: string }[] = [];
+for (const f of files.filter((x) => /\.(ts|tsx)$/.test(x))) {
+  const text = readFileSync(join(dir, f), "utf8");
+  for (const m of text.matchAll(/from\s+["'](\.[^"']+)["']/g)) {
+    const base = normalize(join(dirname(f), m[1] ?? ""));
+    const target = [base, `${base}.ts`, `${base}.tsx`].find((t) => files.includes(t));
+    if (target) links.push({ source: f, target, relation: "imports", source_file: f });
+  }
+}
+mkdirSync(join(dir, "graphify-out"), { recursive: true });
+writeFileSync(
+  join(dir, "graphify-out", "graph.json"),
+  JSON.stringify({ directed: false, multigraph: false, graph: { schema_version: 1, graphify_version: "0.9.93" }, nodes, links, built_at_commit: "stub" }),
+);
+if (log) appendFileSync(log, `end ${Date.now()}\n`);

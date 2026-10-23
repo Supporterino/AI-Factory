@@ -5,6 +5,7 @@ import { FACTORY_VERSION } from "../version.ts";
 import type { Command, Io } from "./command.ts";
 import { detectCommand } from "./commands/detect.ts";
 import { gateCommand } from "./commands/gate.ts";
+import { graphCommand } from "./commands/graph.ts";
 import { initCommand } from "./commands/init.ts";
 import { approveCommand, resumeCommand, runCommand } from "./commands/pipeline-commands.ts";
 import { repointCommand } from "./commands/repoint.ts";
@@ -19,6 +20,7 @@ export const COMMANDS: readonly Command[] = [
   resumeCommand,
   statusCommand,
   gateCommand,
+  graphCommand,
   retryCommand,
   abortCommand,
   repointCommand,

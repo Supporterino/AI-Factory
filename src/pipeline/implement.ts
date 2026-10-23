@@ -21,6 +21,8 @@ import { commitTask } from "../git/commit.ts";
 import { abortRebase, mergeTask } from "../git/merge-queue.ts";
 import { changeBranch, currentBranch, ensureClean, refExists } from "../git/repo.ts";
 import { addTaskWorktree, taskBranch, worktreePath } from "../git/worktrees.ts";
+import { updateGraph } from "../graph/graph.ts";
+import { GraphUpdater } from "../graph/updater.ts";
 import { appendLog } from "../logs/log.ts";
 import { auditChanges, type SessionContext } from "../policy/scope.ts";
 import { profilesFor } from "../profiles/index.ts";
@@ -188,6 +190,7 @@ export class PipelineTaskRunner implements TaskRunner {
   constructor(
     readonly p: Pipeline,
     readonly id: string,
+    readonly graph: GraphUpdater,
   ) {}
 
   /** `withinRepo: "serial"`: tasks run in the repo checkout itself, no worktrees. */
@@ -228,6 +231,7 @@ export class PipelineTaskRunner implements TaskRunner {
         worktree: dir,
         mode: "task",
         base,
+        graph: { root: this.p.root, repoPath: repo.path },
       }),
     );
     appendLog(this.p.root, this.id, {
@@ -279,6 +283,13 @@ export class PipelineTaskRunner implements TaskRunner {
   }
 
   async attempt(task: TaskState, ctx: AttemptContext): Promise<AttemptResult> {
+    // ADR-0007: the graph this task queries must already contain its dependencies' merges.
+    const run = this.p.run(this.id);
+    const needed = Math.max(
+      0,
+      ...task.deps.map((d) => run.tasks.find((t) => t.id === d)?.mergeSeq ?? 0),
+    );
+    await this.graph.waitFor(needed);
     const { dir, created } = await this.#workdir(task);
     if (created) {
       const steps = await installDeps(this.p.root, dir, this.p.repo(task.repo));
@@ -440,6 +451,8 @@ export class PipelineTaskRunner implements TaskRunner {
       mergeSeq: seq,
     });
     this.p.out(`  ✓ ${task.id} merged (${task.repo})`);
+    // Incremental, serialised and coalesced; dependents wait for coverage in attempt().
+    this.graph.request(seq);
   }
 }
 
@@ -451,6 +464,20 @@ export async function implement(p: Pipeline, id: string): Promise<RunSummary> {
   p.out(
     `▶ implement: ${pending} task${pending === 1 ? "" : "s"} (max ${p.config.parallel.maxAgents} agents)`,
   );
+  const graph = new GraphUpdater(
+    async () => {
+      const result = await updateGraph(p.root, { changeId: id });
+      if (!result.ok) p.out(`  ! graph update failed: ${result.error ?? ""}`);
+    },
+    run.graphSeq,
+    async (seq) => {
+      await p.update(id, (d) => {
+        d.graphSeq = Math.max(d.graphSeq, seq);
+      });
+    },
+  );
+  // After a crash, merges the graph has not seen yet are covered first.
+  if (run.mergeSeq > run.graphSeq) graph.request(run.mergeSeq);
   const scheduler = new Scheduler({
     root: p.root,
     id,
@@ -459,8 +486,11 @@ export async function implement(p: Pipeline, id: string): Promise<RunSummary> {
     ...(p.config.parallel.withinRepo === "serial"
       ? { serialRepos: p.codeRepos().map((r) => r.name) }
       : {}),
-    runner: new PipelineTaskRunner(p, id),
+    runner: new PipelineTaskRunner(p, id, graph),
     signal: p.deps.signal,
   });
-  return scheduler.run();
+  const summary = await scheduler.run();
+  // Reviews and later tasks read the graph; let the last update finish.
+  await graph.idle();
+  return summary;
 }

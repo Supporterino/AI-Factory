@@ -85,6 +85,8 @@ export function placeholderValues(
   allFiles: readonly string[],
   base: string,
   mode: "task" | "full",
+  /** Worktree-relative files that depend on the changes (from the workspace graph). */
+  related: readonly string[] = [],
 ): PlaceholderValues {
   const rel = (p: string): string => (target.dir === "." ? p : relative(target.dir, p));
   const mine = targetChanges(target, changed);
@@ -92,9 +94,10 @@ export function placeholderValues(
 
   const tests = new Set(existing.filter((f) => isTestFile(target.profile, f)));
   const stems = new Set(existing.filter((f) => !isTestFile(target.profile, f)).map(stem));
+  const dependents = new Set(related);
   for (const f of allFiles) {
-    if (isWithinDir(f, target.dir) && isTestFile(target.profile, f) && stems.has(stem(f)))
-      tests.add(f);
+    if (!isWithinDir(f, target.dir) || !isTestFile(target.profile, f)) continue;
+    if (stems.has(stem(f)) || dependents.has(f)) tests.add(f);
   }
 
   const packages = [...new Set(existing.filter((f) => f.endsWith(".go")).map((f) => rel(f)))]
