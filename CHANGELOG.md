@@ -14,6 +14,14 @@ All notable changes per release. `ai-factory update` applies them to an installe
 - `ai-factory rollback`: restores the latest update backup, including the previous lock.
 - Approving a change snapshots its agent definitions and gate tables, so a forced update never changes a running change.
 - `docs/fleet-update.sh`: an example for updating many workspaces.
+- `ai-factory doctor`: checks tool versions and lock drift, the install, submodules, clean trees, hooks, the resolved gate table with toolchain lookup, cache sizes, model availability, graph freshness and stale locks.
+- `README.md`, `ARCHITECTURE.md`, and E2E transcripts per layout in `docs/e2e/`, recorded with real opencode and a scripted model (`scripts/e2e-transcript.ts`).
+
+### Fixed
+
+- The architect and tester agents get edit permissions for their own paths (change and context folders, test globs). Before, opencode's permission layer denied their writes.
+- Closing a change removes its agent snapshot and empty worktree folders, and `status` no longer lists the snapshot as a worktree.
+- Full-suite gate results are written to the change's log.
 
 ### Changed
 

@@ -26,3 +26,4 @@ Short ADRs for every choice the build prompt did not lock. Format: Context / Dec
 | [0020](0020-contract-gate.md)                   | Contract gate and contract review                                   |
 | [0021](0021-usage-reporting.md)                 | Usage reporting                                                     |
 | [0022](0022-update-migrations-rollback.md)      | Update, migrations and rollback                                     |
+| [0023](0023-doctor-and-e2e.md)                  | Doctor checks and the manual E2E method                             |
