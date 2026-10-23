@@ -78,3 +78,31 @@ Run this after the submodule MRs of a change have merged upstream.
 3. Commits the real pointers in the AI repo as `chore(submodules): repoint <id>`.
 
 Pointers whose MR has not merged stay provisional, and the command exits with 4. Run it again later. Nothing is ever pushed.
+
+## status
+
+```
+ai-factory status [<change-id>] [--json]
+```
+
+Shows the active change and its driver, the queue, and each change's details:
+- the phase
+- the branches
+- the task DAG with states, attempts and the last gate output
+- the worktrees
+
+## retry
+
+```
+ai-factory retry <change-id> --task <id>
+```
+
+After a human fix: resets a failed task's retry budget and un-cancels the tasks that were cancelled because of it. Continue with `resume`.
+
+## abort
+
+```
+ai-factory abort <change-id>
+```
+
+Stops the change safely: the driver finishes in-flight merges and interrupts agents. Branches and worktrees are kept, the active-change lock is released, and the change is removed from the queue. The next queued change is not started automatically.

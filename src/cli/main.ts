@@ -7,12 +7,16 @@ import { detectCommand } from "./commands/detect.ts";
 import { gateCommand } from "./commands/gate.ts";
 import { initCommand } from "./commands/init.ts";
 import { repointCommand } from "./commands/repoint.ts";
+import { abortCommand, retryCommand, statusCommand } from "./commands/state-commands.ts";
 import { ExitCode } from "./exit-codes.ts";
 
 export const COMMANDS: readonly Command[] = [
   initCommand,
   detectCommand,
+  statusCommand,
   gateCommand,
+  retryCommand,
+  abortCommand,
   repointCommand,
 ];
 

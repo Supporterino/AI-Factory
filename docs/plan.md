@@ -1,6 +1,6 @@
 # ai-factory v1 build plan
 
-Status: approved 2026-10-23. Slices 1–4 done. Inputs: [research/tooling.md](research/tooling.md), [decisions/](decisions/).
+Status: approved 2026-10-23. Slices 1–5 done. Inputs: [research/tooling.md](research/tooling.md), [decisions/](decisions/).
 
 ## Modules (`src/`)
 
