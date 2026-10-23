@@ -41,6 +41,32 @@ How it treats files that already exist:
 
 Tool binaries can be overridden with `AI_FACTORY_<TOOL>_BIN`, e.g. `AI_FACTORY_OPENSPEC_BIN`.
 
+## update
+
+```
+ai-factory update [--dry-run] [--tools] [--restore] [--force] [--json]
+```
+
+Upgrades an installed workspace to the factory version you run, as one local commit `chore(factory): update to vX.Y.Z`. It prints the plan first, and `--dry-run` stops there.
+- Migrates `factory.config.jsonc` through each pending `schemaVersion` step, keeping comments.
+- Re-renders managed files:
+  - files you did not edit are replaced;
+  - files you edited are merged three-way with the previous template as the base;
+  - files you deleted stay deleted (`--restore` recreates them);
+  - paths in `unmanaged` are skipped.
+- Reinstalls the git hooks and warns when detection differs from the config.
+- `--tools` re-runs `openspec init` and rebuilds the graph when Graphify's format changed.
+
+It needs a clean AI repo. It refuses while a change is active, queued or paused with tasks; `--force` updates anyway, and those changes keep the agent and gate definitions they were approved with. Every file it may touch is backed up to `.factory/backups/<timestamp>/` first. A merge conflict leaves markers, commits nothing and exits 4: resolve and commit, or run `rollback`. Submodules (apart from hooks), `openspec/specs` and `openspec/changes` are never touched. See [CHANGELOG.md](../CHANGELOG.md) for what each version changes, and [fleet-update.sh](fleet-update.sh) for updating many workspaces.
+
+## rollback
+
+```
+ai-factory rollback
+```
+
+Restores the files of the latest update from its backup, including the previous lock and config, and commits `chore(factory): roll back update to vX.Y.Z`. It also undoes an update that stopped on conflicts.
+
 ## detect
 
 ```

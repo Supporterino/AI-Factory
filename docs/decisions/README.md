@@ -25,3 +25,4 @@ Short ADRs for every choice the build prompt did not lock. Format: Context / Dec
 | [0019](0019-pipeline.md)                        | Pipeline decisions                                                  |
 | [0020](0020-contract-gate.md)                   | Contract gate and contract review                                   |
 | [0021](0021-usage-reporting.md)                 | Usage reporting                                                     |
+| [0022](0022-update-migrations-rollback.md)      | Update, migrations and rollback                                     |
