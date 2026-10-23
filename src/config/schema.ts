@@ -91,9 +91,17 @@ const GatesConfig = z.strictObject({
 export const ContractConfig = z.strictObject({
   kind: ContractKind,
   provider: RepoName,
-  /** Relative to the provider repo. */
+  /** Relative to the provider repo (a directory for proto). */
   path: RelPath,
   consumers: z.array(RepoName),
+  /** Accept breaking changes (e.g. a planned major version); consumer checks still run. */
+  allowBreaking: z.boolean().optional(),
+  /**
+   * Consumer repo → check-only command run in that repo against the new contract
+   * (`{contract}` = absolute path of the provider's contract), e.g. a type-check of a
+   * generated client.
+   */
+  validate: z.record(RepoName, z.string().min(1)).optional(),
 });
 export type ContractConfig = z.infer<typeof ContractConfig>;
 
@@ -193,6 +201,11 @@ export const FactoryConfig = FactoryConfigBase.superRefine((cfg, ctx) => {
 
   const codeRepos = new Set(cfg.repos.filter((r) => r.role === "code").map((r) => r.name));
   cfg.contracts.forEach((contract, i) => {
+    for (const repo of Object.keys(contract.validate ?? {})) {
+      if (!contract.consumers.includes(repo)) {
+        issue(["contracts", i, "validate", repo], `"${repo}" is not a consumer of this contract`);
+      }
+    }
     if (!codeRepos.has(contract.provider)) {
       issue(["contracts", i, "provider"], `unknown code repo "${contract.provider}"`);
     }
