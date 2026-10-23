@@ -21,3 +21,4 @@ Short ADRs for every choice the build prompt did not lock. Format: Context / Dec
 | [0015](0015-gate-resolution-and-scope.md)       | Gate resolution, scope and the check-only guard                     |
 | [0016](0016-task-commits-and-merge-queue.md)    | Task commits and merge-queue mechanics                              |
 | [0017](0017-scheduler-and-change-lifecycle.md)  | Scheduler semantics and the change lifecycle                        |
+| [0018](0018-enforcement-layers.md)              | Enforcement layers (plugin, CLI, git)                               |
