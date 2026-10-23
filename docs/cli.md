@@ -11,6 +11,7 @@
 | 2    | Usage         | Unknown command or flag, or a missing argument                        |
 | 3    | ConfigInvalid | `factory.config.jsonc` is missing, unparsable or fails validation     |
 | 4    | Precondition  | A precondition is not met (not initialised, dirty tree, missing tool) |
+| 5    | GateFailed    | `gate`: a gate failed, is missing, timed out or was not check-only    |
 | 10   | Drift         | `detect --check` found differences                                    |
 
 The source of truth is `src/cli/exit-codes.ts`; numbers are never reused.
