@@ -83,6 +83,20 @@ export async function installPrePush(repoDir: string): Promise<HookStatus> {
   return { status, path };
 }
 
+/** For `doctor`: is the factory's current pre-push hook in place, and could it be? */
+export async function prePushState(
+  repoDir: string,
+): Promise<"installed" | "missing" | "outdated" | "foreign-hooks-path"> {
+  const { hooks, common } = await hooksDir(repoDir);
+  const rel = relative(common, hooks);
+  if (rel.startsWith("..") || rel.startsWith("/")) return "foreign-hooks-path";
+  const path = join(hooks, "pre-push");
+  if (!existsSync(path)) return "missing";
+  const text = readFileSync(path, "utf8");
+  if (text === PRE_PUSH_HOOK) return "installed";
+  return text.includes("# ai-factory-hook") ? "outdated" : "missing";
+}
+
 /** True when the repo's pre-push hook is the factory's current hook. */
 export async function prePushInstalled(repoDir: string): Promise<boolean> {
   if (!existsSync(join(repoDir, ".git"))) return false;

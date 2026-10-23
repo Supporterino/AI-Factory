@@ -32,6 +32,8 @@ export interface ExecOptions {
   readonly cwd: string;
   /** Merged over `process.env`. */
   readonly env?: Readonly<Record<string, string>>;
+  /** Use `env` as the whole environment instead of merging it (curated envs). */
+  readonly replaceEnv?: boolean;
   readonly timeoutMs?: number;
   readonly input?: string;
 }
@@ -58,7 +60,7 @@ export function exec(command: readonly string[], options: ExecOptions): Promise<
   return new Promise((resolve) => {
     const child = spawn(file, args, {
       cwd: options.cwd,
-      env: { ...process.env, ...options.env },
+      env: options.replaceEnv ? { ...options.env } : { ...process.env, ...options.env },
       stdio: ["pipe", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];

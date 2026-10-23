@@ -38,9 +38,11 @@ for (const f of files.filter((x) => /\.(ts|tsx)$/.test(x))) {
     if (target) links.push({ source: f, target, relation: "imports", source_file: f });
   }
 }
+// Like Graphify: the commit the graph was built at (the parent repo's HEAD).
+const head = Bun.spawnSync(["git", "-C", dir, "rev-parse", "HEAD"]).stdout.toString().trim() || "unknown";
 mkdirSync(join(dir, "graphify-out"), { recursive: true });
 writeFileSync(
   join(dir, "graphify-out", "graph.json"),
-  JSON.stringify({ directed: false, multigraph: false, graph: { schema_version: 1, graphify_version: "0.9.93" }, nodes, links, built_at_commit: "stub" }),
+  JSON.stringify({ directed: false, multigraph: false, graph: { schema_version: 1, graphify_version: "0.9.93" }, nodes, links, built_at_commit: head }),
 );
 if (log) appendFileSync(log, `end ${Date.now()}\n`);

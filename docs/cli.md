@@ -67,6 +67,27 @@ ai-factory rollback
 
 Restores the files of the latest update from its backup, including the previous lock and config, and commits `chore(factory): roll back update to vX.Y.Z`. It also undoes an update that stopped on conflicts.
 
+## doctor
+
+```
+ai-factory doctor [--json]
+```
+
+A read-only health check. It looks at:
+- **Tools:** the installed git, opencode, OpenSpec and Graphify against the lock's ranges and against what this factory version supports. The factory version that wrote the lock is checked too.
+- **Install:** the config, the managed files (out of date, edited by you, deleted by you) and the Ponytail content hash.
+- **Repos:**
+  - submodule state; for uninitialised ones it offers `git submodule update --init` when run in a terminal;
+  - clean working trees;
+  - the `pre-push` hook in the AI repo and every submodule.
+- **Gates:** the resolved command for every repo and gate type, printed as a table. It flags a missing gate and an executable that is not on `PATH` or in the repo's tool directories (`node_modules/.bin`, `.venv/bin`). For script gates (`npm run lint`), only the runner is checked.
+- **Caches:** the sizes of the dependency caches, worktrees, logs and backups under `.factory/`.
+- **Models:** every configured model must be listed by `opencode models` when it runs with the same curated environment as the pipeline's server. A model whose provider credentials are not exported fails here.
+- **Graph:** missing, wrong format, or built at another commit than `HEAD`.
+- **Changes:** an active-change lock that nothing is driving.
+
+It exits 4 when any check fails. Warnings exit 0.
+
 ## detect
 
 ```

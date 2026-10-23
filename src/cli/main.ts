@@ -6,6 +6,7 @@ import { FACTORY_VERSION } from "../version.ts";
 import type { Command, Io } from "./command.ts";
 import { benchCommand } from "./commands/bench.ts";
 import { detectCommand } from "./commands/detect.ts";
+import { doctorCommand } from "./commands/doctor.ts";
 import { gateCommand } from "./commands/gate.ts";
 import { graphCommand } from "./commands/graph.ts";
 import { initCommand } from "./commands/init.ts";
@@ -19,6 +20,7 @@ export const COMMANDS: readonly Command[] = [
   initCommand,
   updateCommand,
   rollbackCommand,
+  doctorCommand,
   detectCommand,
   runCommand,
   approveCommand,
