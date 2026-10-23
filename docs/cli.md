@@ -146,3 +146,13 @@ ai-factory graph [--full] [--json]
 ```
 
 Builds or incrementally updates the one workspace graph (`graphify-out/`, gitignored) over the AI repo and every submodule. `--full` rebuilds from scratch. The pipeline updates it after every task merge (serialised and coalesced), so running it by hand is rarely needed. Graphify always runs with `GRAPHIFY_NO_AUTO_REFRESH=1 GRAPHIFY_BACKEND=none`.
+
+## bench
+
+```
+ai-factory bench ponytail [--runs N] [--yes] [--json]
+```
+
+Runs the bench fixture change N times (default 3) with and without the Ponytail add-on on your configured models. Compares tokens, lines changed, first-attempt gate pass rate, retries, scenario test coverage and review findings as medians with min–max. Results go to `docs/bench/ponytail-<date>.md` and `.json`.
+
+It makes real model calls, so it prints an estimate first and asks for confirmation; `--yes` skips the question.

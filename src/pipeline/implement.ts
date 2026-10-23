@@ -40,6 +40,10 @@ import { verifyApproval } from "./approve.ts";
 import type { Pipeline } from "./context.ts";
 import { conflictPrompt, packsPrompt, taskPrompt, testerPrompt } from "./prompts.ts";
 
+/** `addons.ponytail.shortcutComments: "forbid"` turns new `shortcut:` comments into a lint failure. */
+export const forbidShortcuts = (p: Pipeline): boolean =>
+  p.config.addons.ponytail.enabled && p.config.addons.ponytail.shortcutComments === "forbid";
+
 /** Character budget per token, the tokenizer approximation used for packs (§11). */
 export const CHARS_PER_TOKEN = 4;
 export const estimateTokens = (text: string): number => Math.ceil(text.length / CHARS_PER_TOKEN);
@@ -233,6 +237,7 @@ export class PipelineTaskRunner implements TaskRunner {
         mode: "task",
         base,
         graph: { root: this.p.root, repoPath: repo.path },
+        forbidShortcuts: forbidShortcuts(this.p),
       }),
     );
     appendLog(this.p.root, this.id, {

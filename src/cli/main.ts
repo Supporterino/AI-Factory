@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { FactoryError } from "../errors.ts";
 import { FACTORY_VERSION } from "../version.ts";
 import type { Command, Io } from "./command.ts";
+import { benchCommand } from "./commands/bench.ts";
 import { detectCommand } from "./commands/detect.ts";
 import { gateCommand } from "./commands/gate.ts";
 import { graphCommand } from "./commands/graph.ts";
@@ -24,6 +26,7 @@ export const COMMANDS: readonly Command[] = [
   retryCommand,
   abortCommand,
   repointCommand,
+  benchCommand((argv, io) => runCli(argv, io)),
 ];
 
 function usage(): string {
@@ -52,6 +55,15 @@ function report(err: unknown, io: Io): ExitCode {
   }
   io.err(`internal error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
   return ExitCode.Failure;
+}
+
+async function askYesNo(question: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return /^y(es)?$/i.test((await rl.question(`${question} [y/N] `)).trim());
+  } finally {
+    rl.close();
+  }
 }
 
 /** Runs the CLI against injected I/O; returns the exit code. */
@@ -105,6 +117,7 @@ if (import.meta.main) {
     cwd: process.cwd(),
     out: (text) => process.stdout.write(`${text}\n`),
     err: (text) => process.stderr.write(`${text}\n`),
+    ...(process.stdin.isTTY ? { confirm: askYesNo } : {}),
   });
   process.exit(code);
 }

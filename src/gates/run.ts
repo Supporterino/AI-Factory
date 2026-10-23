@@ -1,4 +1,5 @@
 import { delimiter, join } from "node:path";
+import { newShortcuts } from "../addons/shortcuts.ts";
 import type { FactoryConfig, GateType, RepoConfig } from "../config/schema.ts";
 import { exec } from "../exec.ts";
 import { dependentFiles } from "../graph/graph.ts";
@@ -50,6 +51,8 @@ export interface RunGatesInput {
    * files. `repoPath` maps worktree paths to the graph's workspace-relative paths.
    */
   readonly graph?: { readonly root: string; readonly repoPath: string };
+  /** `addons.ponytail.shortcutComments: "forbid"`: new `shortcut:` comments fail lint. */
+  readonly forbidShortcuts?: boolean;
 }
 
 const FAILING: ReadonlySet<GateStatus> = new Set(["fail", "missing", "not-check-only", "timeout"]);
@@ -164,6 +167,18 @@ export async function runGates(input: RunGatesInput): Promise<GateReport> {
     const result = await runOne(input, gate);
     results.push(result);
     if (!TEST_GATES.has(gate.type) && FAILING.has(result.status)) failedBeforeTests = true;
+  }
+
+  if (input.forbidShortcuts) {
+    const found = await newShortcuts(input.worktree, input.base);
+    results.push({
+      type: "lint",
+      cwd: ".",
+      command: "no new shortcut: comments (addons.ponytail.shortcutComments: forbid)",
+      status: found.length === 0 ? "pass" : "fail",
+      durationMs: 0,
+      output: found.map((s) => `${s.file}:${s.line}: shortcut: ${s.text}`).join("\n"),
+    });
   }
 
   const order = ["format", "lint", "types", "test", "testAffected"];

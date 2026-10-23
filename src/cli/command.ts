@@ -17,6 +17,8 @@ export interface Io {
   err(text: string): void;
   /** Agent runtime; defaults to a private opencode server. Tests inject a scripted one. */
   readonly runtime?: RuntimeFactory;
+  /** Asks the user a yes/no question; undefined when nobody can answer (no TTY). */
+  readonly confirm?: (question: string) => Promise<boolean>;
 }
 
 export interface Command {

@@ -1,5 +1,6 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { PONYTAIL_DIR } from "../addons/ponytail.ts";
 import type { FactoryConfig } from "../config/schema.ts";
 import { PreconditionError } from "../errors.ts";
 import { git } from "../exec.ts";
@@ -8,6 +9,7 @@ import { type HookStatus, installPrePush } from "../git/hooks.ts";
 import { buildLock, LOCK_FILE, type Lock, readLock, serializeLock } from "../lock/lock.ts";
 import { executeSync, type PlannedChange, planSync } from "../managed/sync.ts";
 import { renderWorkspace } from "../render/workspace.ts";
+import { PONYTAIL } from "../versions.ts";
 
 /**
  * Paths a factory install commits in the AI repo. OpenSpec's own init output is included;
@@ -48,6 +50,17 @@ export function planWorkspace(
     unmanaged: config.unmanaged,
     ...options,
   });
+  // A modified vendored add-on is a hash mismatch, not a user edit to merge (§12).
+  const tampered = plan
+    .filter((c) => c.path.startsWith(`${PONYTAIL_DIR}/`) && !c.path.endsWith("/PRECEDENCE.md"))
+    .filter((c) => c.action === "keep-user-edit" || c.action === "conflict")
+    .map((c) => c.path);
+  if (tampered.length > 0) {
+    throw new PreconditionError("Ponytail add-on files were modified (content hash mismatch)", [
+      ...tampered,
+      "restore them (`ai-factory update --restore`) or set addons.ponytail.enabled to false",
+    ]);
+  }
   const conflicts = plan.filter((c) => c.action === "conflict").map((c) => c.path);
   if (conflicts.length > 0) {
     throw new PreconditionError("files already exist that ai-factory did not create", [
@@ -68,7 +81,19 @@ export async function syncWorkspace(
   const plan = planWorkspace(root, config, options);
 
   const managed = await executeSync(root, plan, previous);
-  const lock = buildLock(managed);
+  const ponytail = config.addons.ponytail;
+  const lock = buildLock(
+    managed,
+    ponytail.enabled
+      ? {
+          ponytail: {
+            ref: ponytail.ref,
+            contentSha256: PONYTAIL.contentSha256,
+            files: [...PONYTAIL.files],
+          },
+        }
+      : {},
+  );
   writeFileSync(join(root, LOCK_FILE), serializeLock(lock));
 
   const hooks: SyncResult["hooks"] = [];

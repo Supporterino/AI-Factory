@@ -26,7 +26,8 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "check": "biome check . && tsc --noEmit && bun test --timeout 60000",
-    "build:plugin": "bun scripts/build-plugin.ts"
+    "build:plugin": "bun scripts/build-plugin.ts",
+    "vendor:ponytail": "bun scripts/vendor-ponytail.ts"
   },
   "dependencies": {
     "ajv": "8.20.0",

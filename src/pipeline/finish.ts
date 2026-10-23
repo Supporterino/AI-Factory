@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { changeShortcuts } from "../addons/shortcuts.ts";
 import { PreconditionError } from "../errors.ts";
 import { gitOk } from "../exec.ts";
 import { runGates } from "../gates/run.ts";
@@ -15,7 +16,7 @@ import { type RunState, recordTask, TaskState } from "../state/run.ts";
 import { setTaskChecked } from "../tasks/parse.ts";
 import { summarizeUsage, usageReport } from "../usage/usage.ts";
 import type { Pipeline } from "./context.ts";
-import { packPath, specText } from "./implement.ts";
+import { forbidShortcuts, packPath, specText } from "./implement.ts";
 import { findingPack, findingTaskTitle, reviewPrompt } from "./prompts.ts";
 
 const MAX_SUITE_ROUNDS = 2;
@@ -122,6 +123,7 @@ export async function fullSuite(p: Pipeline, id: string): Promise<string[]> {
           worktree: p.repoDir(repo),
           mode: "full",
           base: run.branches[name]?.base ?? "HEAD",
+          forbidShortcuts: forbidShortcuts(p),
         }),
       );
       const output = report.results
@@ -253,6 +255,18 @@ export async function close(p: Pipeline, id: string): Promise<string> {
   });
 
   const done = p.run(id);
+  const shortcutLines: string[] = [];
+  if (p.config.addons.ponytail.enabled && p.config.addons.ponytail.shortcutComments === "report") {
+    for (const name of touchedRepos(done)) {
+      const base = done.branches[name]?.base;
+      if (base === undefined) continue;
+      for (const s of await changeShortcuts(p.repoDir(p.repo(name)), base, changeBranch(id))) {
+        shortcutLines.push(`- ${name}:${s.file}:${s.line} — ${s.text}`);
+      }
+    }
+    if (shortcutLines.length > 0) shortcutLines.unshift("## Shortcuts (Ponytail)", "");
+    if (shortcutLines.length > 0) shortcutLines.push("");
+  }
   const { risks, questions, findings } = harvest(done);
   const repoLines = await Promise.all(
     touchedRepos(done).map(async (name) => {
@@ -305,6 +319,7 @@ export async function close(p: Pipeline, id: string): Promise<string> {
     ...(questions.length > 0
       ? ["## Open questions", "", ...questions.map((q) => `- ${q}`), ""]
       : []),
+    ...shortcutLines,
     ...usageReport(summarizeUsage(p.root, id)),
   ];
   const file = reportFile(p.root, id, "final");

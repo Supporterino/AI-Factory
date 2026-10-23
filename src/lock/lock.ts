@@ -35,12 +35,23 @@ export const Lock = z.strictObject({
   configSchemaVersion: z.int(),
   tools: z.strictObject({ git: ToolPin, opencode: ToolPin, openspec: ToolPin, graphify: ToolPin }),
   graph: z.strictObject({ schemaVersion: z.int() }),
+  /** Pinned add-ons with their verified content hash (§10). */
+  addons: z
+    .strictObject({
+      ponytail: z
+        .strictObject({ ref: z.string(), contentSha256: z.string(), files: z.array(z.string()) })
+        .optional(),
+    })
+    .default({}),
   managed: z.record(z.string(), LockEntry),
 });
 export type Lock = z.infer<typeof Lock>;
 
 /** The lock this factory version writes, with the given managed entries. */
-export function buildLock(managed: Readonly<Record<string, LockEntry>>): Lock {
+export function buildLock(
+  managed: Readonly<Record<string, LockEntry>>,
+  addons: Lock["addons"] = {},
+): Lock {
   const sorted = Object.fromEntries(Object.entries(managed).sort(([a], [b]) => a.localeCompare(b)));
   return {
     lockVersion: LOCK_VERSION,
@@ -53,6 +64,7 @@ export function buildLock(managed: Readonly<Record<string, LockEntry>>): Lock {
       graphify: { min: GRAPHIFY.min, maxExclusive: GRAPHIFY.maxExclusive, tested: GRAPHIFY.tested },
     },
     graph: { schemaVersion: GRAPHIFY.graphSchemaVersion },
+    addons,
     managed: sorted,
   };
 }

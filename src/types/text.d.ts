@@ -6,3 +6,7 @@ declare module "*.txt" {
   const text: string;
   export default text;
 }
+declare module "*LICENSE" {
+  const text: string;
+  export default text;
+}

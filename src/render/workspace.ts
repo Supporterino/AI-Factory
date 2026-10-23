@@ -12,6 +12,13 @@ import untrusted from "../../templates/agents/shared/untrusted.md" with { type: 
 import tester from "../../templates/agents/tester.md" with { type: "text" };
 import factoryPlugin from "../../templates/plugin/factory-plugin.txt" with { type: "text" };
 import {
+  checkPonytailConfig,
+  PONYTAIL_DIR,
+  ponytailSection,
+  precedence,
+  vendoredFiles,
+} from "../addons/ponytail.ts";
+import {
   FactoryConfig,
   LANGUAGES,
   modelFor,
@@ -131,6 +138,8 @@ function renderAgent(config: FactoryConfig, spec: AgentSpec): ManagedFile {
     spec.role === "orchestrator"
       ? [untrusted, handoffRules]
       : [untrusted, graphRules, handoffRules];
+  const section = spec.role === "reviewer" ? ponytailSection(config, "reviewer") : undefined;
+  const addon = section === undefined ? [] : [section];
   return {
     path: `.opencode/agents/${spec.id}.md`,
     template: `agents/${spec.id}`,
@@ -141,7 +150,7 @@ function renderAgent(config: FactoryConfig, spec: AgentSpec): ManagedFile {
         model: modelFor(config, spec.modelRole),
         role: spec.role,
       }),
-      sections: [spec.body, ...shared],
+      sections: [spec.body, ...addon, ...shared],
     }),
   };
 }
@@ -149,6 +158,7 @@ function renderAgent(config: FactoryConfig, spec: AgentSpec): ManagedFile {
 function renderImplementer(config: FactoryConfig, repo: RepoConfig): ManagedFile {
   const standards = profilesFor(repo.languages).map((p) => renderStandard(p));
   const langs = repo.languages.length > 0 ? repo.languages.join(", ") : "none detected";
+  const addon = ponytailSection(config, "implementer");
   return {
     path: `.opencode/agents/implementer-${repo.name}.md`,
     template: "agents/implementer",
@@ -162,6 +172,7 @@ function renderImplementer(config: FactoryConfig, repo: RepoConfig): ManagedFile
       sections: [
         implementer.replaceAll("{{repo}}", repo.name),
         ...standards,
+        ...(addon === undefined ? [] : [addon]),
         untrusted,
         graphRules,
         handoffRules,
@@ -255,6 +266,28 @@ function configJsonSchema(): string {
   return `${JSON.stringify({ title: "ai-factory config", ...schema }, null, 2)}\n`;
 }
 
+/** The vendored add-on and its precedence rules, when enabled (removed cleanly when disabled). */
+function ponytailFiles(config: FactoryConfig): ManagedFile[] {
+  if (!config.addons.ponytail.enabled) return [];
+  checkPonytailConfig(config);
+  return [
+    ...vendoredFiles().map(
+      (f): ManagedFile => ({
+        path: `${PONYTAIL_DIR}/${f.path}`,
+        template: `addons/ponytail/${f.path}`,
+        mode: "file",
+        content: f.content,
+      }),
+    ),
+    {
+      path: `${PONYTAIL_DIR}/PRECEDENCE.md`,
+      template: "addons/ponytail/PRECEDENCE.md",
+      mode: "file",
+      content: `${precedence(config)}\n`,
+    },
+  ];
+}
+
 /** Every managed file for a config, sorted by path. Pure: same config, same output. */
 export function renderWorkspace(config: FactoryConfig): ManagedFile[] {
   const files: ManagedFile[] = [
@@ -304,6 +337,7 @@ export function renderWorkspace(config: FactoryConfig): ManagedFile[] {
         content: renderStandard(PROFILES[l]),
       }),
     ),
+    ...ponytailFiles(config),
     ...AGENTS.map((spec) => renderAgent(config, spec)),
     ...config.repos.filter((r) => r.role === "code").map((r) => renderImplementer(config, r)),
   ];
