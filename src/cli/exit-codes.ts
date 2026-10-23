@@ -14,6 +14,8 @@ export const ExitCode = {
   Precondition: 4,
   /** `gate`: at least one gate failed, is missing, timed out or was not check-only. */
   GateFailed: 5,
+  /** `run` / `approve` / `resume`: the change paused (failure report written) or was aborted. */
+  Paused: 6,
   /** `detect --check`: detection differs from the config. */
   Drift: 10,
 } as const;

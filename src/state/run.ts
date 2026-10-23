@@ -83,6 +83,24 @@ export const RunState = z.strictObject({
   tasks: z.array(TaskState).default([]),
   /** Incremented on every task merge; graph updates record the sequence they cover. */
   mergeSeq: z.int().min(0).default(0),
+  /** Intake result. */
+  summary: z.string().default(""),
+  likelyRepos: z.array(z.string()).default([]),
+  /** Workspace-relative dir of an AI-repo draft worktree while another change is active. */
+  draft: z.string().optional(),
+  /** Repos whose review and tester pass already ran (each runs once per change). */
+  reviewed: z.array(z.string()).default([]),
+  /** Full-suite fix rounds used. */
+  suiteRounds: z.int().min(0).default(0),
+  /** Latest handoff per task or step, for the report. */
+  handoffs: z.record(z.string(), z.unknown()).default({}),
+  /** Gate summary of the last full-suite run per repo. */
+  fullSuite: z
+    .record(z.string(), z.strictObject({ passed: z.boolean(), output: z.string() }))
+    .default({}),
+  /** Provisional pointer bump commit (submodules layout). */
+  pointerCommit: z.string().optional(),
+  reportPath: z.string().optional(),
 });
 export type RunState = z.infer<typeof RunState>;
 

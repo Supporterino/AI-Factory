@@ -6,6 +6,7 @@ import type { Command, Io } from "./command.ts";
 import { detectCommand } from "./commands/detect.ts";
 import { gateCommand } from "./commands/gate.ts";
 import { initCommand } from "./commands/init.ts";
+import { approveCommand, resumeCommand, runCommand } from "./commands/pipeline-commands.ts";
 import { repointCommand } from "./commands/repoint.ts";
 import { abortCommand, retryCommand, statusCommand } from "./commands/state-commands.ts";
 import { ExitCode } from "./exit-codes.ts";
@@ -13,6 +14,9 @@ import { ExitCode } from "./exit-codes.ts";
 export const COMMANDS: readonly Command[] = [
   initCommand,
   detectCommand,
+  runCommand,
+  approveCommand,
+  resumeCommand,
   statusCommand,
   gateCommand,
   retryCommand,
@@ -34,7 +38,7 @@ function usage(): string {
     "  -V, --version   Print the factory version",
     "",
     "Exit codes: 0 ok, 1 failure, 2 usage, 3 config invalid, 4 precondition, 5 gate failed,",
-    "10 drift.",
+    "6 paused, 10 drift.",
   ].join("\n");
 }
 

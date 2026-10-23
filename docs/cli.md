@@ -4,15 +4,16 @@
 
 ## Exit codes
 
-| Code | Name          | Meaning                                                               |
-| ---- | ------------- | --------------------------------------------------------------------- |
-| 0    | Ok            | Success                                                               |
-| 1    | Failure       | Unexpected internal failure or an unhandled tool error                |
-| 2    | Usage         | Unknown command or flag, or a missing argument                        |
-| 3    | ConfigInvalid | `factory.config.jsonc` is missing, unparsable or fails validation     |
-| 4    | Precondition  | A precondition is not met (not initialised, dirty tree, missing tool) |
-| 5    | GateFailed    | `gate`: a gate failed, is missing, timed out or was not check-only    |
-| 10   | Drift         | `detect --check` found differences                                    |
+| Code | Name          | Meaning                                                                     |
+| ---- | ------------- | --------------------------------------------------------------------------- |
+| 0    | Ok            | Success                                                                     |
+| 1    | Failure       | Unexpected internal failure or an unhandled tool error                      |
+| 2    | Usage         | Unknown command or flag, or a missing argument                              |
+| 3    | ConfigInvalid | `factory.config.jsonc` is missing, unparsable or fails validation           |
+| 4    | Precondition  | A precondition is not met (not initialised, dirty tree, missing tool)       |
+| 5    | GateFailed    | `gate`: a gate failed, is missing, timed out or was not check-only          |
+| 6    | Paused        | `run`/`approve`/`resume`: the change paused (report written) or was aborted |
+| 10   | Drift         | `detect --check` found differences                                          |
 
 The source of truth is `src/cli/exit-codes.ts`; numbers are never reused.
 
@@ -106,3 +107,34 @@ ai-factory abort <change-id>
 ```
 
 Stops the change safely: the driver finishes in-flight merges and interrupts agents. Branches and worktrees are kept, the active-change lock is released, and the change is removed from the queue. The next queued change is not started automatically.
+
+## run
+
+```
+ai-factory run "<request>"
+```
+
+Starts a change and runs it up to spec approval:
+1. Intake by the orchestrator: change id, summary and likely repos.
+2. `change/<id>` in the AI repo, created before design.
+3. Explorers per likely repo, in parallel.
+4. The architect writes `openspec/changes/<id>/`.
+5. The CLI validates the change, and the architect repairs it if needed.
+
+When another change occupies the AI-repo checkout, the new change is drafted in `.factory/drafts/<id>`. Exit 0 means it awaits approval; exit 6 means the spec does not validate yet.
+
+## approve
+
+```
+ai-factory approve <change-id> [--no-continue]
+```
+
+Validates the change and commits the spec (`docs(spec): <id>`). Records the approval in `.factory/approvals/<id>.json`: the approver (git `user.email`), the spec commit and a content hash with task checkboxes normalised out. Then it continues automatically: activation, implementation, review and tests, contracts, full suite, close. If another change is active, this one is queued and starts when that one closes.
+
+## resume
+
+```
+ai-factory resume <change-id>
+```
+
+Continues a paused, aborted, interrupted or queued change from its last consistent state. The spec is re-checked against its approval first, and any edit other than a task checkbox voids the approval.

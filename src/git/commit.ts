@@ -16,12 +16,12 @@ const TYPE_BY_VERB: ReadonlyArray<readonly [RegExp, string]> = [
   [/^(speed up|optimi[sz]e|cache)\b/i, "perf"],
 ];
 
-/** "Add health endpoint" → "feat: add health endpoint". */
-export function conventionalSubject(title: string): string {
+/** "Add health endpoint" → "feat: add health endpoint". `type` overrides the verb mapping. */
+export function conventionalSubject(title: string, type?: string): string {
   const clean = title.trim().replace(/\s+/g, " ").replace(/\.$/, "");
-  const type = TYPE_BY_VERB.find(([re]) => re.test(clean))?.[1] ?? "feat";
+  const kind = type ?? TYPE_BY_VERB.find(([re]) => re.test(clean))?.[1] ?? "feat";
   const lowered = clean.charAt(0).toLowerCase() + clean.slice(1);
-  return `${type}: ${lowered}`;
+  return `${kind}: ${lowered}`;
 }
 
 export interface Trailers {
@@ -71,6 +71,7 @@ export function commitTask(
   id: string,
   task: string,
   title: string,
+  type?: string,
 ): Promise<string | undefined> {
-  return commitAll(worktree, conventionalSubject(title), { "Change-Id": id, Task: task });
+  return commitAll(worktree, conventionalSubject(title, type), { "Change-Id": id, Task: task });
 }
