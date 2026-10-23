@@ -14,6 +14,7 @@ import {
 } from "../../state/active.ts";
 import { factoryDir } from "../../state/files.ts";
 import { listRuns, loadRun, type RunState, type TaskState, updateRun } from "../../state/run.ts";
+import { formatTokens, summarizeUsage, totalTokens, usageLine } from "../../usage/usage.ts";
 import { type Command, type Io, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
 
@@ -102,11 +103,14 @@ function printRun(
   }
   if (run.tasks.length > 0) {
     io.out(`  tasks: ${merged}/${run.tasks.length} merged (merge seq ${run.mergeSeq})`);
+    const byStep = summarizeUsage(root, run.id).byStep;
+    const taskTokens = new Map(Object.entries(byStep).map(([step, u]) => [step, totalTokens(u)]));
     const idWidth = Math.max(...run.tasks.map((t) => t.id.length));
     const repoWidth = Math.max(...run.tasks.map((t) => t.repo.length));
     for (const t of run.tasks) {
+      const tokens = taskTokens.get(t.id);
       io.out(
-        `    ${ICON[t.status]} ${t.id.padEnd(idWidth)} ${t.repo.padEnd(repoWidth)} ${t.title} — ${taskDetail(run, t)}`,
+        `    ${ICON[t.status]} ${t.id.padEnd(idWidth)} ${t.repo.padEnd(repoWidth)} ${t.title} — ${taskDetail(run, t)}${tokens ? ` · ${formatTokens(tokens)} tok` : ""}`,
       );
       if (t.status !== "merged" && t.lastGateOutput) {
         for (const line of t.lastGateOutput.split("\n").slice(0, 5)) io.out(`        ${line}`);
@@ -115,6 +119,17 @@ function printRun(
   }
   const worktrees = worktreesOf(root, run.id);
   if (worktrees.length > 0) io.out(`  worktrees: ${worktrees.join(", ")}`);
+  const usage = summarizeUsage(root, run.id);
+  if (usage.sessions > 0) {
+    io.out(`  usage: ${usageLine(usage.total)} in ${usage.sessions} sessions`);
+    const agents = Object.entries(usage.byAgent)
+      .sort((a, b) => totalTokens(b[1]) - totalTokens(a[1]))
+      .map(([agent, u]) => `${agent} ${formatTokens(totalTokens(u))}`);
+    io.out(`    by agent: ${agents.join(", ")}`);
+    io.out(
+      `    retry overhead: ${formatTokens(totalTokens(usage.retryOverhead))} · wasted re-reads: ${usage.wastedReads}`,
+    );
+  }
 }
 
 export const statusCommand: Command = {
@@ -144,7 +159,7 @@ With an id: that change's phase, branches, task DAG with states, retries and wor
             active: active ?? null,
             driverAlive: active ? driverAlive(active) : false,
             queue,
-            runs,
+            runs: runs.map((r) => ({ ...r, usage: summarizeUsage(root, r.id) })),
           },
           null,
           2,

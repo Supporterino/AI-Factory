@@ -153,6 +153,7 @@ export async function ensureContextPacks(p: Pipeline, id: string): Promise<void>
       modelRole: "architect",
       context: { directory: p.root, workspace: p.root },
       title: `context packs ${id}`,
+      step: "context-packs",
       prompt: packsPrompt(id, missing, cap),
     });
     if (res.handoff) {
@@ -326,6 +327,9 @@ export class PipelineTaskRunner implements TaskRunner {
       modelRole: isTest ? "tester" : "implementer",
       context: this.#context(task, dir),
       title: `${this.id} ${task.id} attempt ${ctx.attempt}`,
+      step: task.id,
+      kind: "attempt",
+      attempt: ctx.attempt,
       prompt:
         isTest && ctx.feedback
           ? `${prompt}\n\nPrevious attempt failed:\n\`\`\`\n${ctx.feedback}\n\`\`\``
@@ -421,6 +425,8 @@ export class PipelineTaskRunner implements TaskRunner {
       modelRole: "implementer",
       context: { ...this.#context(task, path), touches: ["**"] },
       title: `${this.id} ${task.id} resolve conflicts`,
+      step: task.id,
+      kind: "conflict",
       prompt: conflictPrompt(task, conflicts),
     });
     if (res.handoff?.status !== "done") return false;

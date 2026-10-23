@@ -7,6 +7,7 @@ import { promptForHandoff } from "../runtime/handoff.ts";
 import { limited, RateLimiter } from "../runtime/rate-limit.ts";
 import { type AgentRuntime, addUsage, type SessionSpec, type Usage } from "../runtime/types.ts";
 import { loadRun, type RunState, updateRun } from "../state/run.ts";
+import { recordUsage, type UsageEntry } from "../usage/usage.ts";
 import { Semaphore } from "../util/semaphore.ts";
 
 /** Everything a pipeline step needs; one per CLI command invocation. */
@@ -25,6 +26,10 @@ export interface AgentCall {
   readonly context: Omit<SessionSpec["context"], "changeId" | "role">;
   readonly title: string;
   readonly prompt: string;
+  /** Usage bookkeeping: task id or step name, and the attempt kind (§11). */
+  readonly step: string;
+  readonly kind?: UsageEntry["kind"];
+  readonly attempt?: number;
   /** Follow-up prompts in the same session when `retry` returns text (design repair). */
   readonly retry?: (handoff: Handoff | undefined, attempt: number) => Promise<string | undefined>;
 }
@@ -35,6 +40,7 @@ export interface AgentResult {
   readonly outcome: "succeeded" | "failed" | "interrupted";
   readonly usage: Usage;
   readonly sessionId: string;
+  readonly model: string;
 }
 
 export class Pipeline {
@@ -113,12 +119,25 @@ export class Pipeline {
       },
       { redact: this.config.logs.redact },
     );
+    const entry: UsageEntry = {
+      at: new Date().toISOString(),
+      sessionId: raw.id,
+      agent: call.agent,
+      model,
+      step: call.step,
+      kind: call.kind ?? "step",
+      ...(call.attempt === undefined ? {} : { attempt: call.attempt }),
+      usage,
+    };
+    // Intake runs before the change id exists; `intake` records its entry under the id.
+    if (call.changeId !== "intake") await recordUsage(this.root, call.changeId, entry);
     return {
       ...(turn.handoff ? { handoff: turn.handoff } : {}),
       ...(turn.problem ? { problem: turn.problem } : {}),
       outcome: turn.outcome,
       usage,
       sessionId: raw.id,
+      model,
     };
   }
 }

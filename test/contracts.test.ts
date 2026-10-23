@@ -115,6 +115,7 @@ describe("OpenAPI breaking-change diff", () => {
   test("consumers still referencing removed paths are reported", () => {
     const old = api({ "/users/{id}": {}, "/health": {} });
     const next = api({ "/health": {} });
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: consumer source text, not a template.
     expect(referencedRemovedPaths(old, next, ["fetch(`/users/${id}`)", "GET /health"])).toEqual([
       "/users/{id}",
     ]);

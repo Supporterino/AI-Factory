@@ -8,6 +8,7 @@ import { checkDesign, newChange } from "../openspec/cli.ts";
 import { decisionValues } from "../runtime/handoff.ts";
 import { readActive } from "../state/active.ts";
 import { loadRun, newRun, saveRun } from "../state/run.ts";
+import { recordUsage } from "../usage/usage.ts";
 import type { Pipeline } from "./context.ts";
 import { designPrompt, designRepairPrompt, explorePrompt, intakePrompt } from "./prompts.ts";
 
@@ -73,6 +74,7 @@ export async function intake(p: Pipeline, request: string): Promise<string> {
     modelRole: "orchestrator",
     context: { directory: p.root, workspace: p.root },
     title: "intake",
+    step: "intake",
     prompt: intakePrompt(request, repos),
   });
   const values = result.handoff ? decisionValues(result.handoff) : new Map<string, string>();
@@ -87,6 +89,15 @@ export async function intake(p: Pipeline, request: string): Promise<string> {
   run.likelyRepos = likely;
   if (result.handoff) run.handoffs.intake = result.handoff;
   saveRun(p.root, run);
+  await recordUsage(p.root, id, {
+    at: new Date().toISOString(),
+    sessionId: result.sessionId,
+    agent: "orchestrator",
+    model: result.model,
+    step: "intake",
+    kind: "step",
+    usage: result.usage,
+  });
 
   const { base, draft } = await branchForDesign(p, id);
   await p.update(id, (d) => {
@@ -122,6 +133,7 @@ export async function design(p: Pipeline, id: string): Promise<{ ok: boolean; is
           modelRole: "explorer",
           context: { directory: p.repoDir(repo), workspace: dir, repo: repo.name },
           title: `explore ${repo.name}`,
+          step: `explore:${repo.name}`,
           prompt: explorePrompt(repo, run.summary),
         });
         explorations[repo.name] =
@@ -141,6 +153,7 @@ export async function design(p: Pipeline, id: string): Promise<{ ok: boolean; is
     modelRole: "architect",
     context: { directory: dir, workspace: dir },
     title: `design ${id}`,
+    step: "design",
     prompt: designPrompt({
       id,
       summary: run.summary,

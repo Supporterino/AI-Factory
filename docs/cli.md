@@ -86,7 +86,7 @@ Pointers whose MR has not merged stay provisional, and the command exits with 4.
 ai-factory status [<change-id>] [--json]
 ```
 
-Shows the active change and its driver, the queue, and each change's details:
+Shows the active change and its driver, the queue, and each change's details, including token usage (by agent and task, retry overhead, wasted re-reads) and how far the graph lags behind the merges:
 - the phase
 - the branches
 - the task DAG with states, attempts and the last gate output

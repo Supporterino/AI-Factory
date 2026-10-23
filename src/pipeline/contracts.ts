@@ -133,6 +133,7 @@ export async function contractPhase(p: Pipeline, id: string): Promise<ContractOu
     modelRole: "contractReviewer",
     context: { directory: p.root, workspace: p.root },
     title: `${id} contract review`,
+    step: "contract-review",
     prompt: contractReviewPrompt({
       contracts: results.map((r) => ({ key: r.key, summary: summarize(r) })),
       diffs,

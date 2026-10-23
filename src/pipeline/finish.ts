@@ -13,6 +13,7 @@ import type { RunSummary } from "../scheduler/scheduler.ts";
 import { releaseActive } from "../state/active.ts";
 import { type RunState, recordTask, TaskState } from "../state/run.ts";
 import { setTaskChecked } from "../tasks/parse.ts";
+import { summarizeUsage, usageReport } from "../usage/usage.ts";
 import type { Pipeline } from "./context.ts";
 import { packPath, specText } from "./implement.ts";
 import { findingPack, findingTaskTitle, reviewPrompt } from "./prompts.ts";
@@ -56,6 +57,7 @@ export async function review(p: Pipeline, id: string): Promise<number> {
           modelRole: "reviewer",
           context: { directory: p.repoDir(repo), workspace: p.root, repo: name },
           title: `${id} review ${name}`,
+          step: `review:${name}`,
           prompt: reviewPrompt({
             repo,
             base,
@@ -201,6 +203,7 @@ export function writePauseReport(p: Pipeline, id: string, summary: RunSummary): 
     `2. \`ai-factory retry ${id} --task <task>\` resets the task's retry budget.`,
     `3. \`ai-factory resume ${id}\` continues the change.`,
     "",
+    ...usageReport(summarizeUsage(p.root, id)),
   ];
   const file = reportFile(p.root, id, "paused");
   mkdirSync(join(p.root, ".factory", "reports"), { recursive: true });
@@ -302,6 +305,7 @@ export async function close(p: Pipeline, id: string): Promise<string> {
     ...(questions.length > 0
       ? ["## Open questions", "", ...questions.map((q) => `- ${q}`), ""]
       : []),
+    ...usageReport(summarizeUsage(p.root, id)),
   ];
   const file = reportFile(p.root, id, "final");
   mkdirSync(join(p.root, ".factory", "reports"), { recursive: true });
