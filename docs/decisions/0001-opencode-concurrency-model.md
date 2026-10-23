@@ -16,3 +16,10 @@ It drives the server through `@opencode/client`, pinned to the opencode version:
 - env inheritance into the shell tool (fallback: the `shell.create.before` hook)
 - credential lookup with a relocated DB
 - `tool.execute.before` blocking
+
+**Update (slice 6, verified end to end; docs/research/opencode-e2e.md).**
+- **Model per session.** Every `POST /api/session` passes the role's `model` explicitly: the agent frontmatter `model` is not applied to new sessions.
+- **Curated server env.** The server is started with an allowlist env: PATH, HOME, USER, LANG, TMPDIR and SHELL; the credentials of the providers named in `models` only; and the factory variables. Ambient tokens (e.g. `GITLAB_TOKEN`) would otherwise enable extra providers.
+- **Startup.** The CLI polls `GET /api/agent?location[directory]=…` until the factory agents are loaded before creating sessions.
+- **Session ids.** Sessions are created with a CLI-chosen `ses_…` id, so the session context file exists before the first tool call.
+- **Permission prompts.** Any `permission.asked` event is answered with `reject` and logged, because headless `ask` would block forever.
