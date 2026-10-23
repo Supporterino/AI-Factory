@@ -4,10 +4,11 @@ import { FactoryError } from "../errors.ts";
 import { FACTORY_VERSION } from "../version.ts";
 import type { Command, Io } from "./command.ts";
 import { detectCommand } from "./commands/detect.ts";
+import { gateCommand } from "./commands/gate.ts";
 import { initCommand } from "./commands/init.ts";
 import { ExitCode } from "./exit-codes.ts";
 
-export const COMMANDS: readonly Command[] = [initCommand, detectCommand];
+export const COMMANDS: readonly Command[] = [initCommand, detectCommand, gateCommand];
 
 function usage(): string {
   const width = Math.max(...COMMANDS.map((c) => c.name.length));
@@ -22,7 +23,8 @@ function usage(): string {
     "  -h, --help      Show help (also after a command)",
     "  -V, --version   Print the factory version",
     "",
-    "Exit codes: 0 ok, 1 failure, 2 usage, 3 config invalid, 4 precondition, 10 drift.",
+    "Exit codes: 0 ok, 1 failure, 2 usage, 3 config invalid, 4 precondition, 5 gate failed,",
+    "10 drift.",
   ].join("\n");
 }
 

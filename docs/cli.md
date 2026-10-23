@@ -51,3 +51,16 @@ Re-detects the layout, repos, languages and contracts and prints the differences
 - `--apply` writes the changes with comment-preserving edits. It then regenerates implementer agents, scopes, the OpenSpec context and hooks, and commits (`--no-commit` to skip).
 - `--check` exits with 10 when there is drift.
 - `--json` prints `{ root, hasConfig, detection, changes, applied }`.
+
+## gate
+
+```
+ai-factory gate <change-id> [--task <id>] [--repo <name>] [--full] [--json]
+```
+
+Runs format, lint, types and tests.
+- `--task` gates a task worktree (`.factory/worktrees/<change>/<repo>/<task>`) against `change/<id>`, with file-scoped format/lint and affected tests only.
+- Without `--task` it gates every repo that has `change/<id>` checked out, against its default branch. `--full` runs whole-repo gates and the full suite.
+- Gates resolve as `gates.overrides` → the repo's own script (`gates.scripts` names in package.json, Makefile, justfile or Taskfile) → profile defaults. A gate with no command fails; set the override to `"skip"` to opt out explicitly.
+- A gate that modifies files fails as "not check-only", and the worktree is restored.
+- `--json` prints `{ change, passed, reports: [{ repo, mode, base, passed, changed, results: [{ type, status, cwd, command, source, exitCode, durationMs, output }] }] }`. `output` is compacted (no ANSI codes, failures with context, capped at `tokens.gateOutputMaxLines`).

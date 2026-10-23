@@ -12,6 +12,8 @@ export const ExitCode = {
   ConfigInvalid: 3,
   /** A precondition is not met (e.g. not initialised, dirty tree, missing tool). */
   Precondition: 4,
+  /** `gate`: at least one gate failed, is missing, timed out or was not check-only. */
+  GateFailed: 5,
   /** `detect --check`: detection differs from the config. */
   Drift: 10,
 } as const;
