@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { z } from "zod";
 import { ConfigError } from "../errors.ts";
@@ -16,7 +16,8 @@ export interface LoadedConfig {
 
 /** Nearest ancestor of `start` (inclusive) that contains `factory.config.jsonc`. */
 export function findConfigRoot(start: string): string | undefined {
-  let dir = resolve(start);
+  // Real path, so it compares equal to what git reports (/var vs /private/var on macOS).
+  let dir = realpathSync(resolve(start));
   for (;;) {
     if (existsSync(join(dir, CONFIG_FILE))) return dir;
     const parent = dirname(dir);

@@ -1,0 +1,9 @@
+[user]
+	name = Fixture
+	email = fixture@example.com
+[commit]
+	gpgsign = false
+[init]
+	defaultBranch = main
+[protocol "file"]
+	allow = always

@@ -4,9 +4,10 @@ import { FactoryError } from "../errors.ts";
 import { FACTORY_VERSION } from "../version.ts";
 import type { Command, Io } from "./command.ts";
 import { detectCommand } from "./commands/detect.ts";
+import { initCommand } from "./commands/init.ts";
 import { ExitCode } from "./exit-codes.ts";
 
-export const COMMANDS: readonly Command[] = [detectCommand];
+export const COMMANDS: readonly Command[] = [initCommand, detectCommand];
 
 function usage(): string {
   const width = Math.max(...COMMANDS.map((c) => c.name.length));
