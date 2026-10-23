@@ -28,27 +28,38 @@ export interface StubServer {
   stop(): void;
 }
 
-export function startStubModel(script: readonly StubStep[]): StubServer {
+/** The parsed Messages API request the stub received. */
+export interface StubRequest {
+  readonly model?: string;
+  readonly system?: unknown;
+  readonly messages?: Message[];
+  readonly tools?: unknown[];
+}
+
+/**
+ * `script` is either a fixed list (step n after n tool results) or a function that picks
+ * the next step from the whole request (used by the role-aware e2e team).
+ */
+export function startStubModel(
+  script: readonly StubStep[] | ((req: StubRequest, toolResults: number) => StubStep),
+): StubServer {
   const requests: unknown[] = [];
   let n = 0;
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     async fetch(req) {
-      const body = (await req.json().catch(() => ({}))) as {
-        model?: string;
-        messages?: Message[];
-        tools?: unknown[];
-      };
+      const body = (await req.json().catch(() => ({}))) as StubRequest;
       requests.push(body);
       if (!new URL(req.url).pathname.endsWith("/messages"))
         return new Response("not found", { status: 404 });
+      const done = toolResults(body.messages ?? []);
       const step: StubStep =
         (body.tools ?? []).length === 0
           ? { text: "Title" }
-          : (script[Math.min(toolResults(body.messages ?? []), script.length - 1)] ?? {
-              text: "done",
-            });
+          : typeof script === "function"
+            ? script(body, done)
+            : (script[Math.min(done, script.length - 1)] ?? { text: "done" });
       const id = `msg_stub_${++n}`;
       const out = [
         event("message_start", {
