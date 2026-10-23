@@ -1,0 +1,91 @@
+#!/usr/bin/env node
+import { resolve } from "node:path";
+import { FactoryError } from "../errors.ts";
+import { FACTORY_VERSION } from "../version.ts";
+import type { Command, Io } from "./command.ts";
+import { detectCommand } from "./commands/detect.ts";
+import { ExitCode } from "./exit-codes.ts";
+
+export const COMMANDS: readonly Command[] = [detectCommand];
+
+function usage(): string {
+  const width = Math.max(...COMMANDS.map((c) => c.name.length));
+  return [
+    "Usage: ai-factory [-C <dir>] <command> [options]",
+    "",
+    "Commands:",
+    ...COMMANDS.map((c) => `  ${c.name.padEnd(width)}  ${c.summary}`),
+    "",
+    "Global options:",
+    "  -C <dir>        Run as if started in <dir>",
+    "  -h, --help      Show help (also after a command)",
+    "  -V, --version   Print the factory version",
+    "",
+    "Exit codes: 0 ok, 1 failure, 2 usage, 3 config invalid, 4 precondition, 10 drift.",
+  ].join("\n");
+}
+
+function report(err: unknown, io: Io): ExitCode {
+  if (err instanceof FactoryError) {
+    io.err(`error: ${err.message}`);
+    for (const line of err.details) io.err(`  ${line}`);
+    return err.exitCode;
+  }
+  io.err(`internal error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+  return ExitCode.Failure;
+}
+
+/** Runs the CLI against injected I/O; returns the exit code. */
+export async function runCli(argv: readonly string[], io: Io): Promise<ExitCode> {
+  let cwd = io.cwd;
+  let i = 0;
+  for (; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "-C") {
+      const dir = argv[++i];
+      if (dir === undefined) {
+        io.err("error: -C needs a directory");
+        return ExitCode.Usage;
+      }
+      cwd = resolve(cwd, dir);
+    } else if (arg === "-V" || arg === "--version") {
+      io.out(FACTORY_VERSION);
+      return ExitCode.Ok;
+    } else if (arg === "-h" || arg === "--help") {
+      io.out(usage());
+      return ExitCode.Ok;
+    } else {
+      break;
+    }
+  }
+
+  const name = argv[i];
+  if (name === undefined) {
+    io.err(usage());
+    return ExitCode.Usage;
+  }
+  const command = COMMANDS.find((c) => c.name === name);
+  if (command === undefined) {
+    io.err(`error: unknown command "${name}"\n\n${usage()}`);
+    return ExitCode.Usage;
+  }
+  const rest = argv.slice(i + 1);
+  if (rest.includes("-h") || rest.includes("--help")) {
+    io.out(command.help);
+    return ExitCode.Ok;
+  }
+  try {
+    return await command.run(rest, { ...io, cwd });
+  } catch (err) {
+    return report(err, io);
+  }
+}
+
+if (import.meta.main) {
+  const code = await runCli(process.argv.slice(2), {
+    cwd: process.cwd(),
+    out: (text) => process.stdout.write(`${text}\n`),
+    err: (text) => process.stderr.write(`${text}\n`),
+  });
+  process.exit(code);
+}
