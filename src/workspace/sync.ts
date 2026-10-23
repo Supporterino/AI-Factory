@@ -2,7 +2,8 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FactoryConfig } from "../config/schema.ts";
 import { PreconditionError } from "../errors.ts";
-import { git, gitOk } from "../exec.ts";
+import { git } from "../exec.ts";
+import { commitPaths } from "../git/commit.ts";
 import { type HookStatus, installPrePush } from "../git/hooks.ts";
 import { buildLock, LOCK_FILE, type Lock, readLock, serializeLock } from "../lock/lock.ts";
 import { executeSync, type PlannedChange, planSync } from "../managed/sync.ts";
@@ -99,12 +100,11 @@ export async function dirtyInstallPaths(
  * Commits the install paths only (other staged work is left alone). Returns the new commit,
  * or undefined when there was nothing to commit.
  */
-export async function commitInstall(root: string, message: string): Promise<string | undefined> {
-  const paths = INSTALL_PATHS.filter((p) => existsSync(join(root, p)));
-  // Removed managed files (e.g. a dropped implementer) are staged via the parent directory.
-  await gitOk(["add", "-A", "--", ...paths], { cwd: root });
-  const staged = await git(["diff", "--cached", "--quiet", "--", ...paths], { cwd: root });
-  if (staged.code === 0) return undefined;
-  await gitOk(["commit", "-q", "--no-verify", "-m", message, "--", ...paths], { cwd: root });
-  return gitOk(["rev-parse", "HEAD"], { cwd: root });
+export function commitInstall(root: string, message: string): Promise<string | undefined> {
+  // Removed managed files (e.g. a dropped implementer) are staged via their parent directory.
+  return commitPaths(
+    root,
+    INSTALL_PATHS.filter((p) => existsSync(join(root, p))),
+    message,
+  );
 }

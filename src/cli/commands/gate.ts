@@ -6,6 +6,8 @@ import { PreconditionError, UsageError } from "../../errors.ts";
 import { git } from "../../exec.ts";
 import type { GateReport, GateResult } from "../../gates/run.ts";
 import { runGates } from "../../gates/run.ts";
+import { CHANGE_ID, resolveBranchRef } from "../../git/repo.ts";
+import { worktreePath } from "../../git/worktrees.ts";
 import { Semaphore } from "../../util/semaphore.ts";
 import { type Command, type Io, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
@@ -24,8 +26,6 @@ Runs the quality gates (format, lint, types, tests) and prints the results.
 Gates resolve as: gates.overrides → the repo's own script → profile defaults. Every
 gate must be check-only; one that modifies files fails and its changes are undone.
 Exit code ${ExitCode.GateFailed} when any gate fails, is missing, times out or is not check-only.`;
-
-const CHANGE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 const MARK: Record<GateResult["status"], string> = {
   pass: "✓",
@@ -50,16 +50,6 @@ async function baseOf(dir: string, ref: string): Promise<string> {
   return res.stdout.trim();
 }
 
-/** The default-branch ref to diff a change branch against: local branch, else origin's. */
-async function defaultRef(dir: string, branch: string): Promise<string> {
-  for (const ref of [`refs/heads/${branch}`, `refs/remotes/origin/${branch}`]) {
-    if ((await git(["rev-parse", "--verify", "--quiet", ref], { cwd: dir })).code === 0) return ref;
-  }
-  throw new PreconditionError(`default branch ${branch} not found in ${dir}`, [
-    `set "defaultBranch" for this repo in factory.config.jsonc`,
-  ]);
-}
-
 function findTaskWorktree(
   root: string,
   id: string,
@@ -69,8 +59,8 @@ function findTaskWorktree(
   const changeDir = join(root, ".factory", "worktrees", id);
   const repos = repoName ? [repoName] : existsSync(changeDir) ? readdirSync(changeDir) : [];
   const hits = repos
-    .filter((r) => existsSync(join(changeDir, r, task)))
-    .map((r) => ({ repo: r, dir: join(changeDir, r, task) }));
+    .map((r) => ({ repo: r, dir: worktreePath(root, id, r, task) }))
+    .filter((h) => existsSync(h.dir));
   const hit = hits[0];
   if (hit === undefined || hits.length > 1) {
     throw new PreconditionError(
@@ -154,7 +144,7 @@ export const gateCommand: Command = {
           }
           continue;
         }
-        const ref = await defaultRef(dir, repo.defaultBranch ?? "main");
+        const ref = await resolveBranchRef(dir, repo.defaultBranch ?? "main");
         jobs.push({
           repo,
           worktree: dir,

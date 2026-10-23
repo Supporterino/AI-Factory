@@ -6,9 +6,15 @@ import type { Command, Io } from "./command.ts";
 import { detectCommand } from "./commands/detect.ts";
 import { gateCommand } from "./commands/gate.ts";
 import { initCommand } from "./commands/init.ts";
+import { repointCommand } from "./commands/repoint.ts";
 import { ExitCode } from "./exit-codes.ts";
 
-export const COMMANDS: readonly Command[] = [initCommand, detectCommand, gateCommand];
+export const COMMANDS: readonly Command[] = [
+  initCommand,
+  detectCommand,
+  gateCommand,
+  repointCommand,
+];
 
 function usage(): string {
   const width = Math.max(...COMMANDS.map((c) => c.name.length));

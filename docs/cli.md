@@ -65,3 +65,16 @@ Runs format, lint, types and tests.
 - Gates resolve as `gates.overrides` → the repo's own script (`gates.scripts` names in package.json, Makefile, justfile or Taskfile) → profile defaults. A gate with no command fails; set the override to `"skip"` to opt out explicitly.
 - A gate that modifies files fails as "not check-only", and the worktree is restored.
 - `--json` prints `{ change, passed, reports: [{ repo, mode, base, passed, changed, results: [{ type, status, cwd, command, source, exitCode, durationMs, output }] }] }`. `output` is compacted (no ANSI codes, failures with context, capped at `tokens.gateOutputMaxLines`).
+
+## repoint
+
+```
+ai-factory repoint <change-id> [--json]
+```
+
+Run this after the submodule MRs of a change have merged upstream.
+1. Finds the provisional bump commit (`chore(submodules): bump for <id> [provisional]`).
+2. Fetches each submodule and finds the merged commit: fast-forward, merge commit, `Change-Id` trailer, or the squash commit with the same patch-id.
+3. Commits the real pointers in the AI repo as `chore(submodules): repoint <id>`.
+
+Pointers whose MR has not merged stay provisional, and the command exits with 4. Run it again later. Nothing is ever pushed.
