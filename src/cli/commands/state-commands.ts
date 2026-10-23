@@ -69,9 +69,12 @@ function taskDetail(run: RunState, task: TaskState): string {
 function worktreesOf(root: string, id: string): string[] {
   const dir = factoryDir(root, "worktrees", id);
   if (!existsSync(dir)) return [];
-  return readdirSync(dir).flatMap((repo) =>
-    readdirSync(join(dir, repo)).map((task) => `.factory/worktrees/${id}/${repo}/${task}`),
-  );
+  // `.opencode` holds the change's agent snapshot, not a worktree.
+  return readdirSync(dir)
+    .filter((repo) => repo !== ".opencode")
+    .flatMap((repo) =>
+      readdirSync(join(dir, repo)).map((task) => `.factory/worktrees/${id}/${repo}/${task}`),
+    );
 }
 
 function printRun(

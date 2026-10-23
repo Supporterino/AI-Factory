@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { FactoryConfig, Language } from "../config/schema.ts";
 import { PROFILES, type Profile } from "../profiles/index.ts";
@@ -49,4 +49,19 @@ export function snapshotDefinitions(
 export function loadGateSnapshot(root: string, id: string): GateSnapshot | undefined {
   const file = gateFile(root, id);
   return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as GateSnapshot) : undefined;
+}
+
+/**
+ * At close: drop the agent snapshot and the change's worktree folders once no task
+ * worktree is left in them. The gate snapshot stays with the run as a record.
+ */
+export function dropAgentSnapshot(root: string, id: string): void {
+  const dir = join(root, ".factory", "worktrees", id);
+  rmSync(join(dir, ".opencode"), { recursive: true, force: true });
+  if (!existsSync(dir)) return;
+  for (const repo of readdirSync(dir)) {
+    const repoDir = join(dir, repo);
+    if (readdirSync(repoDir).length === 0) rmSync(repoDir, { recursive: true });
+  }
+  if (readdirSync(dir).length === 0) rmSync(dir, { recursive: true });
 }

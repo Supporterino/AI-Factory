@@ -271,6 +271,8 @@ describe("activation snapshot", () => {
       await cli(fx.root, "retry", "snap-x", "--task", "1.1");
       expect((await cliWith(runtime, fx.root, "resume", "snap-x")).code).toBe(ExitCode.Ok);
       expect(loadRun(fx.root, "snap-x")?.phase).toBe("done");
+      // Closing drops the agent snapshot with the change's worktree folders.
+      expect(existsSync(join(fx.root, ".factory/worktrees/snap-x"))).toBe(false);
     } finally {
       fx.cleanup();
     }

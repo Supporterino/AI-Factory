@@ -168,7 +168,12 @@ describe("pipeline: AI repo with submodules", () => {
     const report = readFileSync(join(fx.root, ".factory/reports", `${ID}.md`), "utf8");
     expect(report).toContain(`ai-factory repoint ${ID}`);
     expect(report).toContain("nothing was pushed");
-    expect(readdirSync(join(fx.root, ".factory/worktrees", ID, "backend"))).toEqual([]);
+    expect(existsSync(join(fx.root, ".factory/worktrees", ID))).toBe(false);
+    const logDir = join(fx.root, ".factory/logs", ID);
+    const log = readdirSync(logDir)
+      .map((f) => readFileSync(join(logDir, f), "utf8"))
+      .join("");
+    expect(log).toContain('"kind":"gates","repo":"backend","mode":"full","passed":true');
     expect(readActive(fx.root)).toBeUndefined();
     const remotesAfter = await Promise.all(
       ["backend", "frontend", "deploy"].map((r) =>

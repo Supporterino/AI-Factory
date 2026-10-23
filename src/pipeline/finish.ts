@@ -8,12 +8,14 @@ import { commitPaths } from "../git/commit.ts";
 import { bumpPointers } from "../git/pointers.ts";
 import { changeBranch } from "../git/repo.ts";
 import type { Finding, Handoff } from "../handoff/schema.ts";
+import { appendLog } from "../logs/log.ts";
 import { archiveChange, validateChange } from "../openspec/cli.ts";
 import { profilesFor } from "../profiles/index.ts";
 import type { RunSummary } from "../scheduler/scheduler.ts";
 import { releaseActive } from "../state/active.ts";
 import { type RunState, recordTask, TaskState } from "../state/run.ts";
 import { setTaskChecked } from "../tasks/parse.ts";
+import { dropAgentSnapshot } from "../update/snapshot.ts";
 import { summarizeUsage, usageReport } from "../usage/usage.ts";
 import type { Pipeline } from "./context.ts";
 import { forbidShortcuts, gateDefinitions, packPath, specText } from "./implement.ts";
@@ -126,6 +128,17 @@ export async function fullSuite(p: Pipeline, id: string): Promise<string[]> {
           forbidShortcuts: forbidShortcuts(p),
         }),
       );
+      appendLog(p.root, id, {
+        kind: "gates",
+        repo: name,
+        mode: "full",
+        passed: report.passed,
+        results: report.results.map((r) => ({
+          type: r.type,
+          status: r.status,
+          command: r.command,
+        })),
+      });
       const output = report.results
         .filter((r) => r.status !== "pass" && r.status !== "skipped")
         .map((r) => `[${r.type}] ${r.command ?? ""}\n${r.output}`)
@@ -331,6 +344,7 @@ export async function close(p: Pipeline, id: string): Promise<string> {
     if (pointerCommit) d.pointerCommit = pointerCommit;
     d.reportPath = file;
   });
+  dropAgentSnapshot(p.root, id);
   await releaseActive(p.root, id);
   p.out(`✓ ${id} done — report: ${file}`);
   return file;
