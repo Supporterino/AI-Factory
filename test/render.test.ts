@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { FactoryConfig, LANGUAGES } from "../src/config/schema.ts";
 import { Handoff } from "../src/handoff/schema.ts";
-import { agentRules, PROTECTED_PATHS } from "../src/policy/permissions.ts";
+import { agentRules, PROTECTED_PATHS, ruleEffect } from "../src/policy/permissions.ts";
 import { PROFILES, profileSummary, profilesFor, renderStandard } from "../src/profiles/index.ts";
 import { renderWorkspace } from "../src/render/workspace.ts";
 
@@ -129,22 +129,29 @@ describe("permission rules", () => {
     }
   });
 
-  test("only implementers may edit by default; read-only roles cannot run arbitrary shell", () => {
+  test("edit allowances: implementers everywhere, architect its folders, tester test globs", () => {
     const allows = (role: Parameters<typeof agentRules>[0], action: string) =>
-      agentRules(role)
+      agentRules(role, ["*.test.ts"])
         .filter((r) => r.action === action && r.effect === "allow")
         .map((r) => r.resource);
     expect(allows("implementer", "edit")).toEqual(["*"]);
-    for (const role of [
-      "orchestrator",
-      "architect",
-      "explorer",
-      "reviewer",
-      "contract-reviewer",
-      "tester",
-    ] as const) {
+    expect(allows("architect", "edit")).toEqual(["openspec/changes/*", ".factory/context/*"]);
+    expect(allows("tester", "edit")).toEqual(["*.test.ts"]);
+    for (const role of ["orchestrator", "explorer", "reviewer", "contract-reviewer"] as const) {
       expect(allows(role, "edit")).toEqual([]);
     }
+    const architect = agentRules("architect");
+    expect(ruleEffect(architect, "edit", "openspec/changes/add-x/specs/a/spec.md")).toBe("allow");
+    expect(ruleEffect(architect, "edit", ".factory/context/add-x/1.1.md")).toBe("allow");
+    expect(ruleEffect(architect, "edit", ".factory/runs/add-x.json")).toBe("deny");
+    expect(ruleEffect(architect, "edit", ".factory/context/add-x/key.pem")).toBe("deny");
+    expect(ruleEffect(architect, "edit", "openspec/specs/a/spec.md")).toBe("deny");
+    expect(ruleEffect(architect, "edit", "src/a.ts")).toBe("deny");
+    const tester = agentRules("tester", ["*.test.ts", "*_test.go"]);
+    expect(ruleEffect(tester, "edit", "src/deep/a.test.ts")).toBe("allow");
+    expect(ruleEffect(tester, "edit", "pkg/x_test.go")).toBe("allow");
+    expect(ruleEffect(tester, "edit", "src/a.ts")).toBe("deny");
+    expect(ruleEffect(tester, "edit", ".opencode/x.test.ts")).toBe("deny");
     expect(allows("explorer", "shell")).not.toContain("*");
     expect(allows("orchestrator", "read")).toEqual([]);
   });

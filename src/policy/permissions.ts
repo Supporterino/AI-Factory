@@ -132,24 +132,34 @@ const READ_TOOLS: PermissionRule[] = [
   rule("grep", "*", "allow"),
 ];
 
-/** Static rules rendered into `.opencode/agents/<role>.md`. Sessions add task-specific ones. */
-export function agentRules(role: AgentRole): PermissionRule[] {
+/**
+ * Static rules rendered into `.opencode/agents/<role>.md`. Edit allowances are path rules
+ * relative to the session directory; the plugin narrows them to the active change, the task
+ * worktree and the repo's own test globs (ADR-0011).
+ */
+export function agentRules(role: AgentRole, testGlobs: readonly string[] = []): PermissionRule[] {
   const rules: PermissionRule[] = ACTIONS.map((a) => rule(a, "*", "deny"));
   switch (role) {
     case "orchestrator":
       // Works only from the DAG, task states and handoffs in its prompt. No tools.
       break;
     case "explorer":
-    case "architect":
       rules.push(...READ_TOOLS, ...allowAll("shell", GRAPH_QUERY_COMMANDS));
       break;
+    case "architect":
+      rules.push(
+        ...READ_TOOLS,
+        ...allowAll("shell", GRAPH_QUERY_COMMANDS),
+        rule("edit", "openspec/changes/*", "allow"),
+      );
+      // Context packs live under .factory/, which is protected for everyone else.
+      return [...rules, ...alwaysDeny([".factory/context/*"])];
     case "reviewer":
     case "contract-reviewer":
       rules.push(...READ_TOOLS, ...allowAll("shell", [...GRAPH_QUERY_COMMANDS, ...READ_ONLY_GIT]));
       break;
     case "tester":
-      // Edit scope (test globs inside the worktree) is granted per session.
-      rules.push(...READ_TOOLS, rule("shell", "*", "allow"));
+      rules.push(...READ_TOOLS, rule("shell", "*", "allow"), ...allowAll("edit", testGlobs));
       break;
     case "implementer":
       rules.push(...READ_TOOLS, rule("shell", "*", "allow"), rule("edit", "*", "allow"));
@@ -158,12 +168,42 @@ export function agentRules(role: AgentRole): PermissionRule[] {
   return [...rules, ...alwaysDeny()];
 }
 
-/** Appended last to every rule set, static or per session. */
-export function alwaysDeny(): PermissionRule[] {
+/**
+ * Appended last to every rule set. `reallow` re-opens paths inside the protected ones (the
+ * architect's context folder); secrets stay denied after it.
+ */
+export function alwaysDeny(reallow: readonly string[] = []): PermissionRule[] {
   return [
-    ...denyAll("edit", [...PROTECTED_PATHS, ...SECRET_PATHS]),
+    ...denyAll("edit", PROTECTED_PATHS),
+    ...allowAll("edit", reallow),
+    ...denyAll("edit", SECRET_PATHS),
     ...denyAll("read", SECRET_PATHS),
     ...denyAll("shell", SHELL_DENY),
     rule("external_directory", "*", "deny"),
   ];
+}
+
+function wildcard(pattern: string): RegExp {
+  const body = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*")
+    .replace(/\?/g, ".");
+  return new RegExp(`^${body}$`, "s");
+}
+
+/**
+ * The effect opencode gives a call, mirroring its matcher: the last matching rule wins,
+ * `*` matches anything including `/`, `?` one character, and no match means `ask`.
+ */
+export function ruleEffect(
+  rules: readonly PermissionRule[],
+  action: string,
+  resource: string,
+): Effect | "ask" {
+  for (let i = rules.length - 1; i >= 0; i--) {
+    const r = rules[i];
+    if (r !== undefined && r.action === action && wildcard(r.resource).test(resource))
+      return r.effect;
+  }
+  return "ask";
 }

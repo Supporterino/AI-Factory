@@ -109,12 +109,17 @@ const AGENTS: readonly AgentSpec[] = [
   },
 ];
 
-function frontmatter(spec: { description: string; model: string; role: AgentRole }): string {
+function frontmatter(spec: {
+  description: string;
+  model: string;
+  role: AgentRole;
+  testGlobs?: readonly string[];
+}): string {
   const data = {
     description: spec.description,
     mode: "primary",
     model: spec.model,
-    permissions: agentRules(spec.role),
+    permissions: agentRules(spec.role, spec.testGlobs),
   };
   // One rule per line keeps the long rule lists readable.
   const doc = new Document(data);
@@ -149,10 +154,20 @@ function renderAgent(config: FactoryConfig, spec: AgentSpec): ManagedFile {
         description: spec.description,
         model: modelFor(config, spec.modelRole),
         role: spec.role,
+        ...(spec.role === "tester" ? { testGlobs: workspaceTestGlobs(config) } : {}),
       }),
       sections: [spec.body, ...addon, ...shared],
     }),
   };
+}
+
+/** The tester may edit the test files of every language in the workspace. */
+function workspaceTestGlobs(config: FactoryConfig): string[] {
+  const languages = config.repos.flatMap((r) => [
+    ...r.languages,
+    ...(r.subPaths ?? []).flatMap((s) => s.languages),
+  ]);
+  return [...new Set(profilesFor([...new Set(languages)]).flatMap((p) => p.testGlobs))];
 }
 
 function renderImplementer(config: FactoryConfig, repo: RepoConfig): ManagedFile {
