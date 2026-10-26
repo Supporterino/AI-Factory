@@ -189,8 +189,7 @@ function locate(state: State, abs: string): { real: string; rel?: string; temp: 
 function checkWrite(state: State, word: string, what: string): void {
   if (SAFE_WRITE_TARGETS.test(word)) return;
   const abs = resolvePath(state, word);
-  if (abs === undefined)
-    return block(`${what} \`${word}\` depends on an unknown variable or directory`);
+  if (abs === undefined) block(`${what} \`${word}\` depends on an unknown variable or directory`);
   const where = locate(state, abs);
   if (where.rel === undefined) {
     if (!where.temp) block(`${what} \`${word}\` is outside the session directory`);
@@ -632,8 +631,7 @@ function checkLn(state: State, args: readonly string[]): void {
           ? undefined
           : resolve(dirname(linkAbs), target)
         : resolvePath(state, target);
-    if (targetAbs === undefined)
-      return block(`ln target \`${target}\` depends on an unknown variable`);
+    if (targetAbs === undefined) block(`ln target \`${target}\` depends on an unknown variable`);
     const where = locate(state, targetAbs);
     if (where.rel === undefined && !where.temp)
       block(`ln \`${target}\` would point outside the session directory`);

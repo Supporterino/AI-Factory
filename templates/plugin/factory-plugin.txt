@@ -969,7 +969,7 @@ function checkWrite(state, word, what) {
     return;
   const abs = resolvePath(state, word);
   if (abs === undefined)
-    return block(`${what} \`${word}\` depends on an unknown variable or directory`);
+    block(`${what} \`${word}\` depends on an unknown variable or directory`);
   const where = locate(state, abs);
   if (where.rel === undefined) {
     if (!where.temp)
@@ -1376,7 +1376,7 @@ function checkLn(state, args) {
     const linkAbs = resolvePath(state, link);
     const targetAbs = symbolic && !isAbsolute3(target) && !target.startsWith("~") && !target.startsWith("$") ? linkAbs === undefined ? undefined : resolve4(dirname2(linkAbs), target) : resolvePath(state, target);
     if (targetAbs === undefined)
-      return block(`ln target \`${target}\` depends on an unknown variable`);
+      block(`ln target \`${target}\` depends on an unknown variable`);
     const where = locate(state, targetAbs);
     if (where.rel === undefined && !where.temp)
       block(`ln \`${target}\` would point outside the session directory`);
