@@ -32,3 +32,4 @@ Short ADRs for every choice the build prompt did not lock. Format: Context / Dec
 | [0026](0026-hardening-and-sandbox.md)           | Enforcement hardening and the OS sandbox                           |
 | [0027](0027-distribution.md)                    | Distribution: package name, licence, build, no downgrades          |
 | [0028](0028-defaults-and-limits.md)             | Default models, time limits and the opencode config                |
+| [0029](0029-ci-and-release.md)                  | CI matrix, Changesets versioning and the release workflow          |

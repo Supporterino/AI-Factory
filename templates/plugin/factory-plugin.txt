@@ -951,12 +951,12 @@ class Parser {
       const close = this.tokens[this.i++];
       if (close?.t !== "op" || close.value !== ")")
         throw new ShellParseError("unterminated (");
-      const redirects2 = [];
+      const redirects = [];
       while (this.peek()?.t === "redir") {
         const r = this.tokens[this.i++];
-        this.redirect(r, redirects2);
+        this.redirect(r, redirects);
       }
-      return { kind: "subshell", script, redirects: redirects2 };
+      return { kind: "subshell", script, redirects };
     }
     const assigns = [];
     const words = [];
@@ -2483,9 +2483,9 @@ function checkEditReal(ctx, path, approved) {
   const rel = relative3(realDir, realAbs);
   if (rel === "" || rel.startsWith("..") || isAbsolute4(rel))
     throw new Refused(`\`${path}\` resolves outside your directory through a symlink`);
-  const real2 = checkEdit(ctx, join8(ctx.directory, rel), approved);
-  if (!real2.allowed)
-    throw new Refused(`${real2.reason} (through a symlink at \`${path}\`)`);
+  const real = checkEdit(ctx, join8(ctx.directory, rel), approved);
+  if (!real.allowed)
+    throw new Refused(`${real.reason} (through a symlink at \`${path}\`)`);
 }
 var isSecretReal = (directory, path) => isSecretPath(path) || isSecretPath(realPathOf(isAbsolute4(path) ? path : resolve5(directory, path)));
 
@@ -2617,12 +2617,12 @@ function approveShell(command, ctx) {
 function sandboxPolicy(workspace, ctx) {
   if (ctx.role === "implementer" || ctx.role === "tester")
     return { ...checkoutPolicy(workspace, ctx.directory), denySecretReads: true };
-  const home2 = process.env.HOME;
+  const home = process.env.HOME;
   const writable = ctx.role === "architect" ? [
     join8(ctx.directory, "openspec", "changes", ctx.changeId),
     join8(workspace, ".factory", "context", ctx.changeId)
   ] : [];
-  return { workspace, writable, denySecretReads: true, ...home2 === undefined ? {} : { home: home2 } };
+  return { workspace, writable, denySecretReads: true, ...home === undefined ? {} : { home } };
 }
 function onShellCreate(workspace, event) {
   const queue = approvedShells.get(event.command);

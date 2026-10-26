@@ -5,6 +5,15 @@
   "license": "MIT",
   "author": "Lars Roth",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/supporterino/ai-factory.git"
+  },
+  "homepage": "https://github.com/supporterino/ai-factory#readme",
+  "bugs": {
+    "url": "https://github.com/supporterino/ai-factory/issues"
+  },
+  "packageManager": "bun@1.4.3",
   "bin": {
     "ai-factory": "./dist/cli.js"
   },
@@ -31,6 +40,8 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "check": "biome check . && tsc --noEmit && bun test --timeout 60000",
+    "changeset": "changeset",
+    "release:version": "changeset version && bun scripts/sync-version.ts && bun scripts/release-snapshot.ts",
     "build:plugin": "bun scripts/build-plugin.ts",
     "vendor:ponytail": "bun scripts/vendor-ponytail.ts",
     "prepack": "bun run build",
@@ -38,6 +49,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.2",
+    "@changesets/cli": "3.0.3",
     "@fission-ai/openspec": "1.14.3",
     "@types/bun": "1.4.4",
     "@types/node": "26.6.5",

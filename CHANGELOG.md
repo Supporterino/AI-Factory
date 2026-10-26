@@ -23,6 +23,7 @@ All notable changes per release. `ai-factory update` applies them to an installe
 - The npm package is now `@supporterino/ai-factory`. The unscoped `ai-factory` on npm is an unrelated project. Run it with `npx @supporterino/ai-factory@0.2.0 init`; the command is still `ai-factory`.
 - MIT LICENSE added.
 - `prepack` builds the bundle, and the package ships only the bundle, docs and licences.
+- GitHub Actions CI runs the full suite on Ubuntu and macOS; releases publish from `main` with provenance and create a GitHub Release.
 - `init`, `update` and `detect --apply` refuse to downgrade a workspace a newer version installed (`--allow-downgrade` to override).
 
 ### Security

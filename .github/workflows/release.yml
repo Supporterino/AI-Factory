@@ -1,0 +1,197 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and verify, but do not publish"
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      npm_published: ${{ steps.plan.outputs.npm_published }}
+      release_exists: ${{ steps.plan.outputs.release_exists }}
+      should_run: ${{ steps.plan.outputs.should_run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Check the publish switch
+        if: vars.RELEASE_ENABLED != 'true'
+        run: echo "::notice::RELEASE_ENABLED is not 'true'; this run will build but not publish."
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+
+          # Changesets bumps package.json; keep src/version.ts in lockstep.
+          bun scripts/sync-version.ts
+          git diff --exit-code -- src/version.ts
+          bun scripts/changelog-section.ts "$VERSION" > /dev/null
+
+          NPM_PUBLISHED=true
+          NPM_OUTPUT=""
+          if NPM_OUTPUT=$(npm view "@supporterino/ai-factory@$VERSION" version \
+            --json --registry=https://registry.npmjs.org 2>&1); then
+            NPM_PUBLISHED=true
+          elif printf '%s' "$NPM_OUTPUT" | grep -q 'E404'; then
+            NPM_PUBLISHED=false
+          else
+            printf '%s\n' "$NPM_OUTPUT" >&2
+            exit 1
+          fi
+
+          RELEASE_EXISTS=true
+          if ! gh release view "$VERSION" >/dev/null 2>&1; then
+            RELEASE_EXISTS=false
+          fi
+
+          SHOULD_RUN=false
+          if [ "$NPM_PUBLISHED" = false ] || [ "$RELEASE_EXISTS" = false ]; then
+            SHOULD_RUN=true
+          fi
+
+          {
+            echo "version=$VERSION"
+            echo "npm_published=$NPM_PUBLISHED"
+            echo "release_exists=$RELEASE_EXISTS"
+            echo "should_run=$SHOULD_RUN"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build and verify
+    needs: plan
+    if: needs.plan.outputs.should_run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun test --timeout 60000
+      - run: bun run build
+      - name: Check the committed plugin bundle is current
+        run: git diff --exit-code -- templates/plugin/factory-plugin.txt
+      - name: Pack the package
+        run: |
+          mkdir -p "$RUNNER_TEMP/npm-pack"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/npm-pack"
+      - name: Check the tarball contents
+        run: |
+          set -euo pipefail
+          TARBALL=$(ls "$RUNNER_TEMP"/npm-pack/*.tgz)
+          tar -tzf "$TARBALL" > "$RUNNER_TEMP/pack-files.txt"
+          grep -qx "package/dist/cli.js" "$RUNNER_TEMP/pack-files.txt"
+          if grep -qE '^package/(src|test|scripts)/' "$RUNNER_TEMP/pack-files.txt"; then
+            echo "unexpected source files in the tarball" >&2
+            exit 1
+          fi
+      - name: Install the tarball
+        run: |
+          set -euo pipefail
+          PREFIX="$RUNNER_TEMP/ai-factory"
+          npm install --global --prefix "$PREFIX" "$RUNNER_TEMP"/npm-pack/*.tgz
+          "$PREFIX/bin/ai-factory" --version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-tarball
+          path: ${{ runner.temp }}/npm-pack/*.tgz
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: [plan, build]
+    if: |
+      needs.plan.outputs.should_run == 'true' &&
+      github.ref == 'refs/heads/main' &&
+      vars.RELEASE_ENABLED == 'true' &&
+      (github.event_name == 'push' || inputs.dry_run == false)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-tarball
+          path: ${{ runner.temp }}/npm-pack
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Publish to npm
+        if: needs.plan.outputs.npm_published == 'false'
+        run: npm publish "$RUNNER_TEMP"/npm-pack/*.tgz --provenance --access public --ignore-scripts
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.plan.outputs.version }}"
+          TAG="$VERSION"
+          TARBALL=$(ls "$RUNNER_TEMP"/npm-pack/*.tgz)
+          bun scripts/changelog-section.ts "$VERSION" > "$RUNNER_TEMP/release-notes.md"
+
+          if TAG_COMMIT=$(git rev-list -n 1 "refs/tags/$TAG" 2>/dev/null); then
+            if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then
+              echo "tag $TAG points at $TAG_COMMIT, not $GITHUB_SHA" >&2
+              exit 1
+            fi
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release edit "$TAG" --title "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
+              gh release upload "$TAG" "$TARBALL" --clobber
+            else
+              gh release create "$TAG" "$TARBALL" \
+                --verify-tag \
+                --title "$TAG" \
+                --notes-file "$RUNNER_TEMP/release-notes.md"
+            fi
+          elif gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
+            gh release upload "$TAG" "$TARBALL" --clobber
+          else
+            gh release create "$TAG" "$TARBALL" \
+              --target "$GITHUB_SHA" \
+              --title "$TAG" \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi

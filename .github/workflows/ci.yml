@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun test --timeout 60000
+      - run: bun run build
+      - name: Check the committed plugin bundle is current
+        run: git diff --exit-code -- templates/plugin/factory-plugin.txt
+      - name: Changeset reminder
+        if: runner.os == 'Linux' && github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release/')
+        run: |
+          if ! bunx changeset status --since "${{ github.event.pull_request.base.sha }}"; then
+            echo "::warning::This PR changed release-relevant files without a changeset. Run 'bun run changeset', or 'bunx changeset --empty' for a tooling-only change."
+          fi
+
+  package:
+    name: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: Pack the package
+        run: |
+          mkdir -p "$RUNNER_TEMP/npm-pack"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/npm-pack"
+      - name: Check the tarball contents
+        run: |
+          set -euo pipefail
+          TARBALL=$(ls "$RUNNER_TEMP"/npm-pack/*.tgz)
+          tar -tzf "$TARBALL" > "$RUNNER_TEMP/pack-files.txt"
+          grep -qx "package/dist/cli.js" "$RUNNER_TEMP/pack-files.txt"
+          if grep -qE '^package/(src|test|scripts)/' "$RUNNER_TEMP/pack-files.txt"; then
+            echo "unexpected source files in the tarball" >&2
+            exit 1
+          fi
+          tar -tzf "$TARBALL" | sed -n '1,20p'
+      - name: Install the tarball
+        run: |
+          set -euo pipefail
+          PREFIX="$RUNNER_TEMP/ai-factory"
+          npm install --global --prefix "$PREFIX" "$RUNNER_TEMP"/npm-pack/*.tgz
+          "$PREFIX/bin/ai-factory" --version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cli-dist
+          path: dist/cli.js
+          if-no-files-found: error
+
+  node-smoke:
+    name: node ${{ matrix.node }}
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20.3.0", "22", "24"]
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: cli-dist
+          path: dist
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Smoke test the bundle
+        run: |
+          node --version
+          node dist/cli.js --version
+          node dist/cli.js --help > /dev/null

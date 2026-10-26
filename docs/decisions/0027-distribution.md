@@ -1,5 +1,7 @@
 # ADR-0027: Distribution
 
+**Publishing is superseded by [ADR-0029](0029-ci-and-release.md); the package name, licence and contents decisions here still stand.**
+
 **Context.** The unscoped npm name `ai-factory` already belongs to an unrelated project (audit D1). The package also lacked a LICENSE file, a build before publishing, and protection against an older CLI rewriting a newer install.
 
 **Decision.**

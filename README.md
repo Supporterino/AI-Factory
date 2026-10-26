@@ -1,5 +1,7 @@
 # ai-factory
 
+[![CI](https://github.com/supporterino/ai-factory/actions/workflows/ci.yml/badge.svg)](https://github.com/supporterino/ai-factory/actions/workflows/ci.yml)
+
 A repo-local AI software factory. You describe a change; the factory writes an [OpenSpec](https://github.com/Fission-AI/OpenSpec) spec, waits for your approval, then has [opencode](https://opencode.ai) agents implement, test and review it across your repos, guided by one [Graphify](https://pypi.org/project/graphifyy/) knowledge graph of the workspace.
 - **One human gate:** the spec approval. Everything after it runs on its own, and pauses with a report when it cannot finish.
 - **Local commits only.** Nothing is pushed and no merge request is opened. You review the `change/<id>` branches and push them yourself.
@@ -177,7 +179,7 @@ A profile is the language's prose standard plus a machine-readable part: test gl
    - `supersedes` (optional): profiles whose target in the same directory this one replaces. The Tauri profile replaces Rust in `src-tauri/`, for example.
 5. If its package manager has a cache, add it to `cacheEnv` in `src/gates/install.ts`.
 6. Add tests: detection (`test/detect-units.test.ts`) and gate resolution (`test/gates-resolve.test.ts`).
-7. Add a CHANGELOG entry. Workspaces pick up the new standard and their regenerated implementers with `ai-factory update`, then `ai-factory detect --apply` adds the language to the repos that use it.
+7. Add a changeset with `bun run changeset` (a user-facing change needs a release note). Workspaces pick up the new standard and their regenerated implementers with `ai-factory update`, then `ai-factory detect --apply` adds the language to the repos that use it.
 
 ## Development
 
@@ -185,8 +187,22 @@ A profile is the language's prose standard plus a machine-readable part: test gl
 bun install
 bun run check          # biome + tsc + bun test
 bun run build          # dist/cli.js and the bundled plugin
+bun run changeset      # record a release note for this PR
 AI_FACTORY_E2E=1 bun test test/opencode-runtime.e2e.test.ts   # real opencode, stub model server
 bun scripts/e2e-transcript.ts single        # re-record docs/e2e/single.md (also: submodules)
 ```
 
 The test suite builds fixture workspaces in temp dirs: a single TS repo, and an AI repo with Go, React and Helm submodules. It stubs the LLM with scripted handoffs. The manual end-to-end runs in [docs/e2e/](docs/e2e/) drive the real opencode server, git, OpenSpec, Graphify and gate toolchains, with a scripted role-aware model, so they cost nothing and can be reproduced. See ADR-0023 for what they cover and what they don't.
+
+CI runs the full suite on Ubuntu and macOS, then smoke-tests the npm tarball and the built bundle on Node 20.3, 22 and 24. The manual `E2E` workflow runs the real-opencode runtime test against the pinned opencode version.
+
+### Releasing
+
+Changesets owns the version and the changelog. Release tooling runs on Node 24; the published CLI still supports Node >=20.3.
+1. Create `release/vX.Y.Z` from `main`.
+2. Run `bun run release:version`. It applies the pending changesets, writes `CHANGELOG.md`, syncs `src/version.ts` and regenerates the install snapshot.
+3. Review the changelog and the version files, then run `bun run check`.
+4. Commit, push and open a normal PR. CI runs on it.
+5. Merge the PR. The release workflow re-runs the checks, publishes the new version to npm with provenance, and creates the `X.Y.Z` GitHub Release and tag with the tarball attached.
+
+The `npm` environment should require a reviewer. Merging a version PR is the release action; branch protection and tag protection are part of the process. Publishing is disabled until the repository variable `RELEASE_ENABLED` is `true`. The first publish is manual because npm trusted publishing requires an existing package; set the variable after publishing 0.2.0 and configuring the trusted publisher. On npm, configure workflow `release.yml`, environment `npm`, and allow direct `npm publish` (not stage-only). `package.json`'s `repository.url` must match the GitHub repository exactly. See ADR-0029.

@@ -1,0 +1,30 @@
+name: E2E
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  opencode-runtime:
+    name: opencode runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: bun install --frozen-lockfile
+      - name: Install the pinned opencode CLI
+        run: npm install --global @opencode/cli@2.1.2
+      - run: opencode --version
+      - name: Run the real-runtime test with the stub model
+        env:
+          AI_FACTORY_E2E: "1"
+        run: bun test test/opencode-runtime.e2e.test.ts --timeout 120000
