@@ -73,7 +73,7 @@ describe("FactoryConfig schema", () => {
 
   test("rejects unknown keys and bad values", () => {
     expect(issues({ ...submodules(), extra: 1 })).toEqual([': Unrecognized key: "extra"']);
-    expect(issues({ ...submodules(), schemaVersion: 3 })[0]).toStartWith("schemaVersion:");
+    expect(issues({ ...submodules(), schemaVersion: 4 })[0]).toStartWith("schemaVersion:");
     expect(issues({ ...submodules(), models: { ...MODELS, implementer: "sonnet" } })).toEqual([
       'models.implementer: expected "provider/model"',
     ]);

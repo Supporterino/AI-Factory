@@ -28,6 +28,15 @@ describe("conventionalSubject", () => {
     ["Rename  user   service", "refactor: rename user service"],
     ["Document the API", "docs: document the API"],
   ])("%s", (title, subject) => expect(conventionalSubject(title)).toBe(subject));
+
+  test("gitmoji and repo scopes keep the conventional prefix", () => {
+    expect(conventionalSubject("Add health endpoint", undefined, { style: "gitmoji" })).toBe(
+      "feat: ✨ add health endpoint",
+    );
+    expect(
+      conventionalSubject("Fix nil pointer", undefined, { style: "gitmoji", scope: "backend" }),
+    ).toBe("fix(backend): 🐛 fix nil pointer");
+  });
 });
 
 describe("change branches", () => {

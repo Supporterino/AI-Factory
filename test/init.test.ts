@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ExitCode } from "../src/cli/exit-codes.ts";
 import { parseConfigText } from "../src/config/load.ts";
@@ -96,6 +96,32 @@ describe("init: AI repo with submodules", () => {
     expect(run.out).toContain("hook deploy: skipped (not a checked-out git repository)");
     const config = parseConfigText(read(fx.root, "factory.config.jsonc"), "f");
     expect(config.repos.map((r) => r.name)).toContain("deploy");
+  });
+
+  test("--plan writes nothing; init archives a replaced custom agent setup", async () => {
+    mkdirSync(join(fx.root, ".opencode", "agents"), { recursive: true });
+    mkdirSync(join(fx.root, ".opencode", "skills", "mine"), { recursive: true });
+    writeFileSync(join(fx.root, ".opencode", "agents", "mine.md"), "custom agent\n");
+    writeFileSync(join(fx.root, ".opencode", "skills", "mine", "SKILL.md"), "custom skill\n");
+    await commitAll(fx.root, "chore: custom setup");
+
+    const plan = await cli(fx.root, "init", "--plan");
+    expect(plan.code).toBe(ExitCode.Ok);
+    expect(plan.out).toContain("would write factory.config.jsonc");
+    expect(existsSync(join(fx.root, ".opencode/agents/mine.md"))).toBe(true);
+    expect(existsSync(join(fx.root, LOCK_FILE))).toBe(false);
+
+    const run = await cli(fx.root, "init");
+    expect(run.code).toBe(ExitCode.Ok);
+    expect(run.out).toContain("legacy setup archived");
+    expect(existsSync(join(fx.root, ".opencode/agents/mine.md"))).toBe(false);
+    expect(existsSync(join(fx.root, ".opencode/agents/orchestrator.md"))).toBe(true);
+    expect(existsSync(join(fx.root, ".opencode/skills/mine/SKILL.md"))).toBe(false);
+    const stamps = readdirSync(join(fx.root, ".factory", "legacy"));
+    expect(stamps.length).toBe(1);
+    expect(
+      existsSync(join(fx.root, ".factory", "legacy", stamps[0] ?? "", ".opencode/agents/mine.md")),
+    ).toBe(true);
   });
 
   test("is idempotent: a second run changes nothing", async () => {

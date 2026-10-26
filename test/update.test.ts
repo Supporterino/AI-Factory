@@ -55,10 +55,10 @@ describe("config migrations", () => {
   test("the runner applies pending migrations in order and refuses newer configs", () => {
     expect(migrateConfigText(v1)).toMatchObject({
       from: 1,
-      to: 2,
-      applied: ["001-graph-exclude-defaults"],
+      to: 3,
+      applied: ["001-graph-exclude-defaults", "002-config-v3"],
     });
-    const current = migrateConfigText(graphExcludeDefaults.migrate(v1));
+    const current = migrateConfigText(migrateConfigText(v1).text);
     expect(current.applied).toEqual([]);
     expect(() => migrateConfigText('{ "schemaVersion": 99 }')).toThrow("newer than this factory");
   });
@@ -94,7 +94,7 @@ describe(`update from a ${SNAPSHOT.version} install`, () => {
   }
 
   test("the old config is refused until update migrates it", async () => {
-    expect(() => loadConfig(root)).toThrow("uses config schemaVersion 1; this factory needs 2");
+    expect(() => loadConfig(root)).toThrow("uses config schemaVersion 1; this factory needs 3");
     const res = await cli(root, "detect");
     expect(res.err).toContain("run `ai-factory update` to migrate it");
   });
@@ -117,7 +117,7 @@ describe(`update from a ${SNAPSHOT.version} install`, () => {
     const dry = await cli(root, "update", "--dry-run");
     expect(dry.code).toBe(ExitCode.Ok);
     expect(dry.out).toContain(`update ${SNAPSHOT.version} → ${FACTORY_VERSION}`);
-    expect(dry.out).toContain("config migrations: 001-graph-exclude-defaults");
+    expect(dry.out).toContain("config migrations: 001-graph-exclude-defaults, 002-config-v3");
     expect(dry.out).toContain("merge with your edits: .opencode/agents/implementer-app.md");
     // JSON lists what changes, not every file's whole content (audit G9).
     const json = await cli(root, "update", "--dry-run", "--json");
@@ -150,7 +150,7 @@ describe(`update from a ${SNAPSHOT.version} install`, () => {
     // Config migrated with comments intact; lock rewritten for this version.
     expect(read("factory.config.jsonc")).toContain("// team note: models agreed on 2026-10-01");
     const config = loadConfig(root).config;
-    expect(config.schemaVersion).toBe(2);
+    expect(config.schemaVersion).toBe(3);
     expect(config.graph.exclude).toContain("**/vendor/**");
     const lock = readLock(root);
     expect(lock?.factoryVersion).toBe(FACTORY_VERSION);
