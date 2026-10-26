@@ -1,9 +1,13 @@
 import { existsSync, readdirSync } from "node:fs";
 import { z } from "zod";
-import { formatZodIssues } from "../config/load.ts";
-import { ConfigError } from "../errors.ts";
 import { FACTORY_VERSION } from "../version.ts";
-import { factoryDir, readJson, withFileLock, writeJsonAtomic } from "./files.ts";
+import {
+  CorruptStateError,
+  factoryDir,
+  readState,
+  withFileLock,
+  writeJsonAtomic,
+} from "./files.ts";
 
 /**
  * Run state: `.factory/runs/<id>.json`. Only the CLI writes it (§8); every write is atomic and
@@ -138,11 +142,12 @@ export function newRun(id: string, request: string, phase: Phase = "intake"): Ru
 }
 
 export function loadRun(root: string, id: string): RunState | undefined {
-  const file = runFile(root, id);
-  if (!existsSync(file)) return undefined;
-  const parsed = RunState.safeParse(readJson(file));
-  if (!parsed.success) throw new ConfigError(`${file} is invalid`, formatZodIssues(parsed.error));
-  return parsed.data;
+  return readState(
+    root,
+    runFile(root, id),
+    RunState,
+    "fix it, or delete it to forget the change (its branches and worktrees stay)",
+  );
 }
 
 export function saveRun(root: string, state: RunState): RunState {
@@ -166,13 +171,34 @@ export function updateRun(
   });
 }
 
-export function listRuns(root: string): RunState[] {
+export interface RunScan {
+  readonly runs: RunState[];
+  /** Run files that do not parse: listed, never fatal for the others (audit P15). */
+  readonly corrupt: { readonly id: string; readonly error: CorruptStateError }[];
+}
+
+export function scanRuns(root: string): RunScan {
   const dir = factoryDir(root, "runs");
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((f) => f.endsWith(".json"))
-    .map((f) => loadRun(root, f.slice(0, -".json".length)))
-    .filter((r): r is RunState => r !== undefined);
+  const scan: { runs: RunState[]; corrupt: RunScan["corrupt"][number][] } = {
+    runs: [],
+    corrupt: [],
+  };
+  if (!existsSync(dir)) return scan;
+  for (const f of readdirSync(dir).filter((n) => n.endsWith(".json"))) {
+    const id = f.slice(0, -".json".length);
+    try {
+      const run = loadRun(root, id);
+      if (run !== undefined) scan.runs.push(run);
+    } catch (err) {
+      if (!(err instanceof CorruptStateError)) throw err;
+      scan.corrupt.push({ id, error: err });
+    }
+  }
+  return scan;
+}
+
+export function listRuns(root: string): RunState[] {
+  return scanRuns(root).runs;
 }
 
 const MAX_HISTORY = 50;

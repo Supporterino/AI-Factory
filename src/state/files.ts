@@ -1,5 +1,6 @@
 import {
   closeSync,
+  existsSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -9,11 +10,61 @@ import {
   writeFileSync,
 } from "node:fs";
 import { hostname } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
+import type { z } from "zod";
+import { formatZodIssues } from "../config/load.ts";
+import { PreconditionError } from "../errors.ts";
 
 /** `.factory/` layout: gitignored runtime state of the workspace. */
 export const factoryDir = (root: string, ...parts: string[]): string =>
   join(root, ".factory", ...parts);
+
+/**
+ * A state file that does not parse (audit P15): named, with a way out, instead of an internal
+ * error in every command that reads it.
+ */
+export class CorruptStateError extends PreconditionError {
+  constructor(
+    readonly file: string,
+    reason: string,
+    readonly fix: string,
+  ) {
+    super(`${file} is corrupt (${reason})`, [fix]);
+  }
+}
+
+/** Reads and validates a state file; undefined when it does not exist. */
+export function readState<T>(
+  root: string,
+  path: string,
+  schema: z.ZodType<T>,
+  fix: string,
+): T | undefined {
+  if (!existsSync(path)) return undefined;
+  const file = relative(root, path);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    throw new CorruptStateError(file, err instanceof Error ? err.message : String(err), fix);
+  }
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success)
+    throw new CorruptStateError(file, formatZodIssues(parsed.error).join("; "), fix);
+  return parsed.data;
+}
+
+/** For commands that report state: the value, or the corruption to show in its place. */
+export function readOrCorrupt<T>(
+  read: () => T,
+): { value: T; corrupt?: undefined } | { value?: undefined; corrupt: CorruptStateError } {
+  try {
+    return { value: read() };
+  } catch (err) {
+    if (err instanceof CorruptStateError) return { corrupt: err };
+    throw err;
+  }
+}
 
 /** Writes JSON via a temp file and rename, so readers never see a partial file. */
 export function writeJsonAtomic(path: string, value: unknown): void {

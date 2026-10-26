@@ -11,6 +11,7 @@ import { design, intake } from "../../pipeline/design.ts";
 import { type DriveOutcome, drive } from "../../pipeline/drive.ts";
 import { OpencodeRuntime } from "../../runtime/opencode.ts";
 import { readActive, releaseDriver } from "../../state/active.ts";
+import { readOrCorrupt } from "../../state/files.ts";
 import { loadRun } from "../../state/run.ts";
 import { type Command, type Io, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
@@ -59,7 +60,7 @@ async function withPipeline<T>(
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
     await runtime.close();
-    const active = readActive(root);
+    const active = readOrCorrupt(() => readActive(root)).value;
     if (active?.pid === process.pid) await releaseDriver(root, active.changeId);
   }
 }

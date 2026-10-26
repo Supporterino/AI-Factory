@@ -16,6 +16,8 @@ import { parseScript, type Script } from "../policy/shell-parse.ts";
 import { PROFILES } from "../profiles/index.ts";
 import { serverEnv } from "../runtime/opencode.ts";
 import { driverAlive, readActive, readQueue } from "../state/active.ts";
+import { readOrCorrupt } from "../state/files.ts";
+import { scanRuns } from "../state/run.ts";
 import { checkTools, compareVersions, type ToolName, toolBin } from "../tools.ts";
 import { FACTORY_VERSION, runVersion } from "../version.ts";
 import { GRAPHIFY } from "../versions.ts";
@@ -517,9 +519,12 @@ async function checkGraph(
 
 function checkChanges(c: Checks, root: string): void {
   c.in("changes");
-  const active = readActive(root);
-  const queue = readQueue(root).entries.map((e) => e.changeId);
-  if (active === undefined) c.add("ok", "active", "none");
+  const lock = readOrCorrupt(() => readActive(root));
+  const queued = readOrCorrupt(() => readQueue(root));
+  const active = lock.value;
+  const queue = queued.value?.entries.map((e) => e.changeId) ?? [];
+  if (lock.corrupt) c.add("fail", "active", lock.corrupt.message, lock.corrupt.fix);
+  else if (active === undefined) c.add("ok", "active", "none");
   else if (driverAlive(active)) c.add("ok", "active", `${active.changeId} (running)`);
   else
     c.add(
@@ -528,7 +533,10 @@ function checkChanges(c: Checks, root: string): void {
       `${active.changeId} holds the lock but nothing is driving it`,
       `ai-factory resume ${active.changeId}`,
     );
-  if (queue.length > 0) c.add("ok", "queue", queue.join(", "));
+  if (queued.corrupt) c.add("fail", "queue", queued.corrupt.message, queued.corrupt.fix);
+  else if (queue.length > 0) c.add("ok", "queue", queue.join(", "));
+  for (const bad of scanRuns(root).corrupt)
+    c.add("fail", `run ${bad.id}`, bad.error.message, bad.error.fix);
 }
 
 function checkSandbox(c: Checks, config: FactoryConfig): void {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ExitCode } from "../src/cli/exit-codes.ts";
 import { runCli } from "../src/cli/main.ts";
@@ -63,6 +63,19 @@ describe("doctor", () => {
     return JSON.parse(res.out) as DoctorReport;
   }
   const find = (r: DoctorReport, name: string) => r.checks.find((c) => c.name === name);
+
+  test("reports corrupt run files and a corrupt active lock (audit P15)", async () => {
+    const root = await installed(createSingleRepoFixture, { app: passAll });
+    mkdirSync(join(root, ".factory/runs"), { recursive: true });
+    writeFileSync(join(root, ".factory/runs/broken.json"), "{not json");
+    writeFileSync(join(root, ".factory/active.lock"), '{"changeId": 3}');
+    const res = await cli(root, "doctor", "--json");
+    expect(res.err).toBe("");
+    const json = JSON.parse(res.out) as DoctorReport;
+    expect(find(json, "active")).toMatchObject({ status: "fail" });
+    expect(find(json, "active")?.detail).toContain(".factory/active.lock is corrupt");
+    expect(find(json, "run broken")).toMatchObject({ status: "fail" });
+  });
 
   test("a healthy install passes, with the resolved gate table", async () => {
     const root = await installed(createSingleRepoFixture, { app: passAll });

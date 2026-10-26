@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { ExitCode } from "../src/cli/exit-codes.ts";
 import { claimActive, enqueue, readActive, readQueue } from "../src/state/active.ts";
 import { loadRun, newRun, saveRun, TaskState } from "../src/state/run.ts";
@@ -76,6 +78,35 @@ describe("status, retry and abort", () => {
       ["1.2", "pending", 0],
       ["1.3", "merged", 0],
     ]);
+  });
+
+  test("a corrupt run file or lock is reported, not a crash (audit P15)", async () => {
+    writeFileSync(join(fx.root, ".factory/runs/broken.json"), "{not json");
+    const all = await cli(fx.root, "status");
+    expect(all.err).toBe("");
+    expect(all.code).toBe(ExitCode.Ok);
+    expect(all.out).toContain("change add-x — paused");
+    expect(all.out).toContain("change broken — unreadable: .factory/runs/broken.json is corrupt");
+    const json = JSON.parse((await cli(fx.root, "status", "--json")).out) as {
+      runs: { id: string }[];
+      corrupt: { id: string; error: string }[];
+    };
+    expect(json.runs.map((r) => r.id).sort()).toEqual(["add-x", "next-thing"]);
+    expect(json.corrupt.map((c) => c.id)).toEqual(["broken"]);
+    const one = await cli(fx.root, "status", "broken");
+    expect(one.code).toBe(ExitCode.Precondition);
+    expect(one.err).toContain(".factory/runs/broken.json is corrupt");
+
+    writeFileSync(join(fx.root, ".factory/active.lock"), "");
+    const locked = await cli(fx.root, "status");
+    expect(locked.code).toBe(ExitCode.Ok);
+    expect(locked.out).toContain("active: unreadable: .factory/active.lock is corrupt");
+    const abort = await cli(fx.root, "abort", "add-x");
+    expect(abort.code).toBe(ExitCode.Precondition);
+    expect(abort.err).toContain(".factory/active.lock is corrupt");
+    expect(abort.err).toContain("rm .factory/active.lock");
+    // Refused before anything changed.
+    expect(loadRun(fx.root, "add-x")?.phase).toBe("paused");
   });
 
   test("abort marks the change, releases the lock and leaves the queue to the user", async () => {

@@ -1,7 +1,7 @@
-import { existsSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { hostname } from "node:os";
 import { z } from "zod";
-import { factoryDir, pidAlive, readJson, withFileLock, writeJsonAtomic } from "./files.ts";
+import { factoryDir, pidAlive, readState, withFileLock, writeJsonAtomic } from "./files.ts";
 import { now } from "./run.ts";
 
 /**
@@ -23,8 +23,12 @@ const activeFile = (root: string): string => factoryDir(root, "active.lock");
 const guard = (root: string): string => factoryDir(root, "active.lock.guard");
 
 export function readActive(root: string): ActiveLock | undefined {
-  const file = activeFile(root);
-  return existsSync(file) ? ActiveLock.parse(readJson(file)) : undefined;
+  return readState(
+    root,
+    activeFile(root),
+    ActiveLock,
+    "if no ai-factory process is running: rm .factory/active.lock, then `ai-factory resume <change-id>`",
+  );
 }
 
 /** A driver is live when its process exists (only checkable on the same host). */
@@ -86,8 +90,14 @@ export type Queue = z.infer<typeof Queue>;
 const queueFile = (root: string): string => factoryDir(root, "queue.json");
 
 export function readQueue(root: string): Queue {
-  const file = queueFile(root);
-  return existsSync(file) ? Queue.parse(readJson(file)) : { entries: [] };
+  return (
+    readState(
+      root,
+      queueFile(root),
+      Queue,
+      "rm .factory/queue.json, then `ai-factory resume` each approved change that was waiting",
+    ) ?? { entries: [] }
+  );
 }
 
 /** Approved changes waiting for the active one to close, in approval order. */

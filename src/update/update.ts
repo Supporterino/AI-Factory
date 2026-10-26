@@ -21,7 +21,7 @@ import { migrateConfigText } from "../migrations/index.ts";
 import type { ManagedFile } from "../render/workspace.ts";
 import { readActive, readQueue } from "../state/active.ts";
 import { factoryDir, writeJsonAtomic } from "../state/files.ts";
-import { listRuns } from "../state/run.ts";
+import { scanRuns } from "../state/run.ts";
 import { FACTORY_VERSION } from "../version.ts";
 import { GRAPHIFY } from "../versions.ts";
 import { INSTALL_PATHS, planWorkspace } from "../workspace/sync.ts";
@@ -53,10 +53,13 @@ export function changesInProgress(root: string): string[] {
   const active = readActive(root);
   if (active) ids.add(active.changeId);
   for (const e of readQueue(root).entries) ids.add(e.changeId);
-  for (const run of listRuns(root)) {
+  const { runs, corrupt } = scanRuns(root);
+  for (const run of runs) {
     if (IN_PROGRESS.has(run.phase) || (run.phase === "paused" && run.tasks.length > 0))
       ids.add(run.id);
   }
+  // A corrupt run may be in progress: `update` waits until it is fixed or removed.
+  for (const c of corrupt) ids.add(c.id);
   return [...ids].sort();
 }
 

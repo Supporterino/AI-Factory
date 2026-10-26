@@ -12,8 +12,8 @@ import {
   releaseActive,
   removeFromQueue,
 } from "../../state/active.ts";
-import { factoryDir } from "../../state/files.ts";
-import { listRuns, loadRun, type RunState, type TaskState, updateRun } from "../../state/run.ts";
+import { factoryDir, readOrCorrupt } from "../../state/files.ts";
+import { loadRun, type RunState, scanRuns, type TaskState, updateRun } from "../../state/run.ts";
 import { formatTokens, summarizeUsage, totalTokens, usageLine } from "../../usage/usage.ts";
 import { type Command, type Io, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
@@ -150,10 +150,15 @@ With an id: that change's phase, branches, task DAG with states, retries and wor
       true,
     );
     const root = await workspace(io);
-    const active = readActive(root);
-    const queue = readQueue(root).entries.map((e) => e.changeId);
-    const runs =
-      positionals.length > 0 ? [requireRun(root, changeId("status", positionals))] : listRuns(root);
+    // Corrupt state files are shown, not fatal: status is how they are found (audit P15).
+    const lock = readOrCorrupt(() => readActive(root));
+    const active = lock.value;
+    const queued = readOrCorrupt(() => readQueue(root));
+    const queue = queued.value?.entries.map((e) => e.changeId) ?? [];
+    const { runs, corrupt } =
+      positionals.length > 0
+        ? { runs: [requireRun(root, changeId("status", positionals))], corrupt: [] }
+        : scanRuns(root);
 
     if (values.json) {
       io.out(
@@ -163,6 +168,12 @@ With an id: that change's phase, branches, task DAG with states, retries and wor
             driverAlive: active ? driverAlive(active) : false,
             queue,
             runs: runs.map((r) => ({ ...r, usage: summarizeUsage(root, r.id) })),
+            corrupt: [
+              ...[lock.corrupt, queued.corrupt]
+                .filter((e) => e !== undefined)
+                .map((e) => ({ file: e.file, error: e.message })),
+              ...corrupt.map((c) => ({ id: c.id, file: c.error.file, error: c.error.message })),
+            ],
           },
           null,
           2,
@@ -171,11 +182,24 @@ With an id: that change's phase, branches, task DAG with states, retries and wor
       return ExitCode.Ok;
     }
     if (positionals.length === 0) {
-      io.out(active ? `active: ${active.changeId}` : "active: none");
-      io.out(`queue: ${queue.length > 0 ? queue.join(", ") : "empty"}`);
-      if (runs.length === 0) io.out('no changes yet (start one with `ai-factory run "<request>"`)');
+      io.out(
+        lock.corrupt
+          ? `active: unreadable: ${lock.corrupt.message}\n  ${lock.corrupt.fix}`
+          : active
+            ? `active: ${active.changeId}`
+            : "active: none",
+      );
+      io.out(
+        queued.corrupt
+          ? `queue: unreadable: ${queued.corrupt.message}\n  ${queued.corrupt.fix}`
+          : `queue: ${queue.length > 0 ? queue.join(", ") : "empty"}`,
+      );
+      if (runs.length === 0 && corrupt.length === 0)
+        io.out('no changes yet (start one with `ai-factory run "<request>"`)');
     }
     for (const run of runs) printRun(io, root, run, active, queue.indexOf(run.id));
+    for (const c of corrupt)
+      io.out(`change ${c.id} — unreadable: ${c.error.message}\n  ${c.error.fix}`);
     return ExitCode.Ok;
   },
 };
@@ -196,6 +220,8 @@ the aborted change (or another one) when you are ready.`,
     const root = await workspace(io);
     const run = requireRun(root, id);
     if (run.phase === "done") throw new PreconditionError(`${id} is already closed`);
+    // Read first: a corrupt lock refuses the abort before anything changed.
+    const active = readActive(root);
     await updateRun(root, id, (draft) => {
       draft.abortRequested = true;
       draft.phase = "aborted";
@@ -203,7 +229,6 @@ the aborted change (or another one) when you are ready.`,
     await removeFromQueue(root, id);
     // A live driver in another process stops at its next safe point and frees the
     // workspace itself; otherwise nothing is running and the lock goes now.
-    const active = readActive(root);
     const driver =
       active?.changeId === id &&
       active.pid !== null &&
