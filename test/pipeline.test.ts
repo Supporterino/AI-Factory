@@ -400,6 +400,36 @@ describe("pipeline: single repo", () => {
     expect(loadRun(fx.root, ID)).toMatchObject({ phase: "done", abortRequested: false });
   });
 
+  test("a spec edit after approval stops a resumed change (audit P9)", async () => {
+    await withGates({ ...passAll, lint: "! grep -rq BROKEN src" });
+    let fixed = false;
+    const runtime = new ScriptedRuntime(
+      factoryScript({
+        changeId: ID,
+        summary: "Math helpers",
+        repos: ["app"],
+        tasks: SINGLE_TASKS,
+        implement: (task) =>
+          task.id === "1.1" && !fixed
+            ? { edits: { [task.file]: "// BROKEN\n" }, handoff: { task: task.id } }
+            : undefined,
+      }),
+    );
+    await cliWith(runtime, fx.root, "run", "Add math helpers");
+    expect((await cliWith(runtime, fx.root, "approve", ID)).code).toBe(ExitCode.Paused);
+    const proposal = join(fx.root, "openspec/changes", ID, "proposal.md");
+    writeFileSync(proposal, `${readFileSync(proposal, "utf8")}\n- also delete the database\n`);
+    await fixtureGit(fx.root, "commit", "-q", "-am", "docs: spec edit after approval");
+    fixed = true;
+    await cli(fx.root, "retry", ID, "--task", "1.1");
+    const resume = await cliWith(runtime, fx.root, "resume", ID);
+    expect(resume.code).toBe(ExitCode.Precondition);
+    expect(resume.err).toContain("changed after approval");
+    expect(resume.err).toContain("git checkout");
+    expect(loadRun(fx.root, ID)?.phase).not.toBe("done");
+    expect(loadRun(fx.root, ID)?.tasks.find((t) => t.id === "1.1")?.status).not.toBe("merged");
+  });
+
   test("the approval is voided by a spec edit and survives checkbox ticks", async () => {
     await withGates(passAll);
     const runtime = new ScriptedRuntime(

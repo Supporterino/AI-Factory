@@ -2,6 +2,7 @@ import { PreconditionError, TransientError } from "../errors.ts";
 import { checkDesign } from "../openspec/cli.ts";
 import { claimActive, dequeue, readActive, releaseActive } from "../state/active.ts";
 import type { Phase } from "../state/run.ts";
+import { verifyApproval } from "./approve.ts";
 import { ChangeAborted, type Pipeline } from "./context.ts";
 import { contractPhase } from "./contracts.ts";
 import { design, specDir } from "./design.ts";
@@ -81,9 +82,19 @@ type Step = { kind: "continue"; id: string } | { kind: "stop"; outcome: DriveOut
 const go = (id: string): Step => ({ kind: "continue", id });
 const stop = (outcome: DriveOutcome): Step => ({ kind: "stop", outcome });
 
+/** Phases that act on the approved spec: each entry re-checks the approval (audit P9). */
+const APPROVED_PHASES: ReadonlySet<Phase> = new Set([
+  "implementing",
+  "reviewing",
+  "contracts",
+  "full-suite",
+  "closing",
+]);
+
 /** One phase transition of the state machine. */
 async function step(p: Pipeline, id: string): Promise<Step> {
   const run = p.run(id);
+  if (APPROVED_PHASES.has(run.phase)) await verifyApproval(p, id, p.root);
   switch (run.phase) {
     case "intake":
     case "design": {

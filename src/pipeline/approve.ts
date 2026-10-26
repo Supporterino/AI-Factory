@@ -89,9 +89,17 @@ export async function verifyApproval(p: Pipeline, id: string, dir: string): Prom
   if (approval === undefined)
     throw new PreconditionError(`${id} is not approved`, [`run \`ai-factory approve ${id}\``]);
   if (specHash(dir, id) !== approval.hash) {
-    throw new PreconditionError(`the spec of ${id} changed after approval`, [
-      `review the change and run \`ai-factory approve ${id}\` again`,
-    ]);
+    const started = p.run(id).tasks.some((t) => t.status !== "pending");
+    throw new PreconditionError(
+      `the spec of ${id} changed after approval`,
+      started
+        ? [
+            "implementation has started, so it cannot be approved again; restore the approved spec:",
+            `git checkout ${approval.specCommit.slice(0, 12)} -- openspec/changes/${id} && git commit -m "docs(spec): restore approved ${id}"`,
+            `then \`ai-factory resume ${id}\` (or \`ai-factory abort ${id}\` and start a new change)`,
+          ]
+        : [`review the change and run \`ai-factory approve ${id}\` again`],
+    );
   }
   const onBranch = await git(["merge-base", "--is-ancestor", approval.specCommit, "HEAD"], {
     cwd: dir,
