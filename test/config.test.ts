@@ -4,7 +4,7 @@ import { appendJsonc, parseJsonc, setJsonc } from "../src/config/jsonc.ts";
 import { parseConfigText } from "../src/config/load.ts";
 import { FactoryConfig, type FactoryConfigInput, modelFor } from "../src/config/schema.ts";
 import { ConfigError } from "../src/errors.ts";
-import { FACTORY_VERSION } from "../src/version.ts";
+import { FACTORY_VERSION, PACKAGE_NAME } from "../src/version.ts";
 import { PONYTAIL } from "../src/versions.ts";
 
 const MODELS = {
@@ -185,9 +185,13 @@ describe("JSONC config text", () => {
   });
 });
 
-test("FACTORY_VERSION matches package.json", () => {
+test("FACTORY_VERSION and PACKAGE_NAME match package.json", () => {
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
     version: string;
+    name: string;
+    bin: unknown;
   };
   expect(FACTORY_VERSION).toBe(pkg.version);
+  expect(PACKAGE_NAME).toBe(pkg.name);
+  expect(pkg.bin).toEqual({ "ai-factory": "./dist/cli.js" });
 });

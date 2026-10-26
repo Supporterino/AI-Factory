@@ -17,7 +17,7 @@ import { PROFILES } from "../profiles/index.ts";
 import { serverEnv } from "../runtime/opencode.ts";
 import { driverAlive, readActive, readQueue } from "../state/active.ts";
 import { checkTools, compareVersions, type ToolName, toolBin } from "../tools.ts";
-import { FACTORY_VERSION } from "../version.ts";
+import { FACTORY_VERSION, runVersion } from "../version.ts";
 import { GRAPHIFY } from "../versions.ts";
 import { INSTALL_PATHS, planWorkspace } from "../workspace/sync.ts";
 
@@ -223,7 +223,7 @@ async function checkToolsAndLock(c: Checks, root: string, lock: Lock | undefined
       "fail",
       "factory",
       `installed by ${lock.factoryVersion}, newer than this ${FACTORY_VERSION}`,
-      `run ai-factory@${lock.factoryVersion}`,
+      runVersion(lock.factoryVersion),
     );
   } else {
     c.add("ok", "factory", FACTORY_VERSION);

@@ -62,7 +62,7 @@ function report(err: unknown, io: Io): ExitCode {
   return ExitCode.Failure;
 }
 
-async function askYesNo(question: string): Promise<boolean> {
+export async function askYesNo(question: string): Promise<boolean> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     return /^y(es)?$/i.test((await rl.question(`${question} [y/N] `)).trim());
@@ -115,14 +115,4 @@ export async function runCli(argv: readonly string[], io: Io): Promise<ExitCode>
   } catch (err) {
     return report(err, io);
   }
-}
-
-if (import.meta.main) {
-  const code = await runCli(process.argv.slice(2), {
-    cwd: process.cwd(),
-    out: (text) => process.stdout.write(`${text}\n`),
-    err: (text) => process.stderr.write(`${text}\n`),
-    ...(process.stdin.isTTY ? { confirm: askYesNo } : {}),
-  });
-  process.exit(code);
 }

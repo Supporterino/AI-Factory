@@ -24,10 +24,10 @@ Plus credentials for the model providers you configure, either exported (`ANTHRO
 Run the CLI without installing it:
 
 ```bash
-bunx ai-factory@0.2.0 init
+bunx @supporterino/ai-factory@0.2.0 init
 ```
 
-`npx ai-factory@0.2.0 init` works too. To run it from a checkout of this repository instead, build it with `bun install && bun run build`, then run `node dist/cli.js` (or `npm link` it).
+`npx @supporterino/ai-factory@0.2.0 init` works too. The package is `@supporterino/ai-factory`; its command is `ai-factory`, so after `npm install --global @supporterino/ai-factory` you run `ai-factory init`. Note: the unscoped npm package `ai-factory` is an unrelated project. To run it from a checkout of this repository instead, build it with `bun install && bun run build`, then run `node dist/cli.js` (or `npm link` it).
 
 `init` is idempotent. It detects the layout, languages and contracts, and writes `factory.config.jsonc` from what it found, so edit that file afterwards. It also renders the agents, plugin, standards and OpenSpec's commands and skills into `.opencode/`, installs the `pre-push` hooks, builds the graph, writes `factory.lock.json`, and commits it all as `chore(factory): init vX.Y.Z`. Then check the setup:
 
@@ -119,9 +119,9 @@ You can edit the agents in `.opencode/agents/` and the standards in `.opencode/s
 ## Updating
 
 ```bash
-bunx ai-factory@<new> update --dry-run   # print the plan
-bunx ai-factory@<new> update             # one commit: chore(factory): update to vX.Y.Z
-bunx ai-factory@<new> rollback           # undo it
+bunx @supporterino/ai-factory@<new> update --dry-run   # print the plan
+bunx @supporterino/ai-factory@<new> update             # one commit: chore(factory): update to vX.Y.Z
+bunx @supporterino/ai-factory@<new> rollback           # undo it
 ```
 
 `update` migrates the config while keeping your comments. It replaces managed files you didn't touch, merges three-way the ones you edited (a conflict leaves markers and commits nothing), and keeps deleted files deleted unless `--restore`. `--tools` also refreshes OpenSpec's files and rebuilds the graph if its format changed. It refuses while a change is in progress unless `--force`; a running change keeps the agent and gate definitions it was approved with. For many workspaces, see [docs/fleet-update.sh](docs/fleet-update.sh).

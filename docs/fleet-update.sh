@@ -15,11 +15,11 @@ ok=()
 skipped=()
 for ws in "$@"; do
   echo "== $ws"
-  if ! bunx "ai-factory@${version}" -C "$ws" update --dry-run; then
+  if ! bunx "@supporterino/ai-factory@${version}" -C "$ws" update --dry-run; then
     skipped+=("$ws (plan failed)")
     continue
   fi
-  bunx "ai-factory@${version}" -C "$ws" update
+  bunx "@supporterino/ai-factory@${version}" -C "$ws" update
   case $? in
     0) ok+=("$ws") ;;
     4) skipped+=("$ws (in progress, dirty or conflicts: see above; \`ai-factory rollback\` undoes a conflicted update)") ;;
@@ -29,7 +29,7 @@ done
 
 echo
 echo "updated: ${#ok[@]}"
-for ws in "${ok[@]}"; do echo "  $ws  $(git -C "$ws" log -1 --format='%h %s')"; done
+for ws in ${ok[@]+"${ok[@]}"}; do echo "  $ws  $(git -C "$ws" log -1 --format='%h %s')"; done
 echo "skipped: ${#skipped[@]}"
-for ws in "${skipped[@]}"; do echo "  $ws"; done
+for ws in ${skipped[@]+"${skipped[@]}"}; do echo "  $ws"; done
 [ "${#skipped[@]}" -eq 0 ]
