@@ -7,11 +7,11 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/supporterino/ai-factory.git"
+    "url": "git+https://github.com/Supporterino/AI-Factory.git"
   },
-  "homepage": "https://github.com/supporterino/ai-factory#readme",
+  "homepage": "https://github.com/Supporterino/AI-Factory#readme",
   "bugs": {
-    "url": "https://github.com/supporterino/ai-factory/issues"
+    "url": "https://github.com/Supporterino/AI-Factory/issues"
   },
   "packageManager": "bun@1.4.3",
   "bin": {
