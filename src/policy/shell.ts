@@ -1,4 +1,4 @@
-import { isAbsolute, normalize, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { isProtectedPath, isSecretPath } from "./paths.ts";
 import {
   type Command,
@@ -32,6 +32,10 @@ export interface ShellContext {
   readonly exists?: (abs: string) => boolean;
   /** For `~` / `$HOME` / `$TMPDIR` resolution. */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** Resolves symlinks (see realpath.ts); without it, paths are judged lexically. */
+  readonly realpath?: (abs: string) => string;
+  /** The workspace root: never writable outside `root`, even when it lies under a temp dir. */
+  readonly workspace?: string;
 }
 
 export type ShellVerdict = { allowed: true } | { allowed: false; reason: string };
@@ -131,6 +135,8 @@ interface State {
   readonly ctx: ShellContext;
   readonly aliases: Map<string, string[]>;
   depth: number;
+  /** The directory the next command runs in; undefined once `cd` went somewhere unknown. */
+  cwd: string | undefined;
   /** Paths this command line writes (to catch write-then-execute in one go). */
   readonly written: Set<string>;
 }
@@ -148,12 +154,15 @@ function resolvePath(state: State, word: string): string | undefined {
     w = h + w.slice(1);
   }
   w = w.replace(/\$\{?(HOME|TMPDIR|PWD)\}?/g, (m, name: string) => {
-    if (name === "PWD") return state.ctx.cwd;
+    if (name === "PWD") return state.cwd ?? m;
     return state.ctx.env?.[name] ?? m;
   });
   if (w.includes("$")) return undefined;
-  return normalize(isAbsolute(w) ? w : resolve(state.ctx.cwd, w));
+  if (isAbsolute(w)) return normalize(w);
+  return state.cwd === undefined ? undefined : normalize(resolve(state.cwd, w));
 }
+
+const real = (state: State, abs: string): string => state.ctx.realpath?.(abs) ?? abs;
 
 const within = (abs: string, dir: string): boolean => {
   const rel = relative(dir, abs);
@@ -163,23 +172,72 @@ const within = (abs: string, dir: string): boolean => {
 function tempDirs(state: State): string[] {
   return ["/tmp", "/private/tmp", state.ctx.env?.TMPDIR]
     .filter((d): d is string => !!d)
-    .map((d) => normalize(d));
+    .flatMap((d) => [normalize(d), real(state, normalize(d))]);
+}
+
+/** Where a path really is (symlinks resolved), relative to the real session root if inside it. */
+function locate(state: State, abs: string): { real: string; rel?: string; temp: boolean } {
+  const target = real(state, abs);
+  const root = real(state, state.ctx.root);
+  if (within(target, root)) return { real: target, rel: relative(root, target), temp: false };
+  const ws = state.ctx.workspace;
+  if (ws !== undefined && within(target, real(state, ws))) return { real: target, temp: false };
+  return { real: target, temp: tempDirs(state).some((t) => within(target, t)) };
 }
 
 /** A file the command writes: must be inside the root (or a temp dir), not protected or secret. */
 function checkWrite(state: State, word: string, what: string): void {
   if (SAFE_WRITE_TARGETS.test(word)) return;
   const abs = resolvePath(state, word);
-  if (abs === undefined) block(`${what} \`${word}\` depends on an unknown variable`);
-  else {
-    if (tempDirs(state).some((t) => within(abs, t))) return;
-    if (!within(abs, state.ctx.root)) block(`${what} \`${word}\` is outside the session directory`);
-    const rel = relative(state.ctx.root, abs);
-    if (rel === "") block(`${what} the session directory itself`);
-    if (isProtectedPath(rel)) block(`${what} protected path \`${rel}\``);
-    if (isSecretPath(rel)) block(`${what} secret file \`${rel}\``);
-    state.written.add(abs);
+  if (abs === undefined)
+    return block(`${what} \`${word}\` depends on an unknown variable or directory`);
+  const where = locate(state, abs);
+  if (where.rel === undefined) {
+    if (!where.temp) block(`${what} \`${word}\` is outside the session directory`);
+  } else {
+    if (where.rel === "") block(`${what} the session directory itself`);
+    if (isProtectedPath(where.rel)) block(`${what} protected path \`${where.rel}\``);
+    if (isSecretPath(where.rel)) block(`${what} secret file \`${where.rel}\``);
   }
+  state.written.add(abs);
+  state.written.add(where.real);
+}
+
+/** `cd`/`pushd`/`env -C`: the new directory must stay inside the session (or a temp dir). */
+function changeDir(state: State, word: string | undefined): void {
+  if (word === "-") {
+    state.cwd = undefined;
+    return;
+  }
+  const abs = resolvePath(state, word ?? "~");
+  if (abs === undefined) {
+    state.cwd = undefined;
+    return;
+  }
+  const where = locate(state, abs);
+  if (where.rel === undefined && !where.temp)
+    block(`cd \`${word ?? "~"}\` leaves the session directory`);
+  state.cwd = abs;
+}
+
+/** Values of options such as `-o FILE`, `-oFILE`, `--output FILE` and `--output=FILE`. */
+function optionValues(args: readonly string[], short: string, long: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? "";
+    if (a === "--") break;
+    const eq = long.find((l) => a.startsWith(`${l}=`));
+    if (eq !== undefined) out.push(a.slice(eq.length + 1));
+    else if (long.includes(a)) out.push(args[++i] ?? "");
+    else if (/^-[A-Za-z]/.test(a) && !a.startsWith("--")) {
+      const j = a.indexOf(short, 1);
+      if (short !== "" && j !== -1) {
+        const attached = a.slice(j + 1);
+        out.push(attached !== "" ? attached : (args[++i] ?? ""));
+      }
+    }
+  }
+  return out;
 }
 
 /** Any argument that names a secret file blocks the command (read or write). */
@@ -211,6 +269,10 @@ const flags = (words: readonly string[]): Set<string> => {
   }
   return out;
 };
+
+/** perl/ruby `-i`, `-pi`, `-i.bak` (not `-I`, which takes an include dir). */
+const isInPlaceFlag = (a: string): boolean =>
+  /^-[a-zA-Z]*i/.test(a) && !a.startsWith("--") && !/^-[IMx]/.test(a);
 
 const positionals = (words: readonly string[]): string[] => {
   const out: string[] = [];
@@ -462,6 +524,19 @@ function checkGit(state: State, args: readonly string[]): undefined {
       if (pos.length > 0 && !f.has("-l") && !f.has("--list"))
         return block("creating tags is not allowed");
       return;
+    case "rm":
+      for (const p of pos) {
+        const abs = resolvePath(state, p);
+        if (abs === undefined) return block(`git rm \`${p}\` depends on an unknown variable`);
+        const where = locate(state, abs);
+        if (where.rel === undefined)
+          return block(`git rm \`${p}\` is outside the session directory`);
+        if (isProtectedPath(where.rel)) return block(`git rm of protected path \`${where.rel}\``);
+      }
+      return;
+    case "mv":
+      for (const p of pos) checkWrite(state, p, "git mv");
+      return;
     case "commit":
       if (f.has("--amend") || f.has("--fixup") || f.has("--squash"))
         return block("rewriting commits is not allowed");
@@ -524,14 +599,49 @@ function checkGit(state: State, args: readonly string[]): undefined {
 function checkRm(state: State, args: readonly string[]): undefined {
   for (const t of positionals(args)) {
     const abs = resolvePath(state, t);
-    if (abs === undefined) block(`rm \`${t}\` depends on an unknown variable`);
-    else if (!within(abs, state.ctx.root) && !tempDirs(state).some((d) => within(abs, d))) {
-      block(`rm \`${t}\` is outside the session directory`);
-    } else if (within(abs, state.ctx.root)) {
-      const rel = relative(state.ctx.root, abs);
-      if (rel === "" || rel === ".") block("rm of the whole session directory");
-      if (isProtectedPath(rel)) block(`rm of protected path \`${rel}\``);
+    if (abs === undefined) return block(`rm \`${t}\` depends on an unknown variable or directory`);
+    // The link itself is removed, not its target: judge the parent's real location.
+    const where = locate(state, join(real(state, dirname(abs)), basename(abs)));
+    if (where.rel === undefined) {
+      if (!where.temp) block(`rm \`${t}\` is outside the session directory`);
+    } else {
+      if (where.rel === "" || where.rel === ".") block("rm of the whole session directory");
+      if (isProtectedPath(where.rel)) block(`rm of protected path \`${where.rel}\``);
     }
+  }
+}
+
+/** `ln`: the link is a write, and its target must not lead out of the session or into protected files. */
+function checkLn(state: State, args: readonly string[]): void {
+  const symbolic = flags(args).has("-s") || flags(args).has("--symbolic");
+  const dir = optionValues(args, "t", ["--target-directory"])[0];
+  const p = positionals(args).filter((x) => x !== dir);
+  const pairs: { target: string; link: string }[] =
+    dir !== undefined
+      ? p.map((t) => ({ target: t, link: join(dir, basename(t)) }))
+      : p.length === 1
+        ? [{ target: p[0] ?? "", link: basename(p[0] ?? "") }]
+        : p.slice(0, -1).map((t) => ({
+            target: t,
+            link: p.length > 2 ? join(p.at(-1) ?? "", basename(t)) : (p.at(-1) ?? ""),
+          }));
+  for (const { target, link } of pairs) {
+    checkWrite(state, link, "ln creates");
+    const linkAbs = resolvePath(state, link);
+    // A relative symlink target is resolved from the link's directory, a hard link's from cwd.
+    const targetAbs =
+      symbolic && !isAbsolute(target) && !target.startsWith("~") && !target.startsWith("$")
+        ? linkAbs === undefined
+          ? undefined
+          : resolve(dirname(linkAbs), target)
+        : resolvePath(state, target);
+    if (targetAbs === undefined)
+      return block(`ln target \`${target}\` depends on an unknown variable`);
+    const where = locate(state, targetAbs);
+    if (where.rel === undefined && !where.temp)
+      block(`ln \`${target}\` would point outside the session directory`);
+    if (where.rel !== undefined && (isProtectedPath(where.rel) || isSecretPath(where.rel)))
+      block(`ln \`${target}\` would point at protected path \`${where.rel}\``);
   }
 }
 
@@ -539,7 +649,8 @@ function checkRm(state: State, args: readonly string[]): undefined {
 function checkScriptFile(state: State, word: string, interpreter: "shell" | "other"): undefined {
   const abs = resolvePath(state, word);
   if (abs === undefined) return block(`executes \`${word}\`, which depends on an unknown variable`);
-  if (state.written.has(abs)) return block(`executes \`${word}\`, which this same command writes`);
+  if (state.written.has(abs) || state.written.has(real(state, abs)))
+    return block(`executes \`${word}\`, which this same command writes`);
   const text = state.ctx.readFile?.(abs);
   if (text === undefined) return; // missing or binary: nothing to inspect
   const shebang = text.startsWith("#!") ? (text.split("\n")[0] ?? "") : "";
@@ -641,8 +752,13 @@ function unwrap(state: State, words: string[], stdin: string | undefined | null)
         } else if (a.startsWith("--unset=")) {
           if (PROTECTED_ENV.test(a.slice(8))) block("unsets the factory's environment");
           i += 1;
-        } else if (a === "-C" || a === "--chdir") i += 2;
-        else if (a === "-S" || a === "--split-string") {
+        } else if (a === "-C" || a === "--chdir") {
+          changeDir(state, rest[i + 1]);
+          i += 2;
+        } else if (a.startsWith("--chdir=")) {
+          changeDir(state, a.slice("--chdir=".length));
+          i += 1;
+        } else if (a === "-S" || a === "--split-string") {
           w = [...(rest[i + 1] ?? "").split(/\s+/).filter(Boolean), ...rest.slice(i + 2)];
           i = -1;
           break;
@@ -806,7 +922,7 @@ function checkSimple(
   cmd: SimpleCommand,
   stdin: string | undefined | null,
 ): undefined {
-  for (const sub of cmd.substitutions) checkScriptAst(state, sub);
+  for (const sub of cmd.substitutions) scoped(state, () => checkScriptAst(state, sub));
   checkRedirects(state, cmd.redirects);
   for (const a of cmd.assigns) checkSetEnv(a.split("=")[0] ?? "");
   const words = unwrap(state, cmd.words, stdin);
@@ -885,7 +1001,31 @@ function checkSimple(
     return;
   }
   if (base === "eval") return checkScript(state, args.join(" "));
-  const inline = INTERPRETERS[base.replace(/\d+(\.\d+)*$/, "")] ?? INTERPRETERS[base];
+  if (base === "cd" || base === "pushd" || base === "chdir") {
+    changeDir(state, positionals(args)[0]);
+    return;
+  }
+  if (base === "popd") {
+    state.cwd = undefined;
+    return;
+  }
+  const interpreter = base.replace(/\d+(\.\d+)*$/, "");
+  if ((interpreter === "perl" || interpreter === "ruby") && args.some(isInPlaceFlag)) {
+    // -i edits the operands in place: they are writes.
+    const operands: string[] = [];
+    let code = false;
+    for (let k = 0; k < args.length; k++) {
+      const a = args[k] ?? "";
+      if (a === "-e" || a === "-E") {
+        code = true;
+        k++;
+      } else if (/^-[IMx]$/.test(a)) k++;
+      else if (!a.startsWith("-")) operands.push(a);
+    }
+    for (const f of code ? operands : operands.slice(1))
+      checkWrite(state, f, `${interpreter} -i edits`);
+  }
+  const inline = INTERPRETERS[interpreter] ?? INTERPRETERS[base];
   if (inline) {
     const i = args.findIndex((a) => inline.includes(a));
     const joined = args.find((a) =>
@@ -967,17 +1107,72 @@ function checkSimple(
     case "tee":
       for (const p of positionals(args)) checkWrite(state, p, "writes");
       return;
+    case "ln":
+      checkLn(state, args);
+      return;
     case "cp":
     case "install":
-    case "ln":
     case "rsync": {
-      const p = positionals(args);
+      const dir = optionValues(args, "t", ["--target-directory"]);
+      for (const d of dir) checkWrite(state, d, "writes into");
+      const p = positionals(args).filter((x) => !dir.includes(x));
       const dest = p.at(-1);
-      if (dest !== undefined && p.length > 1) checkWrite(state, dest, "writes");
+      if (dir.length === 0 && dest !== undefined && p.length > 1) checkWrite(state, dest, "writes");
       return;
     }
     case "mv":
       for (const p of positionals(args)) checkWrite(state, p, "moves");
+      for (const d of optionValues(args, "t", ["--target-directory"]))
+        checkWrite(state, d, "moves into");
+      return;
+    case "curl":
+      for (const t of [
+        ...optionValues(args, "o", ["--output"]),
+        ...optionValues(args, "D", ["--dump-header"]),
+        ...optionValues(args, "c", ["--cookie-jar"]),
+        ...optionValues(args, "", ["--output-dir", "--trace", "--trace-ascii", "--stderr"]),
+      ])
+        if (t !== "-") checkWrite(state, t, "curl writes");
+      return;
+    case "wget":
+      for (const t of [
+        ...optionValues(args, "O", ["--output-document"]),
+        ...optionValues(args, "P", ["--directory-prefix"]),
+        ...optionValues(args, "o", ["--output-file"]),
+        ...optionValues(args, "a", ["--append-output"]),
+      ])
+        if (t !== "-") checkWrite(state, t, "wget writes");
+      return;
+    case "tar":
+    case "bsdtar":
+    case "gtar": {
+      const old = /^[A-Za-z]+$/.test(args[0] ?? "") ? (args[0] ?? "") : "";
+      const letters =
+        old +
+        args
+          .filter((a) => /^-[A-Za-z]+$/.test(a))
+          .map((a) => a.slice(1))
+          .join("");
+      const extract = letters.includes("x") || args.includes("--extract") || args.includes("--get");
+      const create =
+        /[cru]/.test(letters) || args.some((a) => ["--create", "--append", "--update"].includes(a));
+      if (extract)
+        for (const d of optionValues(args, "C", ["--directory"]))
+          checkWrite(state, d, "tar extracts into");
+      const file = old.includes("f") ? args[1] : optionValues(args, "f", ["--file"])[0];
+      if (create && file !== undefined && file !== "-") checkWrite(state, file, "tar writes");
+      return;
+    }
+    case "unzip":
+      for (const d of optionValues(args, "d", [])) checkWrite(state, d, "unzip extracts into");
+      return;
+    case "zip": {
+      const archive = positionals(args)[0];
+      if (archive !== undefined) checkWrite(state, archive, "zip writes");
+      return;
+    }
+    case "sort":
+      for (const t of optionValues(args, "o", ["--output"])) checkWrite(state, t, "sort writes");
       return;
     case "touch":
     case "mkdir":
@@ -1010,6 +1205,12 @@ function checkSimple(
     case "yarn":
     case "bun":
       if (
+        args.some((a) => a === "-g" || a === "--global" || a === "--location=global") ||
+        args[0] === "global" ||
+        args[0] === "link"
+      )
+        return block(`${base} global installs change the machine, not the worktree`);
+      if (
         args.some(
           (a) =>
             a === "publish" ||
@@ -1029,7 +1230,25 @@ function checkSimple(
     case "uv":
       if (args.some((a) => a === "publish" || a === "upload" || a === "push" || a === "yank"))
         return block(`${base} publishing is not allowed`);
+      if ((base === "cargo" || base === "gem") && args[0] === "install")
+        return block(`${base} install changes the machine, not the worktree`);
+      if (base === "uv" && args[0] === "tool") return block("uv tool changes the machine");
       return;
+    case "go":
+      if (args[0] === "install") return block("go install changes the machine, not the worktree");
+      return;
+    case "pip":
+    case "pip3":
+      if (args.includes("--user") || args.includes("--break-system-packages"))
+        return block(`${base} install outside the project environment is not allowed`);
+      return;
+    case "brew":
+    case "port":
+    case "apt":
+    case "apt-get":
+    case "dnf":
+    case "yum":
+      return block(`${base} changes the machine, not the worktree`);
     case "gh":
     case "glab":
       return block(`${base} is not available to agents (no MRs, no remote changes)`);
@@ -1072,11 +1291,21 @@ function checkPipeline(state: State, pipeline: Pipeline): void {
     }
     if (cmd.kind === "subshell") {
       checkRedirects(state, cmd.redirects);
-      checkScriptAst(state, cmd.script);
+      scoped(state, () => checkScriptAst(state, cmd.script));
     } else {
       checkSimple(state, cmd, stdin);
     }
   });
+}
+
+/** Subshells and substitutions do not change the parent's directory. */
+function scoped(state: State, fn: () => void): void {
+  const cwd = state.cwd;
+  try {
+    fn();
+  } finally {
+    state.cwd = cwd;
+  }
 }
 
 function checkScriptAst(state: State, script: Script): void {
@@ -1094,7 +1323,7 @@ function checkScript(state: State, text: string): undefined {
 }
 
 export function checkShell(command: string, ctx: ShellContext): ShellVerdict {
-  const state: State = { ctx, aliases: new Map(), depth: 0, written: new Set() };
+  const state: State = { ctx, aliases: new Map(), depth: 0, cwd: ctx.cwd, written: new Set() };
   try {
     checkScript(state, command);
     return { allowed: true };

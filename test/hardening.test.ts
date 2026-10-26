@@ -7,7 +7,7 @@ import { checkShell, type ShellContext } from "../src/policy/shell.ts";
  * enforcement layers when it was found. A finding's probes run as `test.failing` until its fix
  * lands and its id joins FIXED; from then on they must be blocked.
  */
-const FIXED = new Set<string>(["S1", "S2", "S4", "S5", "S12"]);
+const FIXED = new Set<string>(["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S12"]);
 
 const WT = "/ws/.factory/worktrees/add-x/app/1.1";
 const FILES: Record<string, string> = {

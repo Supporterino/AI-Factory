@@ -11,10 +11,11 @@
  * nothing; a factory agent without a context file is refused everything.
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { checkApprovalHash } from "../approval/approval.ts";
 import { appendLog } from "../logs/log.ts";
 import { isSecretPath } from "../policy/paths.ts";
+import { realPathOf } from "../policy/realpath.ts";
 import {
   checkEdit,
   parseSessionContext,
@@ -89,6 +90,27 @@ const field = (input: unknown, ...keys: string[]): string | undefined => {
   return undefined;
 };
 
+/**
+ * Judges an edit both as named and where it really lands: a symlink inside the worktree must
+ * not carry the write out of it or onto a protected file.
+ */
+function checkEditReal(ctx: SessionContext, path: string, approved: () => true | string): void {
+  const verdict = checkEdit(ctx, path, approved);
+  if (!verdict.allowed) throw new Refused(verdict.reason);
+  const abs = isAbsolute(path) ? path : resolve(ctx.directory, path);
+  const realDir = realPathOf(ctx.directory);
+  const realAbs = realPathOf(abs);
+  const rel = relative(realDir, realAbs);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel))
+    throw new Refused(`\`${path}\` resolves outside your directory through a symlink`);
+  const real = checkEdit(ctx, join(ctx.directory, rel), approved);
+  if (!real.allowed) throw new Refused(`${real.reason} (through a symlink at \`${path}\`)`);
+}
+
+const isSecretReal = (directory: string, path: string): boolean =>
+  isSecretPath(path) ||
+  isSecretPath(realPathOf(isAbsolute(path) ? path : resolve(directory, path)));
+
 class Refused extends Error {
   constructor(reason: string) {
     super(`ai-factory blocked this call: ${reason}`);
@@ -121,28 +143,26 @@ function guard(workspace: string, event: ToolEvent): { ctx: SessionContext; note
         env: process.env,
         readFile: readText,
         exists: (abs) => existsSync(abs),
+        realpath: realPathOf,
+        workspace: ctx.workspace,
       });
       if (!verdict.allowed) throw new Refused(verdict.reason);
       return { ctx };
     }
     case "edit":
     case "write": {
-      const path = field(input, "path", "filePath") ?? "";
-      const verdict = checkEdit(ctx, path, approved);
-      if (!verdict.allowed) throw new Refused(verdict.reason);
+      checkEditReal(ctx, field(input, "path", "filePath") ?? "", approved);
       return { ctx };
     }
     case "patch":
     case "apply_patch": {
-      for (const path of patchPaths(field(input, "patchText", "patch") ?? "")) {
-        const verdict = checkEdit(ctx, path, approved);
-        if (!verdict.allowed) throw new Refused(verdict.reason);
-      }
+      for (const path of patchPaths(field(input, "patchText", "patch") ?? ""))
+        checkEditReal(ctx, path, approved);
       return { ctx };
     }
     case "read": {
       const path = field(input, "path", "filePath") ?? "";
-      if (isSecretPath(path)) throw new Refused(`\`${path}\` is a secret file`);
+      if (isSecretReal(ctx.directory, path)) throw new Refused(`\`${path}\` is a secret file`);
       const abs = isAbsolute(path) ? path : join(ctx.directory, path);
       try {
         const st = statSync(abs);
@@ -159,7 +179,7 @@ function guard(workspace: string, event: ToolEvent): { ctx: SessionContext; note
     case "glob":
     case "grep": {
       const path = field(input, "path", "pattern");
-      if (path !== undefined && isSecretPath(path))
+      if (path !== undefined && isSecretReal(ctx.directory, path))
         throw new Refused(`\`${path}\` is a secret file`);
       return { ctx };
     }

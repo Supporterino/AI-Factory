@@ -2,7 +2,7 @@
 // @bun
 // src/plugin/entry.ts
 import { existsSync as existsSync3, readFileSync as readFileSync2, statSync as statSync3 } from "fs";
-import { isAbsolute as isAbsolute3, join as join4, resolve as resolve3 } from "path";
+import { isAbsolute as isAbsolute3, join as join6, relative as relative3, resolve as resolve4 } from "path";
 
 // src/approval/approval.ts
 import { createHash } from "crypto";
@@ -137,41 +137,41 @@ function appendLog(root, changeId, entry, options = {}) {
 
 // src/policy/paths.ts
 var PROTECTED = [
-  /^openspec\/specs(\/|$)/,
-  /^\.opencode(\/|$)/,
-  /^\.factory(\/|$)/,
-  /^factory\.config\.jsonc$/,
-  /^factory\.lock\.json$/,
-  /(^|\/)AGENTS\.md$/,
-  /(^|\/)\.git(\/|$)/,
-  /^\.gitmodules$/
+  /^openspec\/specs(\/|$)/i,
+  /^\.opencode(\/|$)/i,
+  /^\.factory(\/|$)/i,
+  /^factory\.config\.jsonc$/i,
+  /^factory\.lock\.json$/i,
+  /(^|\/)AGENTS\.md$/i,
+  /(^|\/)\.git(\/|$)/i,
+  /^\.gitmodules$/i
 ];
 function isProtectedPath(rel) {
   const p = rel.replace(/^\.\//, "");
   return PROTECTED.some((re) => re.test(p));
 }
 var SECRET_BASENAMES = [
-  /^\.env$/,
-  /^\.env\.(?!(example|sample|template|dist|defaults)$).+/,
-  /\.pem$/,
-  /\.key$/,
-  /\.p12$/,
-  /\.pfx$/,
-  /^id_(rsa|dsa|ecdsa|ed25519)(\..*)?$/,
+  /^\.env$/i,
+  /^\.env\.(?!(example|sample|template|dist|defaults)$).+/i,
+  /\.pem$/i,
+  /\.key$/i,
+  /\.p12$/i,
+  /\.pfx$/i,
+  /^id_(rsa|dsa|ecdsa|ed25519)(\..*)?$/i,
   /kubeconfig/i,
-  /^\.netrc$/,
-  /^\.npmrc$/,
-  /^\.pypirc$/,
-  /^\.git-credentials$/,
-  /\.tfstate(\.backup)?$/
+  /^\.netrc$/i,
+  /^\.npmrc$/i,
+  /^\.pypirc$/i,
+  /^\.git-credentials$/i,
+  /\.tfstate(\.backup)?$/i
 ];
 var SECRET_SEGMENTS = [
-  /(^|\/)\.kube\/config$/,
-  /(^|\/)\.aws\/(credentials|config)$/,
-  /(^|\/)\.config\/gcloud(\/|$)/,
-  /(^|\/)\.azure(\/|$)/,
-  /(^|\/)\.docker\/config\.json$/,
-  /(^|\/)\.ssh(\/|$)/
+  /(^|\/)\.kube\/config$/i,
+  /(^|\/)\.aws\/(credentials|config)$/i,
+  /(^|\/)\.config\/gcloud(\/|$)/i,
+  /(^|\/)\.azure(\/|$)/i,
+  /(^|\/)\.docker\/config\.json$/i,
+  /(^|\/)\.ssh(\/|$)/i
 ];
 function isSecretPath(path) {
   const p = path.replace(/\\/g, "/");
@@ -179,8 +179,38 @@ function isSecretPath(path) {
   return SECRET_BASENAMES.some((re) => re.test(base)) || SECRET_SEGMENTS.some((re) => re.test(p));
 }
 
+// src/policy/realpath.ts
+import { lstatSync, readlinkSync, realpathSync } from "fs";
+import { basename, dirname, join as join3, resolve } from "path";
+function realPathOf(abs, depth = 0) {
+  if (depth > 40)
+    return abs;
+  const missing = [];
+  let current = abs;
+  for (let i = 0;i < 4096; i++) {
+    const st = lstatSync(current, { throwIfNoEntry: false });
+    if (st !== undefined) {
+      try {
+        return join3(realpathSync.native(current), ...missing.reverse());
+      } catch {
+        if (st.isSymbolicLink()) {
+          const target = resolve(dirname(current), readlinkSync(current));
+          return realPathOf(join3(target, ...missing.reverse()), depth + 1);
+        }
+        return abs;
+      }
+    }
+    const parent = dirname(current);
+    if (parent === current)
+      return abs;
+    missing.push(basename(current));
+    current = parent;
+  }
+  return abs;
+}
+
 // src/policy/scope.ts
-import { isAbsolute, normalize, relative, resolve } from "path";
+import { isAbsolute, normalize, relative, resolve as resolve2 } from "path";
 
 // src/tasks/glob.ts
 var cache = new Map;
@@ -256,7 +286,7 @@ var architectDirs = (changeId) => [
 ];
 var IMPLEMENTING_ROLES = new Set(["implementer", "tester"]);
 function checkEdit(ctx, path, approval) {
-  const abs = normalize(isAbsolute(path) ? path : resolve(ctx.directory, path));
+  const abs = normalize(isAbsolute(path) ? path : resolve2(ctx.directory, path));
   const rel = relative(ctx.directory, abs);
   if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
     return {
@@ -310,11 +340,11 @@ function patchPaths(patchText) {
 }
 
 // src/policy/session-files.ts
-import { join as join3 } from "path";
-var sessionContextFile = (workspace, sessionId) => join3(workspace, ".factory", "sessions", `${sessionId}.json`);
+import { join as join4 } from "path";
+var sessionContextFile = (workspace, sessionId) => join4(workspace, ".factory", "sessions", `${sessionId}.json`);
 
 // src/policy/shell.ts
-import { isAbsolute as isAbsolute2, normalize as normalize2, relative as relative2, resolve as resolve2 } from "path";
+import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, join as join5, normalize as normalize2, relative as relative2, resolve as resolve3 } from "path";
 
 // src/policy/shell-parse.ts
 class ShellParseError extends Error {
@@ -785,40 +815,89 @@ function resolvePath(state, word) {
   }
   w = w.replace(/\$\{?(HOME|TMPDIR|PWD)\}?/g, (m, name) => {
     if (name === "PWD")
-      return state.ctx.cwd;
+      return state.cwd ?? m;
     return state.ctx.env?.[name] ?? m;
   });
   if (w.includes("$"))
     return;
-  return normalize2(isAbsolute2(w) ? w : resolve2(state.ctx.cwd, w));
+  if (isAbsolute2(w))
+    return normalize2(w);
+  return state.cwd === undefined ? undefined : normalize2(resolve3(state.cwd, w));
 }
+var real = (state, abs) => state.ctx.realpath?.(abs) ?? abs;
 var within = (abs, dir) => {
   const rel = relative2(dir, abs);
   return rel === "" || !rel.startsWith("..") && !isAbsolute2(rel);
 };
 function tempDirs(state) {
-  return ["/tmp", "/private/tmp", state.ctx.env?.TMPDIR].filter((d) => !!d).map((d) => normalize2(d));
+  return ["/tmp", "/private/tmp", state.ctx.env?.TMPDIR].filter((d) => !!d).flatMap((d) => [normalize2(d), real(state, normalize2(d))]);
+}
+function locate(state, abs) {
+  const target = real(state, abs);
+  const root = real(state, state.ctx.root);
+  if (within(target, root))
+    return { real: target, rel: relative2(root, target), temp: false };
+  const ws = state.ctx.workspace;
+  if (ws !== undefined && within(target, real(state, ws)))
+    return { real: target, temp: false };
+  return { real: target, temp: tempDirs(state).some((t) => within(target, t)) };
 }
 function checkWrite(state, word, what) {
   if (SAFE_WRITE_TARGETS.test(word))
     return;
   const abs = resolvePath(state, word);
   if (abs === undefined)
-    block(`${what} \`${word}\` depends on an unknown variable`);
-  else {
-    if (tempDirs(state).some((t) => within(abs, t)))
-      return;
-    if (!within(abs, state.ctx.root))
+    return block(`${what} \`${word}\` depends on an unknown variable or directory`);
+  const where = locate(state, abs);
+  if (where.rel === undefined) {
+    if (!where.temp)
       block(`${what} \`${word}\` is outside the session directory`);
-    const rel = relative2(state.ctx.root, abs);
-    if (rel === "")
+  } else {
+    if (where.rel === "")
       block(`${what} the session directory itself`);
-    if (isProtectedPath(rel))
-      block(`${what} protected path \`${rel}\``);
-    if (isSecretPath(rel))
-      block(`${what} secret file \`${rel}\``);
-    state.written.add(abs);
+    if (isProtectedPath(where.rel))
+      block(`${what} protected path \`${where.rel}\``);
+    if (isSecretPath(where.rel))
+      block(`${what} secret file \`${where.rel}\``);
   }
+  state.written.add(abs);
+  state.written.add(where.real);
+}
+function changeDir2(state, word) {
+  if (word === "-") {
+    state.cwd = undefined;
+    return;
+  }
+  const abs = resolvePath(state, word ?? "~");
+  if (abs === undefined) {
+    state.cwd = undefined;
+    return;
+  }
+  const where = locate(state, abs);
+  if (where.rel === undefined && !where.temp)
+    block(`cd \`${word ?? "~"}\` leaves the session directory`);
+  state.cwd = abs;
+}
+function optionValues(args, short, long) {
+  const out = [];
+  for (let i = 0;i < args.length; i++) {
+    const a = args[i] ?? "";
+    if (a === "--")
+      break;
+    const eq = long.find((l) => a.startsWith(`${l}=`));
+    if (eq !== undefined)
+      out.push(a.slice(eq.length + 1));
+    else if (long.includes(a))
+      out.push(args[++i] ?? "");
+    else if (/^-[A-Za-z]/.test(a) && !a.startsWith("--")) {
+      const j = a.indexOf(short, 1);
+      if (short !== "" && j !== -1) {
+        const attached = a.slice(j + 1);
+        out.push(attached !== "" ? attached : args[++i] ?? "");
+      }
+    }
+  }
+  return out;
 }
 function checkSecretArgs(words) {
   for (const w of words) {
@@ -854,6 +933,7 @@ var flags = (words) => {
   }
   return out;
 };
+var isInPlaceFlag = (a) => /^-[a-zA-Z]*i/.test(a) && !a.startsWith("--") && !/^-[IMx]/.test(a);
 var positionals = (words) => {
   const out = [];
   let dashdash = false;
@@ -1071,6 +1151,22 @@ function checkGit(state, args) {
       if (pos.length > 0 && !f.has("-l") && !f.has("--list"))
         return block("creating tags is not allowed");
       return;
+    case "rm":
+      for (const p of pos) {
+        const abs = resolvePath(state, p);
+        if (abs === undefined)
+          return block(`git rm \`${p}\` depends on an unknown variable`);
+        const where = locate(state, abs);
+        if (where.rel === undefined)
+          return block(`git rm \`${p}\` is outside the session directory`);
+        if (isProtectedPath(where.rel))
+          return block(`git rm of protected path \`${where.rel}\``);
+      }
+      return;
+    case "mv":
+      for (const p of pos)
+        checkWrite(state, p, "git mv");
+      return;
     case "commit":
       if (f.has("--amend") || f.has("--fixup") || f.has("--squash"))
         return block("rewriting commits is not allowed");
@@ -1136,23 +1232,45 @@ function checkRm(state, args) {
   for (const t of positionals(args)) {
     const abs = resolvePath(state, t);
     if (abs === undefined)
-      block(`rm \`${t}\` depends on an unknown variable`);
-    else if (!within(abs, state.ctx.root) && !tempDirs(state).some((d) => within(abs, d))) {
-      block(`rm \`${t}\` is outside the session directory`);
-    } else if (within(abs, state.ctx.root)) {
-      const rel = relative2(state.ctx.root, abs);
-      if (rel === "" || rel === ".")
+      return block(`rm \`${t}\` depends on an unknown variable or directory`);
+    const where = locate(state, join5(real(state, dirname2(abs)), basename2(abs)));
+    if (where.rel === undefined) {
+      if (!where.temp)
+        block(`rm \`${t}\` is outside the session directory`);
+    } else {
+      if (where.rel === "" || where.rel === ".")
         block("rm of the whole session directory");
-      if (isProtectedPath(rel))
-        block(`rm of protected path \`${rel}\``);
+      if (isProtectedPath(where.rel))
+        block(`rm of protected path \`${where.rel}\``);
     }
+  }
+}
+function checkLn(state, args) {
+  const symbolic = flags(args).has("-s") || flags(args).has("--symbolic");
+  const dir = optionValues(args, "t", ["--target-directory"])[0];
+  const p = positionals(args).filter((x) => x !== dir);
+  const pairs = dir !== undefined ? p.map((t) => ({ target: t, link: join5(dir, basename2(t)) })) : p.length === 1 ? [{ target: p[0] ?? "", link: basename2(p[0] ?? "") }] : p.slice(0, -1).map((t) => ({
+    target: t,
+    link: p.length > 2 ? join5(p.at(-1) ?? "", basename2(t)) : p.at(-1) ?? ""
+  }));
+  for (const { target, link } of pairs) {
+    checkWrite(state, link, "ln creates");
+    const linkAbs = resolvePath(state, link);
+    const targetAbs = symbolic && !isAbsolute2(target) && !target.startsWith("~") && !target.startsWith("$") ? linkAbs === undefined ? undefined : resolve3(dirname2(linkAbs), target) : resolvePath(state, target);
+    if (targetAbs === undefined)
+      return block(`ln target \`${target}\` depends on an unknown variable`);
+    const where = locate(state, targetAbs);
+    if (where.rel === undefined && !where.temp)
+      block(`ln \`${target}\` would point outside the session directory`);
+    if (where.rel !== undefined && (isProtectedPath(where.rel) || isSecretPath(where.rel)))
+      block(`ln \`${target}\` would point at protected path \`${where.rel}\``);
   }
 }
 function checkScriptFile(state, word, interpreter) {
   const abs = resolvePath(state, word);
   if (abs === undefined)
     return block(`executes \`${word}\`, which depends on an unknown variable`);
-  if (state.written.has(abs))
+  if (state.written.has(abs) || state.written.has(real(state, abs)))
     return block(`executes \`${word}\`, which this same command writes`);
   const text = state.ctx.readFile?.(abs);
   if (text === undefined)
@@ -1245,9 +1363,13 @@ function unwrap(state, words, stdin) {
           if (PROTECTED_ENV.test(a.slice(8)))
             block("unsets the factory's environment");
           i += 1;
-        } else if (a === "-C" || a === "--chdir")
+        } else if (a === "-C" || a === "--chdir") {
+          changeDir2(state, rest[i + 1]);
           i += 2;
-        else if (a === "-S" || a === "--split-string") {
+        } else if (a.startsWith("--chdir=")) {
+          changeDir2(state, a.slice("--chdir=".length));
+          i += 1;
+        } else if (a === "-S" || a === "--split-string") {
           w = [...(rest[i + 1] ?? "").split(/\s+/).filter(Boolean), ...rest.slice(i + 2)];
           i = -1;
           break;
@@ -1406,7 +1528,7 @@ function checkSed(state, args) {
 }
 function checkSimple(state, cmd, stdin) {
   for (const sub of cmd.substitutions)
-    checkScriptAst(state, sub);
+    scoped(state, () => checkScriptAst(state, sub));
   checkRedirects(state, cmd.redirects);
   for (const a of cmd.assigns)
     checkSetEnv(a.split("=")[0] ?? "");
@@ -1492,7 +1614,32 @@ function checkSimple(state, cmd, stdin) {
   }
   if (base === "eval")
     return checkScript(state, args.join(" "));
-  const inline = INTERPRETERS[base.replace(/\d+(\.\d+)*$/, "")] ?? INTERPRETERS[base];
+  if (base === "cd" || base === "pushd" || base === "chdir") {
+    changeDir2(state, positionals(args)[0]);
+    return;
+  }
+  if (base === "popd") {
+    state.cwd = undefined;
+    return;
+  }
+  const interpreter = base.replace(/\d+(\.\d+)*$/, "");
+  if ((interpreter === "perl" || interpreter === "ruby") && args.some(isInPlaceFlag)) {
+    const operands = [];
+    let code = false;
+    for (let k = 0;k < args.length; k++) {
+      const a = args[k] ?? "";
+      if (a === "-e" || a === "-E") {
+        code = true;
+        k++;
+      } else if (/^-[IMx]$/.test(a))
+        k++;
+      else if (!a.startsWith("-"))
+        operands.push(a);
+    }
+    for (const f of code ? operands : operands.slice(1))
+      checkWrite(state, f, `${interpreter} -i edits`);
+  }
+  const inline = INTERPRETERS[interpreter] ?? INTERPRETERS[base];
   if (inline) {
     const i = args.findIndex((a) => inline.includes(a));
     const joined = args.find((a) => inline.some((f) => f.startsWith("--") && a.startsWith(`${f}=`)));
@@ -1574,19 +1721,75 @@ function checkSimple(state, cmd, stdin) {
       for (const p of positionals(args))
         checkWrite(state, p, "writes");
       return;
+    case "ln":
+      checkLn(state, args);
+      return;
     case "cp":
     case "install":
-    case "ln":
     case "rsync": {
-      const p = positionals(args);
+      const dir = optionValues(args, "t", ["--target-directory"]);
+      for (const d of dir)
+        checkWrite(state, d, "writes into");
+      const p = positionals(args).filter((x) => !dir.includes(x));
       const dest = p.at(-1);
-      if (dest !== undefined && p.length > 1)
+      if (dir.length === 0 && dest !== undefined && p.length > 1)
         checkWrite(state, dest, "writes");
       return;
     }
     case "mv":
       for (const p of positionals(args))
         checkWrite(state, p, "moves");
+      for (const d of optionValues(args, "t", ["--target-directory"]))
+        checkWrite(state, d, "moves into");
+      return;
+    case "curl":
+      for (const t of [
+        ...optionValues(args, "o", ["--output"]),
+        ...optionValues(args, "D", ["--dump-header"]),
+        ...optionValues(args, "c", ["--cookie-jar"]),
+        ...optionValues(args, "", ["--output-dir", "--trace", "--trace-ascii", "--stderr"])
+      ])
+        if (t !== "-")
+          checkWrite(state, t, "curl writes");
+      return;
+    case "wget":
+      for (const t of [
+        ...optionValues(args, "O", ["--output-document"]),
+        ...optionValues(args, "P", ["--directory-prefix"]),
+        ...optionValues(args, "o", ["--output-file"]),
+        ...optionValues(args, "a", ["--append-output"])
+      ])
+        if (t !== "-")
+          checkWrite(state, t, "wget writes");
+      return;
+    case "tar":
+    case "bsdtar":
+    case "gtar": {
+      const old = /^[A-Za-z]+$/.test(args[0] ?? "") ? args[0] ?? "" : "";
+      const letters = old + args.filter((a) => /^-[A-Za-z]+$/.test(a)).map((a) => a.slice(1)).join("");
+      const extract = letters.includes("x") || args.includes("--extract") || args.includes("--get");
+      const create = /[cru]/.test(letters) || args.some((a) => ["--create", "--append", "--update"].includes(a));
+      if (extract)
+        for (const d of optionValues(args, "C", ["--directory"]))
+          checkWrite(state, d, "tar extracts into");
+      const file = old.includes("f") ? args[1] : optionValues(args, "f", ["--file"])[0];
+      if (create && file !== undefined && file !== "-")
+        checkWrite(state, file, "tar writes");
+      return;
+    }
+    case "unzip":
+      for (const d of optionValues(args, "d", []))
+        checkWrite(state, d, "unzip extracts into");
+      return;
+    case "zip": {
+      const archive = positionals(args)[0];
+      if (archive !== undefined)
+        checkWrite(state, archive, "zip writes");
+      return;
+    }
+    case "sort":
+      for (const t of optionValues(args, "o", ["--output"]))
+        checkWrite(state, t, "sort writes");
       return;
     case "touch":
     case "mkdir":
@@ -1620,6 +1823,8 @@ function checkSimple(state, cmd, stdin) {
     case "pnpm":
     case "yarn":
     case "bun":
+      if (args.some((a) => a === "-g" || a === "--global" || a === "--location=global") || args[0] === "global" || args[0] === "link")
+        return block(`${base} global installs change the machine, not the worktree`);
       if (args.some((a) => a === "publish" || a === "login" || a === "adduser" || a === "unpublish" || a === "deprecate")) {
         return block(`${base} publishing is not allowed`);
       }
@@ -1631,7 +1836,27 @@ function checkSimple(state, cmd, stdin) {
     case "uv":
       if (args.some((a) => a === "publish" || a === "upload" || a === "push" || a === "yank"))
         return block(`${base} publishing is not allowed`);
+      if ((base === "cargo" || base === "gem") && args[0] === "install")
+        return block(`${base} install changes the machine, not the worktree`);
+      if (base === "uv" && args[0] === "tool")
+        return block("uv tool changes the machine");
       return;
+    case "go":
+      if (args[0] === "install")
+        return block("go install changes the machine, not the worktree");
+      return;
+    case "pip":
+    case "pip3":
+      if (args.includes("--user") || args.includes("--break-system-packages"))
+        return block(`${base} install outside the project environment is not allowed`);
+      return;
+    case "brew":
+    case "port":
+    case "apt":
+    case "apt-get":
+    case "dnf":
+    case "yum":
+      return block(`${base} changes the machine, not the worktree`);
     case "gh":
     case "glab":
       return block(`${base} is not available to agents (no MRs, no remote changes)`);
@@ -1674,11 +1899,19 @@ function checkPipeline(state, pipeline) {
     }
     if (cmd.kind === "subshell") {
       checkRedirects(state, cmd.redirects);
-      checkScriptAst(state, cmd.script);
+      scoped(state, () => checkScriptAst(state, cmd.script));
     } else {
       checkSimple(state, cmd, stdin);
     }
   });
+}
+function scoped(state, fn) {
+  const cwd = state.cwd;
+  try {
+    fn();
+  } finally {
+    state.cwd = cwd;
+  }
 }
 function checkScriptAst(state, script) {
   if (++state.depth > 25)
@@ -1695,7 +1928,7 @@ function checkScript(state, text) {
   return;
 }
 function checkShell(command, ctx) {
-  const state = { ctx, aliases: new Map, depth: 0, written: new Set };
+  const state = { ctx, aliases: new Map, depth: 0, cwd: ctx.cwd, written: new Set };
   try {
     checkScript(state, command);
     return { allowed: true };
@@ -1748,6 +1981,21 @@ var field = (input, ...keys) => {
   }
   return;
 };
+function checkEditReal(ctx, path, approved) {
+  const verdict = checkEdit(ctx, path, approved);
+  if (!verdict.allowed)
+    throw new Refused(verdict.reason);
+  const abs = isAbsolute3(path) ? path : resolve4(ctx.directory, path);
+  const realDir = realPathOf(ctx.directory);
+  const realAbs = realPathOf(abs);
+  const rel = relative3(realDir, realAbs);
+  if (rel === "" || rel.startsWith("..") || isAbsolute3(rel))
+    throw new Refused(`\`${path}\` resolves outside your directory through a symlink`);
+  const real2 = checkEdit(ctx, join6(ctx.directory, rel), approved);
+  if (!real2.allowed)
+    throw new Refused(`${real2.reason} (through a symlink at \`${path}\`)`);
+}
+var isSecretReal = (directory, path) => isSecretPath(path) || isSecretPath(realPathOf(isAbsolute3(path) ? path : resolve4(directory, path)));
 
 class Refused extends Error {
   constructor(reason) {
@@ -1768,7 +2016,7 @@ function guard(workspace, event) {
     case "shell": {
       const command = field(input, "command") ?? "";
       const workdir = field(input, "workdir");
-      const cwd = workdir === undefined ? ctx.directory : resolve3(ctx.directory, workdir);
+      const cwd = workdir === undefined ? ctx.directory : resolve4(ctx.directory, workdir);
       const root = ctx.role === "architect" ? ctx.workspace : ctx.directory;
       if (!`${cwd}/`.startsWith(`${root}/`) && cwd !== root)
         throw new Refused(`workdir ${workdir} is outside your directory`);
@@ -1777,7 +2025,9 @@ function guard(workspace, event) {
         root,
         env: process.env,
         readFile: readText,
-        exists: (abs) => existsSync3(abs)
+        exists: (abs) => existsSync3(abs),
+        realpath: realPathOf,
+        workspace: ctx.workspace
       });
       if (!verdict.allowed)
         throw new Refused(verdict.reason);
@@ -1785,26 +2035,20 @@ function guard(workspace, event) {
     }
     case "edit":
     case "write": {
-      const path = field(input, "path", "filePath") ?? "";
-      const verdict = checkEdit(ctx, path, approved);
-      if (!verdict.allowed)
-        throw new Refused(verdict.reason);
+      checkEditReal(ctx, field(input, "path", "filePath") ?? "", approved);
       return { ctx };
     }
     case "patch":
     case "apply_patch": {
-      for (const path of patchPaths(field(input, "patchText", "patch") ?? "")) {
-        const verdict = checkEdit(ctx, path, approved);
-        if (!verdict.allowed)
-          throw new Refused(verdict.reason);
-      }
+      for (const path of patchPaths(field(input, "patchText", "patch") ?? ""))
+        checkEditReal(ctx, path, approved);
       return { ctx };
     }
     case "read": {
       const path = field(input, "path", "filePath") ?? "";
-      if (isSecretPath(path))
+      if (isSecretReal(ctx.directory, path))
         throw new Refused(`\`${path}\` is a secret file`);
-      const abs = isAbsolute3(path) ? path : join4(ctx.directory, path);
+      const abs = isAbsolute3(path) ? path : join6(ctx.directory, path);
       try {
         const st = statSync3(abs);
         const stamp = `${st.mtimeMs}:${st.size}`;
@@ -1820,7 +2064,7 @@ function guard(workspace, event) {
     case "glob":
     case "grep": {
       const path = field(input, "path", "pattern");
-      if (path !== undefined && isSecretPath(path))
+      if (path !== undefined && isSecretReal(ctx.directory, path))
         throw new Refused(`\`${path}\` is a secret file`);
       return { ctx };
     }

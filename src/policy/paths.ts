@@ -1,17 +1,18 @@
 /**
  * Path classes shared by the edit scope, the shell blocklist and the post-session audit.
- * Paths are POSIX, relative to the session directory.
+ * Paths are POSIX, relative to the session directory. Matching ignores case: macOS and
+ * Windows filesystems treat `.GIT/config` and `.git/config` as the same file.
  */
 
 const PROTECTED: readonly RegExp[] = [
-  /^openspec\/specs(\/|$)/,
-  /^\.opencode(\/|$)/,
-  /^\.factory(\/|$)/,
-  /^factory\.config\.jsonc$/,
-  /^factory\.lock\.json$/,
-  /(^|\/)AGENTS\.md$/,
-  /(^|\/)\.git(\/|$)/,
-  /^\.gitmodules$/,
+  /^openspec\/specs(\/|$)/i,
+  /^\.opencode(\/|$)/i,
+  /^\.factory(\/|$)/i,
+  /^factory\.config\.jsonc$/i,
+  /^factory\.lock\.json$/i,
+  /(^|\/)AGENTS\.md$/i,
+  /(^|\/)\.git(\/|$)/i,
+  /^\.gitmodules$/i,
 ];
 
 /** Files only the factory (or a human) may change. */
@@ -21,28 +22,28 @@ export function isProtectedPath(rel: string): boolean {
 }
 
 const SECRET_BASENAMES: readonly RegExp[] = [
-  /^\.env$/,
-  /^\.env\.(?!(example|sample|template|dist|defaults)$).+/,
-  /\.pem$/,
-  /\.key$/,
-  /\.p12$/,
-  /\.pfx$/,
-  /^id_(rsa|dsa|ecdsa|ed25519)(\..*)?$/,
+  /^\.env$/i,
+  /^\.env\.(?!(example|sample|template|dist|defaults)$).+/i,
+  /\.pem$/i,
+  /\.key$/i,
+  /\.p12$/i,
+  /\.pfx$/i,
+  /^id_(rsa|dsa|ecdsa|ed25519)(\..*)?$/i,
   /kubeconfig/i,
-  /^\.netrc$/,
-  /^\.npmrc$/,
-  /^\.pypirc$/,
-  /^\.git-credentials$/,
-  /\.tfstate(\.backup)?$/,
+  /^\.netrc$/i,
+  /^\.npmrc$/i,
+  /^\.pypirc$/i,
+  /^\.git-credentials$/i,
+  /\.tfstate(\.backup)?$/i,
 ];
 
 const SECRET_SEGMENTS: readonly RegExp[] = [
-  /(^|\/)\.kube\/config$/,
-  /(^|\/)\.aws\/(credentials|config)$/,
-  /(^|\/)\.config\/gcloud(\/|$)/,
-  /(^|\/)\.azure(\/|$)/,
-  /(^|\/)\.docker\/config\.json$/,
-  /(^|\/)\.ssh(\/|$)/,
+  /(^|\/)\.kube\/config$/i,
+  /(^|\/)\.aws\/(credentials|config)$/i,
+  /(^|\/)\.config\/gcloud(\/|$)/i,
+  /(^|\/)\.azure(\/|$)/i,
+  /(^|\/)\.docker\/config\.json$/i,
+  /(^|\/)\.ssh(\/|$)/i,
 ];
 
 /** Secret files: never read or written by an agent (§8). `.env.example` and friends are fine. */

@@ -5,6 +5,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -152,6 +153,28 @@ describe("plugin guards", () => {
       "changed after approval",
     );
     writeFileSync(tasks, TASKS);
+  });
+
+  test("symlinks cannot carry an edit or a read out of scope", async () => {
+    approve();
+    mkdirSync(join(ws, "outside"), { recursive: true });
+    writeFileSync(join(ws, ".env"), "TOKEN=x\n");
+    symlinkSync(join(ws, "outside"), join(wt, "src", "out"));
+    symlinkSync(join(wt, "factory.config.jsonc"), join(wt, "src", "cfg.json"));
+    symlinkSync(join(ws, ".env"), join(wt, "src", "settings.txt"));
+    expect(
+      await call("impl", "implementer-app", "write", { path: "src/out/x.ts", content: "z" }),
+    ).toContain("resolves outside your directory through a symlink");
+    expect(await call("impl", "implementer-app", "edit", { path: "src/cfg.json" })).toContain(
+      "through a symlink",
+    );
+    expect(await call("impl", "implementer-app", "read", { path: "src/settings.txt" })).toContain(
+      "secret file",
+    );
+    expect(
+      await call("impl", "implementer-app", "shell", { command: "echo x > src/out/y" }),
+    ).toContain("outside the session directory");
+    expect(await call("impl", "implementer-app", "edit", { path: "src/sum.ts" })).toBeUndefined();
   });
 
   test("implementer scope: touches, factory files, outside paths, patches", async () => {
