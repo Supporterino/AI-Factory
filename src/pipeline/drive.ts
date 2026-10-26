@@ -82,7 +82,10 @@ type Step = { kind: "continue"; id: string } | { kind: "stop"; outcome: DriveOut
 const go = (id: string): Step => ({ kind: "continue", id });
 const stop = (outcome: DriveOutcome): Step => ({ kind: "stop", outcome });
 
-/** Phases that act on the approved spec: each entry re-checks the approval (audit P9). */
+/**
+ * Phases that act on the approved spec: each entry takes the driver lock, so a second
+ * `resume` cannot run the same phase twice (audit P14), and re-checks the approval (audit P9).
+ */
 const APPROVED_PHASES: ReadonlySet<Phase> = new Set([
   "implementing",
   "reviewing",
@@ -95,8 +98,11 @@ const APPROVED_PHASES: ReadonlySet<Phase> = new Set([
 async function step(p: Pipeline, id: string): Promise<Step> {
   const run = p.run(id);
   // Once archived the spec has moved (a close resumed after a crash): nothing left to check.
-  const archived = run.phase === "closing" && archivedName(p.root, id) !== undefined;
-  if (APPROVED_PHASES.has(run.phase) && !archived) await verifyApproval(p, id, p.root);
+  if (APPROVED_PHASES.has(run.phase)) {
+    await ensureDriver(p, id);
+    const archived = run.phase === "closing" && archivedName(p.root, id) !== undefined;
+    if (!archived) await verifyApproval(p, id, p.root);
+  }
   switch (run.phase) {
     case "intake":
     case "design": {
@@ -138,7 +144,6 @@ async function step(p: Pipeline, id: string): Promise<Step> {
       return go(id);
     }
     case "implementing": {
-      await ensureDriver(p, id);
       await ensureContextPacks(p, id);
       const summary = await implement(p, id);
       if (summary.status === "aborted" || p.deps.signal.aborted) {

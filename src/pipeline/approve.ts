@@ -6,7 +6,7 @@ import { git, gitOk } from "../exec.ts";
 import { commitPaths } from "../git/commit.ts";
 import { changeBranch, currentBranch } from "../git/repo.ts";
 import { checkDesign } from "../openspec/cli.ts";
-import { now, recordTask, TaskState } from "../state/run.ts";
+import { now, type RunState, recordTask, TaskState } from "../state/run.ts";
 import type { Pipeline } from "./context.ts";
 import { specDir } from "./design.ts";
 
@@ -17,13 +17,7 @@ import { specDir } from "./design.ts";
  */
 export async function approve(p: Pipeline, id: string): Promise<Approval> {
   const run = p.run(id);
-  const started = run.tasks.some((t) => t.status !== "pending");
-  if (run.phase === "done" || started) {
-    throw new PreconditionError(`${id} is past approval (phase ${run.phase})`);
-  }
-  if (!["awaiting-approval", "paused", "queued"].includes(run.phase)) {
-    throw new PreconditionError(`${id} is not ready for approval (phase ${run.phase})`);
-  }
+  assertApprovable(id, run);
   const dir = specDir(p, run.draft);
   const check = await checkDesign(
     p.root,
@@ -58,11 +52,12 @@ export async function approve(p: Pipeline, id: string): Promise<Approval> {
     hash: specHash(dir, id),
     approvedAt: now(),
   };
-  const file = approvalFile(p.root, id);
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify(approval, null, 2)}\n`);
-
   await p.update(id, (d) => {
+    // Checked again under the run lock: another approve or resume may have moved on (P14).
+    assertApprovable(id, d);
+    const file = approvalFile(p.root, id);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${JSON.stringify(approval, null, 2)}\n`);
     d.phase = "queued";
     delete d.pausedReason;
     d.tasks = check.tasks.map((t) => {
@@ -80,6 +75,25 @@ export async function approve(p: Pipeline, id: string): Promise<Approval> {
     `✓ approved ${id} by ${approver} (spec ${specCommit.slice(0, 12)}, ${check.tasks.length} tasks)`,
   );
   return approval;
+}
+
+const PAST_APPROVAL: ReadonlySet<string> = new Set([
+  "implementing",
+  "reviewing",
+  "contracts",
+  "full-suite",
+  "closing",
+  "done",
+]);
+
+function assertApprovable(id: string, run: RunState): void {
+  const started = run.tasks.some((t) => t.status !== "pending");
+  if (PAST_APPROVAL.has(run.phase) || started) {
+    throw new PreconditionError(`${id} is past approval (phase ${run.phase})`);
+  }
+  if (!["awaiting-approval", "paused", "queued"].includes(run.phase)) {
+    throw new PreconditionError(`${id} is not ready for approval (phase ${run.phase})`);
+  }
 }
 
 /** The CLI-side approval check: hash still valid and the spec commit is on the change branch. */

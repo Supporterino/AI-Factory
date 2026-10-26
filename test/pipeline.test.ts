@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { ExitCode } from "../src/cli/exit-codes.ts";
+import { loadConfig } from "../src/config/load.ts";
+import { approve } from "../src/pipeline/approve.ts";
+import { Pipeline } from "../src/pipeline/context.ts";
 import { readActive } from "../src/state/active.ts";
 import { loadRun, updateRun } from "../src/state/run.ts";
 import { factoryScript, type ScriptedTask } from "./fixtures/factory-script.ts";
@@ -453,6 +457,69 @@ describe("pipeline: single repo", () => {
     broken = false;
     expect((await cliWith(runtime, fx.root, "resume", ID)).code).toBe(ExitCode.Ok);
     expect(loadRun(fx.root, ID)?.phase).toBe("done");
+  });
+
+  test("a second driver cannot enter review, contracts or closing (audit P14)", async () => {
+    await withGates(passAll);
+    const team = factoryScript({
+      changeId: ID,
+      summary: "Math helpers",
+      repos: ["app"],
+      tasks: SINGLE_TASKS,
+    });
+    let broken = true;
+    const runtime = new ScriptedRuntime(async (call) =>
+      call.agent === "reviewer" && broken ? { text: "I ran out of time." } : team(call),
+    );
+    await cliWith(runtime, fx.root, "run", "Add math helpers");
+    expect((await cliWith(runtime, fx.root, "approve", ID)).code).toBe(ExitCode.Paused);
+    broken = false;
+
+    // Another live process drives the change through its review.
+    const other = Bun.spawn(["sleep", "60"]);
+    try {
+      writeFileSync(
+        join(fx.root, ".factory/active.lock"),
+        JSON.stringify({ changeId: ID, pid: other.pid, host: hostname(), since: "now" }),
+      );
+      for (const phase of ["reviewing", "contracts", "full-suite", "closing"] as const) {
+        await updateRun(fx.root, ID, (d) => {
+          d.phase = phase;
+        });
+        const calls = runtime.calls.length;
+        const second = await cliWith(runtime, fx.root, "resume", ID);
+        expect(second.code).toBe(ExitCode.Precondition);
+        expect(second.err).toContain(`already being driven by pid ${other.pid}`);
+        expect(runtime.calls.length).toBe(calls);
+        expect(loadRun(fx.root, ID)?.phase).toBe(phase);
+      }
+    } finally {
+      other.kill();
+    }
+  });
+
+  test("approve re-checks the phase under the run lock (audit P14)", async () => {
+    const runtime = new ScriptedRuntime(
+      factoryScript({ changeId: ID, summary: "Math helpers", repos: ["app"], tasks: SINGLE_TASKS }),
+    );
+    await cliWith(runtime, fx.root, "run", "Add math helpers");
+    const p = new Pipeline(fx.root, loadConfig(fx.root).config, {
+      runtime,
+      out: () => {},
+      signal: new AbortController().signal,
+    });
+    // A concurrent approve + resume got there first, after this approve read the phase.
+    const update = p.update.bind(p);
+    p.update = async (id, mutate) => {
+      await updateRun(fx.root, id, (d) => {
+        d.phase = "implementing";
+      });
+      return update(id, mutate);
+    };
+    await expect(approve(p, ID)).rejects.toThrow("is past approval (phase implementing)");
+    const run = loadRun(fx.root, ID);
+    expect(run?.phase).toBe("implementing");
+    expect(run?.tasks).toEqual([]);
   });
 
   test("close resumes after a crash, after or before the archive commit (audit P6)", async () => {
