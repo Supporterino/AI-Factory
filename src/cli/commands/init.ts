@@ -10,9 +10,12 @@ import { gitOk } from "../../exec.ts";
 import { graphFile, updateGraph } from "../../graph/graph.ts";
 import { ensureNotNewer, readLock } from "../../lock/lock.ts";
 import type { SyncAction } from "../../managed/sync.ts";
+import { planSync } from "../../managed/sync.ts";
 import { renderOpenspecTools } from "../../openspec/cli.ts";
+import { renderWorkspace } from "../../render/workspace.ts";
 import { checkTools, type ToolName } from "../../tools.ts";
 import { FACTORY_VERSION } from "../../version.ts";
+import { archiveLegacySetups } from "../../workspace/legacy.ts";
 import {
   commitInstall,
   dirtyInstallPaths,
@@ -25,7 +28,7 @@ const OPENSPEC_CONFIG = "openspec/config.yaml";
 
 import { ExitCode } from "../exit-codes.ts";
 
-const HELP = `Usage: ai-factory init [--force] [--allow-downgrade] [--no-commit] [--no-graph] [--json]
+const HELP = `Usage: ai-factory init [--plan] [--force] [--allow-downgrade] [--no-commit] [--no-graph] [--json]
 
 Installs the factory into the workspace: detects repos, languages and contracts, checks
 the tools, runs \`openspec init\` for opencode, renders agents, standards and config,
@@ -34,6 +37,7 @@ and commits the result in the AI repo. Safe to run again: an unchanged workspace
 no diff and no commit.
 
 Options:
+  --plan        Show what would be created, archived or replaced; write nothing
   --force       Overwrite existing files that ai-factory did not create
   --allow-downgrade  Let this (older) version rewrite a workspace a newer one installed
   --no-commit   Leave the changes uncommitted
@@ -63,6 +67,7 @@ export const initCommand: Command = {
       "allow-downgrade": { type: "boolean", default: false },
       "no-commit": { type: "boolean", default: false },
       "no-graph": { type: "boolean", default: false },
+      plan: { type: "boolean", default: false },
       json: { type: "boolean", default: false },
     });
 
@@ -87,7 +92,7 @@ export const initCommand: Command = {
       );
     }
 
-    if (!values["no-commit"]) {
+    if (!values.plan && !values["no-commit"]) {
       const dirty = await dirtyInstallPaths(root, [CONFIG_FILE]);
       if (dirty.length > 0) {
         throw new PreconditionError("uncommitted changes in files that init commits", [
@@ -100,6 +105,15 @@ export const initCommand: Command = {
     const configPath = join(root, CONFIG_FILE);
     const newConfig = !existsSync(configPath);
     const detection = newConfig ? await detectWorkspace(root) : undefined;
+    // Replacing an existing set is reversible: archive agents/commands/skills the factory
+    // takes over before planning, and never touch additions made after the first install.
+    const legacy =
+      !values.plan && readLock(root) === undefined && detection !== undefined
+        ? archiveLegacySetups(
+            root,
+            detection.repos.map((r) => r.path),
+          )
+        : undefined;
     // A team that already uses OpenSpec keeps its config.yaml: the first config lists it as
     // unmanaged, since that hint cannot be followed before a config exists (audit G2).
     const keepOpenspec =
@@ -117,6 +131,34 @@ export const initCommand: Command = {
 
     // OpenSpec's opencode files are rendered aside and managed like the factory's own.
     const openspecFiles = await renderOpenspecTools(root);
+    if (values.plan) {
+      const planned = planSync(
+        root,
+        [...renderWorkspace(config, { root }), ...openspecFiles],
+        readLock(root)?.managed ?? {},
+        { unmanaged: config.unmanaged, force: values.force },
+      );
+      if (values.json) {
+        io.out(
+          JSON.stringify(
+            {
+              root,
+              newConfig,
+              notes: detection?.notes ?? [],
+              plan: planned.map(({ path, action }) => ({ path, action })),
+            },
+            null,
+            2,
+          ),
+        );
+      } else {
+        io.out(`ai-factory ${FACTORY_VERSION} plan for ${root}`);
+        if (newConfig) io.out(`would write ${CONFIG_FILE}`);
+        for (const change of planned)
+          io.out(`${REPORTED[change.action] ?? change.action}: ${change.path}`);
+      }
+      return ExitCode.Ok;
+    }
     // Plan first so a conflict stops init before anything is written.
     planWorkspace(root, config, { force: values.force, tools: openspecFiles });
     if (configText !== undefined) writeFileSync(configPath, configText);
@@ -156,6 +198,11 @@ export const initCommand: Command = {
     io.out(`ai-factory ${FACTORY_VERSION} in ${root}`);
     io.out(`tools: ${tools.map((t) => `${t.tool} ${t.ok ? t.version : "?"}`).join(", ")}`);
     for (const note of detection?.notes ?? []) io.out(`note: ${note}`);
+    if (legacy !== undefined && legacy.archived.length > 0) {
+      io.out(
+        `legacy setup archived under .factory/legacy/${legacy.stamp}/ (${legacy.archived.length} path${legacy.archived.length === 1 ? "" : "s"})`,
+      );
+    }
     if (keepOpenspec)
       io.out(
         `kept your ${OPENSPEC_CONFIG} (listed under "unmanaged"); add the factory's workspace context to it by hand if you want the architect to see it`,

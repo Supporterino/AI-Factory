@@ -42,46 +42,48 @@ flowchart LR
   usage -.-> oc
 ```
 
-| Part             | Where                                                                             | Notes                                                                                                                                                                           |
-| ---------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CLI              | `src/cli/`, one file per command group                                            | Bun/TypeScript, bundled to `dist/cli.js` for `npx`/`bunx`. External input is checked with zod. Child processes go through `src/exec.ts`.                                        |
-| Pipeline         | `src/pipeline/`                                                                   | `drive.ts` is the state machine below. Every phase is idempotent and persisted.                                                                                                 |
-| Scheduler        | `src/scheduler/`, `src/tasks/`                                                    | Parses `tasks.md` (`repo`/`deps`/`touches` metadata) into a DAG. It dispatches up to `maxAgents` sessions and serialises overlapping `touches`.                                 |
-| Gates            | `src/gates/`, `src/profiles/`                                                     | Resolution order: override, then the repo's own script, then the stacked profile defaults. A gate that modifies files fails.                                                    |
-| Git              | `src/git/`                                                                        | Change branches, task worktrees, the per-repo merge queue, provisional pointers, `repoint` and the `pre-push` hook.                                                             |
-| Runtime          | `src/runtime/`                                                                    | One private `opencode serve` per CLI run, with a curated env (only the named providers' credentials). The model is passed per session, and every permission prompt is rejected. |
-| Plugin           | `src/plugin/entry.ts`, rendered as `.opencode/plugins/factory.js`                 | It shares its policy code with the CLI (`src/policy/`, `src/approval/`).                                                                                                        |
-| OpenSpec         | `src/openspec/`                                                                   | Runs `validate --strict --json` and `archive --yes`. Telemetry is off and `XDG_CONFIG_HOME` is private.                                                                         |
-| Graph            | `src/graph/`                                                                      | One graph covers the AI repo and its submodules. Updates are serialised and coalesced after merges, and run with `GRAPHIFY_NO_AUTO_REFRESH=1 GRAPHIFY_BACKEND=none`.            |
-| Install / update | `src/render/`, `src/managed/`, `src/workspace/`, `src/update/`, `src/migrations/` | `factory.lock.json` records each managed file's hash and git blob, which serves as the merge base for `update`.                                                                 |
-| Add-ons          | `src/addons/`                                                                     | Ponytail is vendored at a pinned commit and hash-verified. It is injected only into the implementer and reviewer prompts.                                                       |
-| Doctor           | `src/doctor/`                                                                     | Read-only checks, including the resolved gate table.                                                                                                                            |
+| Part             | Where                                                                             | Notes                                                                                                                                                                                                                                                |
+| ---------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CLI              | `src/cli/`, one file per command group                                            | Bun/TypeScript, bundled to `dist/cli.js` for `npx`/`bunx`. External input is checked with zod. Child processes go through `src/exec.ts`.                                                                                                             |
+| Pipeline         | `src/pipeline/`                                                                   | `drive.ts` is the state machine below. Every phase is idempotent and persisted.                                                                                                                                                                      |
+| Scheduler        | `src/scheduler/`, `src/tasks/`                                                    | Parses `tasks.md` (`repo`/`deps`/`touches` metadata) into a DAG. It dispatches up to `maxAgents` sessions and serialises overlapping `touches`.                                                                                                      |
+| Gates            | `src/gates/`, `src/profiles/`                                                     | Resolution order: override, then the repo's own script, then the stacked profile defaults, then `gates.extra`. A gate that modifies files fails unless it is an opt-in `checkOnly: false` gate; an `outputs` gate fails on generated-artifact drift. |
+| Git              | `src/git/`                                                                        | Change branches, task worktrees, the per-repo merge queue, provisional pointers, `repoint` and the `pre-push` hook.                                                                                                                                  |
+| Runtime          | `src/runtime/`                                                                    | One private `opencode serve` per CLI run, with a curated env (only the named providers' credentials). The model is passed per session, and every permission prompt is rejected.                                                                      |
+| Plugin           | `src/plugin/entry.ts`, rendered as `.opencode/plugins/factory.js`                 | It shares its policy code with the CLI (`src/policy/`, `src/approval/`).                                                                                                                                                                             |
+| OpenSpec         | `src/openspec/`                                                                   | Runs `validate --strict --json` and `archive --yes`. Telemetry is off and `XDG_CONFIG_HOME` is private.                                                                                                                                              |
+| Graph            | `src/graph/`                                                                      | One graph covers the AI repo and its submodules. Updates are serialised and coalesced after merges, and run with `GRAPHIFY_NO_AUTO_REFRESH=1 GRAPHIFY_BACKEND=none`.                                                                                 |
+| Install / update | `src/render/`, `src/managed/`, `src/workspace/`, `src/update/`, `src/migrations/` | `factory.lock.json` records each managed file's hash and git blob, which serves as the merge base for `update`.                                                                                                                                      |
+| Add-ons          | `src/addons/`                                                                     | Ponytail is vendored at a pinned commit and hash-verified. It is injected only into the implementer and reviewer prompts.                                                                                                                            |
+| Doctor           | `src/doctor/`                                                                     | Read-only checks, including the resolved gate table.                                                                                                                                                                                                 |
 
 ### Files in a workspace
 
-| Path                                                       | Committed | Written by                                                                              |
-| ---------------------------------------------------------- | --------- | --------------------------------------------------------------------------------------- |
-| `factory.config.jsonc`                                     | yes       | `init`; you; `detect --apply`; `update` (migrations)                                    |
-| `factory.lock.json`                                        | yes       | `init`, `update`, `detect --apply` only                                                 |
-| `.opencode/` (agents, plugin, standards, schemas, add-ons) | yes       | managed files, including OpenSpec's generated commands and skills                       |
-| `AGENTS.md`, `.gitignore`                                  | yes       | your text plus a managed block between `ai-factory` markers                             |
-| `openspec/changes/<id>/`                                   | yes       | architect (spec), CLI (checkbox mirror, archive)                                        |
-| `.factory/runs/<id>.json`                                  | no        | CLI only: phase, tasks, attempts, history                                               |
-| `.factory/runs/<id>/snapshot/gates.json`                   | no        | `approve`: gate config + profile tables the change keeps                                |
-| `.factory/active.lock`, `.factory/queue.json`              | no        | the one active change and the approval-ordered queue                                    |
-| `.factory/approvals/<id>.json`                             | no        | `approve`: approver, spec commit, spec hash                                             |
-| `.factory/worktrees/<id>/<repo>/<task>/`                   | no        | task worktrees (and `.factory/worktrees/<id>/.opencode/agents`, the snapshotted agents) |
-| `.factory/drafts/<id>/`                                    | no        | AI-repo worktree for a change designed while another one is active                      |
-| `.factory/context/<id>/`                                   | no        | context packs (architect)                                                               |
-| `.factory/sessions/`                                       | no        | one file per agent session: role, scope, worktree; the plugin reads it                  |
-| `.factory/logs/`, `.factory/usage/`, `.factory/reports/`   | no        | redacted tool and gate logs, the token ledger, final and pause reports                  |
-| `.factory/cache/`                                          | no        | shared package stores and build caches for worktree installs                            |
-| `.factory/backups/<ts>/`                                   | no        | `update` backups for `rollback`                                                         |
-| `graphify-out/`                                            | no        | the workspace graph                                                                     |
+| Path                                                       | Committed | Written by                                                                                            |
+| ---------------------------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------- |
+| `factory.config.jsonc`                                     | yes       | `init`; you; `detect --apply`; `update` (migrations)                                                  |
+| `factory.lock.json`                                        | yes       | `init`, `update`, `detect --apply` only                                                               |
+| `.opencode/` (agents, plugin, standards, schemas, add-ons) | yes       | managed files, including OpenSpec's generated commands and skills                                     |
+| `AGENTS.md`, `.gitignore`                                  | yes       | your text plus a managed block between `ai-factory` markers                                           |
+| `openspec/changes/<id>/`                                   | yes       | architect (spec), CLI (checkbox mirror, archive)                                                      |
+| `.factory/runs/<id>.json`                                  | no        | CLI only: phase, tasks, attempts, history                                                             |
+| `.factory/runs/<id>/snapshot/gates.json`                   | no        | `approve`: gate config + profile tables the change keeps                                              |
+| `.factory/active.lock`, `.factory/queue.json`              | no        | the one active change and the approval-ordered queue                                                  |
+| `.factory/approvals/<id>.json`                             | no        | `approve`: approver, spec commit, spec hash                                                           |
+| `.factory/worktrees/<id>/<repo>/<task>/`                   | no        | task worktrees (and `.factory/worktrees/<id>/.opencode/{agents,skills}`, the snapshotted definitions) |
+| `.factory/drafts/<id>/`                                    | no        | AI-repo worktree for a change designed while another one is active                                    |
+| `.factory/context/<id>/`                                   | no        | context packs (architect)                                                                             |
+| `.factory/sessions/`                                       | no        | one file per agent session: role, scope, worktree; the plugin reads it                                |
+| `.factory/logs/`, `.factory/usage/`, `.factory/reports/`   | no        | redacted tool and gate logs, the token ledger, final and pause reports                                |
+| `.factory/cache/`                                          | no        | shared package stores and build caches for worktree installs                                          |
+| `.factory/backups/<ts>/`                                   | no        | `update` backups for `rollback`                                                                       |
+| `graphify-out/`                                            | no        | the workspace graph                                                                                   |
 
 ## Pipeline state machine
 
 The phase lives in `.factory/runs/<id>.json`. `resume` re-enters at the recorded phase. Pauses (gate budget exhausted, a blocked task, design not converging, an interrupt) keep everything on disk.
+
+`refine` and `run --interactive` are a pre-intake clarification step: they ask the user a few questions and turn the answers into a request file, then the normal intake→design flow starts. `quick` is a separate, deliberately small path: a `task/<slug>` branch, one implementer session, the task gates, one reviewer pass, and one local commit. It does not create a run state, approval or OpenSpec change.
 
 ```mermaid
 stateDiagram-v2
@@ -209,8 +211,9 @@ The worktree metadata lives in `.git/modules/repos/backend/worktrees/`. Dependen
 ## Agents and the runtime
 
 - **Roles and models.** Each role gets its model from `models` in the config. The CLI passes the model on every session, because opencode ignores the agent frontmatter `model`. Strong models plan and review, and faster ones implement.
-- **Implementers.** There is one implementer per repo (`implementer-<repo>`), with the repo's language standards stacked into its prompt. The tester works only on test paths.
-- **Read-only roles.** The orchestrator, explorer, reviewer and contract-reviewer only read. The architect edits only the change folder and its context folder.
+- **Implementers.** There is one implementer per repo (`implementer-<repo>`), with the repo's language standards stacked into its prompt. `routing[]` can hand a task whose `touches` match a path to a configured custom implementer; its `edits` become the agent's permission scope and the normal scope audit still applies. The tester works only on test paths.
+- **Context.** `instructions.workspace` and `instructions.repos.<repo>` are rendered into `.opencode/opencode.jsonc` and named in the agent prompts. `skills.roles` and `skills.repos` name the skills an agent loads first and enable the skill tool; `mcp.roles` allows named MCP tool patterns (otherwise headless `ask` is rejected).
+- **Read-only roles.** The orchestrator, explorer, reviewer and contract-reviewer only read. Reviewers may have read-only web/MCP access when configured. The architect edits only the change folder and its context folder.
 - **Sessions.** Every agent call is a fresh session in a known directory: a task worktree, a repo checkout or the root. The CLI writes a session context file first; the plugin refuses any factory agent that has none.
 - **Handoffs.** Agents end with a JSON handoff that is validated against `.opencode/schemas/handoff.schema.json`. An invalid handoff gets one repair turn.
 - **Token use.** Prompts put stable text first so it can be cached. Context packs are capped at `contextPackMaxTokens`, and gate output is compacted. Usage per agent, task and change is reported in `status` and in the final report, and never enforced.

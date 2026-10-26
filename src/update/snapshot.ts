@@ -31,15 +31,23 @@ export function snapshotDefinitions(
   /** Approval replaces an older snapshot; activation only fills a missing one. */
   replace = false,
 ): void {
+  const snapshotRoot = join(root, ".factory", "worktrees", id, ".opencode");
   const agents = join(root, ".opencode", "agents");
-  const target = join(root, ".factory", "worktrees", id, ".opencode", "agents");
+  const target = join(snapshotRoot, "agents");
+  const skills = join(root, ".opencode", "skills");
+  const skillTarget = join(snapshotRoot, "skills");
   if (replace) {
-    rmSync(target, { recursive: true, force: true });
+    rmSync(snapshotRoot, { recursive: true, force: true });
     rmSync(gateFile(root, id), { force: true });
   }
   if (existsSync(agents) && !existsSync(target)) {
     mkdirSync(target, { recursive: true });
     cpSync(agents, target, { recursive: true });
+  }
+  // The skills the change was approved with, including project skills it imports.
+  if (existsSync(skills) && !existsSync(skillTarget)) {
+    mkdirSync(skillTarget, { recursive: true });
+    cpSync(skills, skillTarget, { recursive: true });
   }
   if (!existsSync(gateFile(root, id))) {
     const tables = Object.fromEntries(

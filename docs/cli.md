@@ -22,27 +22,28 @@ The source of truth is `src/cli/exit-codes.ts`; numbers are never reused.
 ## init
 
 ```
-ai-factory init [--force] [--allow-downgrade] [--no-commit] [--no-graph] [--json]
+ai-factory init [--plan] [--force] [--allow-downgrade] [--no-commit] [--no-graph] [--json]
 ```
 
-Installs or refreshes the factory. It runs these steps in order:
+Installs or refreshes the factory. `--plan` prints what would be created, replaced or archived and writes nothing. It runs these steps in order:
 1. Checks git, opencode, openspec and graphify against the pinned ranges. A missing or unsupported tool exits with 4 and prints its install command.
-2. Detects the workspace and writes `factory.config.jsonc` if there is none.
-3. Renders the managed files:
+2. Detects the workspace, existing `opencode.json` instructions and generated contracts, and writes `factory.config.jsonc` if there is none.
+3. On the first install, archives replaced custom agents, commands and skills under `.factory/legacy/<timestamp>/`; OpenSpec's `opsx-*`/`openspec-*` files stay.
+4. Renders the managed files:
    - agents, standards and schemas;
    - the `AGENTS.md` and `.gitignore` blocks and `.graphifyignore`;
    - the OpenSpec `config.yaml`;
    - OpenSpec's opencode commands and skills, which `openspec init --tools opencode` generates in a scratch directory. Your edits to them are kept like edits to any managed file.
-4. Writes `factory.lock.json`.
-5. Installs `pre-push` hooks in the AI repo and every checked-out submodule.
-6. Commits the result.
+5. Writes `factory.lock.json`.
+6. Installs `pre-push` hooks in the AI repo and every checked-out submodule.
+7. Commits the result.
 
 Running it again on an unchanged workspace changes nothing.
 
 How it treats files that already exist:
 - A file you edited is kept; `ai-factory update` merges it.
 - A file you deleted is not recreated.
-- A file the factory never created stops `init` before anything is written. `--force` overwrites it, or you can list it under `unmanaged`.
+- A file the factory never created stops `init` before anything is written. `--force` overwrites it, or you can list it under `unmanaged`. Custom agents, commands and skills in the paths the factory takes over are archived under `.factory/legacy/<timestamp>/` on the first install instead of colliding.
 - An existing `openspec/config.yaml` (a team already using OpenSpec) is kept: the first config lists it under `unmanaged`. Add the factory's workspace context to it by hand if the architect should see it.
 
 Tool binaries can be overridden with `AI_FACTORY_<TOOL>_BIN`, e.g. `AI_FACTORY_OPENSPEC_BIN`.
@@ -169,13 +170,35 @@ ai-factory abort <change-id>
 
 Stops the change safely: the driver finishes in-flight merges and interrupts agents. Branches and worktrees are kept, the active-change lock is released, and the change is removed from the queue. The next queued change is not started automatically.
 
+## refine
+
+```
+ai-factory refine "<request>"
+```
+
+Asks a few scope, out-of-scope, verification and constraint questions, then writes a
+refined request to `.factory/requests/<slug>.md`. Nothing is designed or implemented.
+Feed it to `run --request`, or use `run --interactive` to refine in the same command.
+
+## quick
+
+```
+ai-factory quick "<task>" [--repo <name>] [--agent <id>] [--no-review]
+```
+
+The no-OpenSpec path. Creates a `task/<slug>` branch (prefix from
+`workflow.quick.branchPrefix`), implements, runs the repository gates, runs one review pass
+and makes one local commit. It still applies the factory's edit scope, secret rules and
+gates; only the spec and approval hash are skipped. The branch stays checked out.
+
 ## run
 
 ```
-ai-factory run "<request>"
+ai-factory run "<request>" [--request <file>] [--interactive]
 ```
 
-Starts a change and runs it up to spec approval:
+Starts a change and runs it up to spec approval. `--request` reads the request from a file
+(for example one written by `refine`); `--interactive` asks the refinement questions first.
 1. Intake by the orchestrator: change id, summary and likely repos.
 2. `change/<id>` in the AI repo, created before design.
 3. Explorers per likely repo, in parallel.

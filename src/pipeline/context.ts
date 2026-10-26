@@ -5,7 +5,13 @@ import { appendLog } from "../logs/log.ts";
 import type { AgentRole } from "../policy/permissions.ts";
 import { promptForHandoff } from "../runtime/handoff.ts";
 import { limited, RateLimiter } from "../runtime/rate-limit.ts";
-import { type AgentRuntime, addUsage, type SessionSpec, type Usage } from "../runtime/types.ts";
+import {
+  type AgentRuntime,
+  type AgentSession,
+  addUsage,
+  type SessionSpec,
+  type Usage,
+} from "../runtime/types.ts";
 import { loadRun, type RunState, updateRun } from "../state/run.ts";
 import { recordUsage, type UsageEntry } from "../usage/usage.ts";
 import { Semaphore } from "../util/semaphore.ts";
@@ -124,14 +130,33 @@ export class Pipeline {
   }
 
   async #call(call: AgentCall, signal: AbortSignal): Promise<AgentResult> {
-    const model = modelFor(this.config, call.modelRole);
-    const provider = model.split("/")[0] ?? model;
-    const raw = await this.deps.runtime.open({
+    const first = modelFor(this.config, call.modelRole, {
+      ...(call.context.repo === undefined ? {} : { repo: call.context.repo }),
       agent: call.agent,
-      model,
-      title: call.title,
-      context: { ...call.context, changeId: call.changeId, role: call.role },
     });
+    let model = first;
+    let raw: AgentSession | undefined;
+    let lastError: unknown;
+    for (const candidate of [first, ...this.config.models.fallback]) {
+      try {
+        raw = await this.deps.runtime.open({
+          agent: call.agent,
+          model: candidate,
+          title: call.title,
+          context: { ...call.context, changeId: call.changeId, role: call.role },
+        });
+        model = candidate;
+        break;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    if (raw === undefined) {
+      throw lastError instanceof Error
+        ? lastError
+        : new Error(`could not open a session for ${call.agent}`);
+    }
+    const provider = model.split("/")[0] ?? model;
     const session = limited(raw, this.limiter, provider);
     let turn = await promptForHandoff(session, call.prompt, signal);
     let usage = turn.usage;

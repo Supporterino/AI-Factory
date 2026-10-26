@@ -11,6 +11,8 @@ import { gateCommand } from "./commands/gate.ts";
 import { graphCommand } from "./commands/graph.ts";
 import { initCommand } from "./commands/init.ts";
 import { approveCommand, resumeCommand, runCommand } from "./commands/pipeline-commands.ts";
+import { quickCommand } from "./commands/quick.ts";
+import { refineCommand } from "./commands/refine.ts";
 import { repointCommand } from "./commands/repoint.ts";
 import { abortCommand, retryCommand, statusCommand } from "./commands/state-commands.ts";
 import { rollbackCommand, updateCommand } from "./commands/update.ts";
@@ -22,7 +24,9 @@ export const COMMANDS: readonly Command[] = [
   rollbackCommand,
   doctorCommand,
   detectCommand,
+  refineCommand,
   runCommand,
+  quickCommand,
   approveCommand,
   resumeCommand,
   statusCommand,
@@ -66,6 +70,17 @@ export async function askYesNo(question: string): Promise<boolean> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     return /^y(es)?$/i.test((await rl.question(`${question} [y/N] `)).trim());
+  } finally {
+    rl.close();
+  }
+}
+
+export async function askText(question: string, initial?: string): Promise<string | undefined> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const suffix = initial === undefined || initial === "" ? "" : ` (${initial})`;
+    const answer = (await rl.question(`${question}${suffix}: `)).trim();
+    return answer === "" ? initial : answer;
   } finally {
     rl.close();
   }

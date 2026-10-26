@@ -192,8 +192,8 @@ describe("ai-factory gate (submodules)", () => {
   async function setOverrides(repo: string, overrides: Record<string, string>): Promise<void> {
     const file = join(fx.root, "factory.config.jsonc");
     const text = readFileSync(file, "utf8").replace(
-      /"overrides": \{.*\}\n/,
-      `"overrides": ${JSON.stringify({ [repo]: overrides })}\n`,
+      /"overrides": \{[^\n]*\}/,
+      `"overrides": ${JSON.stringify({ [repo]: overrides })}`,
     );
     writeFileSync(file, text);
   }

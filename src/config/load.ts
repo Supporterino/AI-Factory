@@ -54,10 +54,18 @@ export function parseConfigText(text: string, file: string): FactoryConfig {
     throw new ConfigError(`${file} is not valid JSONC`, errors);
   }
   const version = (value as { schemaVersion?: unknown } | undefined)?.schemaVersion;
-  if (typeof version === "number" && version < CONFIG_SCHEMA_VERSION) {
+  // v2 is readable because every new v3 field has a default. v1 still needs `update`,
+  // which migrates it before any command parses the file.
+  if (typeof version === "number" && version < 2) {
     throw new ConfigError(
       `${file} uses config schemaVersion ${version}; this factory needs ${CONFIG_SCHEMA_VERSION}`,
       ["run `ai-factory update` to migrate it"],
+    );
+  }
+  if (typeof version === "number" && version > CONFIG_SCHEMA_VERSION) {
+    throw new ConfigError(
+      `${file} uses config schemaVersion ${version}, newer than this factory (${CONFIG_SCHEMA_VERSION})`,
+      ["install a newer ai-factory"],
     );
   }
   const parsed = FactoryConfig.safeParse(value);

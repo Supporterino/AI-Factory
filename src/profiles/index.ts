@@ -3,6 +3,7 @@ import helm from "../../templates/standards/helm.md" with { type: "text" };
 import python from "../../templates/standards/python.md" with { type: "text" };
 import react from "../../templates/standards/react.md" with { type: "text" };
 import rust from "../../templates/standards/rust.md" with { type: "text" };
+import swift from "../../templates/standards/swift.md" with { type: "text" };
 import tauri from "../../templates/standards/tauri.md" with { type: "text" };
 import typescript from "../../templates/standards/typescript.md" with { type: "text" };
 import type { GateType, Language } from "../config/schema.ts";
@@ -223,6 +224,24 @@ export const PROFILES: Readonly<Record<Language, Profile>> = {
       testAffected: [{ command: "go test -race {packages}" }],
     },
     install: [{ lockfile: "go.sum", command: "go mod download" }],
+  },
+  swift: {
+    id: "swift",
+    title: "Swift",
+    prose: swift,
+    testGlobs: ["*Tests.swift", "*/Tests/*", "Tests/*"],
+    markers: ["Package.swift"],
+    targets: "dir",
+    extensions: [".swift"],
+    binDirs: [],
+    gates: {
+      format: [{ command: "swiftformat --lint .", scoped: "swiftformat --lint {files}" }],
+      lint: [{ command: "swiftlint lint", scoped: "swiftlint lint --path {files}" }],
+      types: [{ command: "swift build" }],
+      test: [{ command: "swift test" }],
+      testAffected: [{ command: "swift test" }],
+    },
+    install: [{ lockfile: "Package.resolved", command: "swift package resolve" }],
   },
   rust: {
     id: "rust",

@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { allInstructionPaths } from "../config/instructions.ts";
 import { gitOk } from "../exec.ts";
 import { branchAiRepo } from "../git/branching.ts";
 import { CHANGE_ID, changeBranch, currentBranch, refExists, revParse } from "../git/repo.ts";
@@ -185,6 +186,7 @@ export async function design(p: Pipeline, id: string): Promise<{ ok: boolean; is
       explorations,
       repos: p.codeRepos(),
       contracts: p.config.contracts,
+      instructions: allInstructionPaths(p.config),
     }),
     retry: async (_handoff, attempt) => {
       if (attempt > p.config.gates.maxRetries) return undefined;

@@ -18,12 +18,35 @@ const TYPE_BY_VERB: ReadonlyArray<readonly [RegExp, string]> = [
   [/^(speed up|optimi[sz]e|cache)\b/i, "perf"],
 ];
 
+const GITMOJI: Readonly<Record<string, string>> = {
+  feat: "✨",
+  fix: "🐛",
+  test: "✅",
+  refactor: "♻️",
+  docs: "📝",
+  chore: "🔧",
+  perf: "⚡️",
+  ci: "👷",
+  build: "🔧",
+};
+
+export interface CommitStyle {
+  readonly style?: "conventional" | "gitmoji";
+  readonly scope?: string;
+}
+
 /** "Add health endpoint" → "feat: add health endpoint". `type` overrides the verb mapping. */
-export function conventionalSubject(title: string, type?: string): string {
+export function conventionalSubject(
+  title: string,
+  type?: string,
+  options: CommitStyle = {},
+): string {
   const clean = title.trim().replace(/\s+/g, " ").replace(/\.$/, "");
   const kind = type ?? TYPE_BY_VERB.find(([re]) => re.test(clean))?.[1] ?? "feat";
   const lowered = clean.charAt(0).toLowerCase() + clean.slice(1);
-  return `${kind}: ${lowered}`;
+  const scope = options.scope === undefined ? "" : `(${options.scope})`;
+  const emoji = options.style === "gitmoji" ? `${GITMOJI[kind] ?? "🔧"} ` : "";
+  return `${kind}${scope}: ${emoji}${lowered}`;
 }
 
 export interface Trailers {
@@ -85,6 +108,10 @@ export function commitTask(
   task: string,
   title: string,
   type?: string,
+  style: CommitStyle = {},
 ): Promise<string | undefined> {
-  return commitAll(worktree, conventionalSubject(title, type), { "Change-Id": id, Task: task });
+  return commitAll(worktree, conventionalSubject(title, type, style), {
+    "Change-Id": id,
+    Task: task,
+  });
 }

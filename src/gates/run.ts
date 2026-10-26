@@ -6,6 +6,7 @@ import { dependentFiles } from "../graph/graph.ts";
 import { redactProcess } from "../logs/redact.ts";
 import { checkoutPolicy, sandboxArgv, sandboxEnabled, seatbeltProfile } from "../policy/sandbox.ts";
 import { agentProcessEnv } from "../runtime/credentials.ts";
+import { opencodeGlobRegExp } from "../tasks/glob.ts";
 import { changedFiles } from "./affected.ts";
 import { compactOutput } from "./compact.ts";
 import { changedSince, restore, snapshot } from "./guard.ts";
@@ -17,6 +18,8 @@ export type GateStatus = "pass" | "fail" | "missing" | "skipped" | "not-check-on
 
 export interface GateResult {
   readonly type: GateType;
+  /** Extra/generated gate id, when the gate has one. */
+  readonly name?: string;
   readonly status: GateStatus;
   readonly cwd: string;
   readonly command?: string;
@@ -73,9 +76,14 @@ async function runOne(input: RunGatesInput, gate: ResolvedGate): Promise<GateRes
     ...agentProcessEnv(),
     ...cacheEnv(input.root, input.repo.name),
     ...QUIET_ENV,
+    ...(gate.env ?? {}),
     PATH: [...bins, process.env.PATH ?? ""].join(delimiter),
   };
-  const argv = ["sh", "-c", gate.command];
+  const argv = [
+    "sh",
+    "-c",
+    gate.setup === undefined ? gate.command : `set -e\n${gate.setup}\n${gate.command}`,
+  ];
   const res = await exec(
     sandboxEnabled(input.config.security.sandbox)
       ? sandboxArgv(
@@ -89,11 +97,12 @@ async function runOne(input: RunGatesInput, gate: ResolvedGate): Promise<GateRes
       cwd: join(input.worktree, gate.cwd),
       env,
       replaceEnv: true,
-      timeoutMs: input.timeoutMs ?? 15 * 60_000,
+      timeoutMs: gate.timeoutMs ?? input.timeoutMs ?? 15 * 60_000,
     },
   );
   const base = {
     type: gate.type,
+    ...(gate.name === undefined ? {} : { name: gate.name }),
     cwd: gate.cwd,
     command: gate.command,
     source: gate.source,
@@ -101,9 +110,48 @@ async function runOne(input: RunGatesInput, gate: ResolvedGate): Promise<GateRes
     durationMs: res.durationMs,
   };
   const max = input.config.tokens.gateOutputMaxLines;
+  const raw = `${res.stdout}\n${res.stderr}`;
+  const output = redactProcess(compactOutput(raw, max));
 
   const modified = await changedSince(before);
-  if (modified.length > 0) {
+  const outputs = gate.outputs ?? [];
+  if (outputs.length > 0) {
+    const drifted = modified.filter((path) =>
+      outputs.some((glob) => opencodeGlobRegExp(glob).test(path)),
+    );
+    if (modified.length > 0) await restore(before, modified);
+    if (res.timedOut)
+      return { ...base, status: "timeout", output: `gate timed out: \`${gate.command}\`` };
+    if (res.code !== 0)
+      return { ...base, status: "fail", output: output || `gate failed: \`${gate.command}\`` };
+    if (modified.includes("HEAD")) {
+      return {
+        ...base,
+        status: "fail",
+        output: `generated gate moved HEAD: \`${gate.command}\` must not commit (restored)`,
+      };
+    }
+    const extraWrites = modified.filter((path) => !drifted.includes(path));
+    if (extraWrites.length > 0) {
+      return {
+        ...base,
+        status: "fail",
+        modified: extraWrites,
+        output: `generated gate wrote outside its outputs: ${extraWrites.join(", ")} (restored)`,
+      };
+    }
+    if (drifted.length > 0) {
+      return {
+        ...base,
+        status: "fail",
+        modified: drifted,
+        output: `generated artifacts are stale: ${drifted.join(", ")} (regenerate and commit them)`,
+      };
+    }
+    return { ...base, status: "pass", output: "" };
+  }
+
+  if (modified.length > 0 && gate.checkOnly !== false) {
     await restore(before, modified);
     return {
       ...base,
@@ -114,12 +162,11 @@ async function runOne(input: RunGatesInput, gate: ResolvedGate): Promise<GateRes
   }
   if (res.timedOut)
     return { ...base, status: "timeout", output: `gate timed out: \`${gate.command}\`` };
-  const raw = `${res.stdout}\n${res.stderr}`;
   return {
     ...base,
     status: res.code === 0 ? "pass" : "fail",
     // Gate output reaches prompts, run state and reports: redacted like the logs (audit S16).
-    output: res.code === 0 ? "" : redactProcess(compactOutput(raw, max)),
+    output: res.code === 0 ? "" : output,
   };
 }
 

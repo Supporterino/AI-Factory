@@ -19,11 +19,12 @@ function print(io: Io, report: DoctorReport): void {
   }
   if (report.gates.length > 0) {
     io.out("gate table (full mode; per task, scoped commands and affected tests are used)");
-    const width = Math.max(...report.gates.map((g) => `${g.repo} ${g.type}`.length));
+    const label = (g: (typeof report.gates)[number]): string => `${g.repo} ${g.name ?? g.type}`;
+    const width = Math.max(...report.gates.map((g) => label(g).length));
     for (const g of report.gates) {
       const where = g.cwd === "." ? "" : ` [${g.cwd}]`;
       const what = g.command ? `${g.command}  (${g.source})` : (g.problem ?? "");
-      io.out(`  ${`${g.repo} ${g.type}`.padEnd(width)}${where}  ${what}`);
+      io.out(`  ${label(g).padEnd(width)}${where}  ${what}`);
     }
   }
   const fails = report.checks.filter((c) => c.status === "fail").length;

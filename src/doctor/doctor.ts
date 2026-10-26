@@ -1,9 +1,16 @@
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, extname, join } from "node:path";
+import { allInstructionPaths } from "../config/instructions.ts";
+
 import { parseJsonc } from "../config/jsonc.ts";
 import { loadConfig } from "../config/load.ts";
-import type { FactoryConfig, GateType, RepoConfig } from "../config/schema.ts";
+import {
+  type FactoryConfig,
+  type GateType,
+  modelEntries,
+  type RepoConfig,
+} from "../config/schema.ts";
 import { FactoryError } from "../errors.ts";
 import { exec, git } from "../exec.ts";
 import { type ResolvedGate, resolveGates } from "../gates/resolve.ts";
@@ -42,6 +49,7 @@ export interface Check {
 export interface GateRow {
   readonly repo: string;
   readonly type: GateType;
+  readonly name?: string;
   readonly cwd: string;
   readonly command?: string;
   readonly source?: ResolvedGate["source"];
@@ -337,6 +345,44 @@ async function checkRepos(
   return ready;
 }
 
+function packageScript(dir: string, name: string): string | undefined {
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as {
+      scripts?: Record<string, unknown>;
+    };
+    const value = pkg.scripts?.[name];
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const WRITE_FLAG = /(^|\s)(--write|--fix|--apply|-w)(\s|$)/;
+
+function checkWriteModeScripts(
+  c: Checks,
+  root: string,
+  config: FactoryConfig,
+  repos: readonly RepoConfig[],
+): void {
+  c.in("gates");
+  for (const repo of repos.filter((r) => r.role === "code")) {
+    const dir = join(root, repo.path);
+    for (const [type, name] of Object.entries(config.gates.scripts)) {
+      if (typeof name !== "string") continue;
+      const script = packageScript(dir, name);
+      if (script !== undefined && WRITE_FLAG.test(script)) {
+        c.add(
+          "warn",
+          `${repo.name} ${type} script`,
+          `\`${name}\` writes files: ${script}`,
+          `point gates.scripts.${type} at a check-only variant, or set gates.overrides.${repo.name}.${type}`,
+        );
+      }
+    }
+  }
+}
+
 function checkGates(
   c: Checks,
   root: string,
@@ -362,6 +408,7 @@ function checkGates(
       rows.push({
         repo: repo.name,
         type: g.type,
+        ...(g.name === undefined ? {} : { name: g.name }),
         cwd: g.cwd,
         command: g.command,
         source: g.source,
@@ -427,6 +474,85 @@ function looseTsconfig(dir: string, gates: readonly ResolvedGate[]): string | un
   return tsconfig.compilerOptions?.strict === true ? undefined : rel;
 }
 
+function checkContext(c: Checks, root: string, config: FactoryConfig): void {
+  c.in("context");
+  const paths = allInstructionPaths(config);
+  const missing = paths.filter((p) => !existsSync(join(root, p)));
+  if (missing.length > 0)
+    c.add(
+      "warn",
+      "instructions",
+      `missing: ${missing.join(", ")}`,
+      "create the files or remove them from instructions",
+    );
+  else c.add("ok", "instructions", `${paths.length} path(s) injected into sessions`);
+
+  const names = [
+    ...Object.values(config.skills.roles).flat(),
+    ...Object.values(config.skills.repos).flat(),
+  ];
+  if (names.length > 0) {
+    const found = new Set<string>();
+    for (const source of config.skills.sources) {
+      const dir = join(root, source);
+      if (!existsSync(dir)) continue;
+      try {
+        for (const name of readdirSync(dir)) {
+          const skill = join(dir, name, "SKILL.md");
+          if (existsSync(skill)) found.add(name);
+        }
+      } catch {
+        // A source that is a file, not a directory, is reported by the missing check below.
+      }
+    }
+    const unknown = [...new Set(names)].filter((n) => !found.has(n));
+    if (unknown.length > 0)
+      c.add(
+        "warn",
+        "skills",
+        `not found in ${config.skills.sources.join(", ")}: ${unknown.join(", ")}`,
+        "add the skill under .opencode/skills/ or remove it from skills.roles",
+      );
+    else c.add("ok", "skills", `${new Set(names).size} skill(s) configured`);
+  }
+  const legacy = join(root, ".factory", "legacy");
+  if (existsSync(legacy)) {
+    const stamps = readdirSync(legacy).sort();
+    c.add("ok", "legacy setup", `${stamps.length} archived set(s) under .factory/legacy/`);
+  }
+}
+
+function checkRelease(c: Checks, root: string, config: FactoryConfig): void {
+  c.in("release");
+  if (!config.release.detect) {
+    c.add("ok", "release", "detection disabled");
+    return;
+  }
+  const found: string[] = [];
+  for (const file of [
+    ".release-please-config.json",
+    ".goreleaser.yaml",
+    ".goreleaser.yml",
+    ".changeset/config.json",
+    ".github/workflows",
+    ".gitlab-ci.yml",
+  ]) {
+    if (existsSync(join(root, file))) found.push(file);
+  }
+  for (const repo of config.repos.filter((r) => r.path !== ".")) {
+    for (const file of ["release-please-config.json", ".goreleaser.yaml", ".gitlab-ci.yml"]) {
+      if (existsSync(join(root, repo.path, file))) found.push(`${repo.path}/${file}`);
+    }
+  }
+  if (found.length === 0) c.add("ok", "release", "no release tooling detected");
+  else
+    c.add(
+      "ok",
+      "release",
+      `detected ${found.join(", ")}; commits stay local and the factory does not edit release workflows`,
+    );
+}
+
 function checkCaches(c: Checks, root: string): void {
   c.in("caches");
   const factory = join(root, ".factory");
@@ -443,9 +569,7 @@ function checkCaches(c: Checks, root: string): void {
 
 async function checkModels(c: Checks, root: string, config: FactoryConfig): Promise<void> {
   c.in("models");
-  const configured = Object.entries(config.models).filter(
-    (e): e is [string, string] => typeof e[1] === "string",
-  );
+  const configured = modelEntries(config);
   // Same curated environment as the server the pipeline starts (credentials of named
   // providers only), with a throwaway database so doctor stays read-only.
   const tmp = mkdtempSync(join(tmpdir(), "ai-factory-doctor-"));
@@ -477,7 +601,7 @@ async function checkModels(c: Checks, root: string, config: FactoryConfig): Prom
         "fail",
         role,
         `${model} is not available to opencode`,
-        `set the provider's credentials (env or \`opencode auth login\`) or change models.${role}`,
+        `set the provider's credentials (env or \`opencode auth login\`) or change the model in factory.config.jsonc`,
       );
   }
 }
@@ -649,7 +773,10 @@ export async function runDoctor(root: string): Promise<DoctorReport> {
   checkEnvironment(c, process.env);
   checkManaged(c, root, config);
   const repos = await checkRepos(c, root, config, uninitialised);
+  checkWriteModeScripts(c, root, config, repos);
   const gates = checkGates(c, root, config, repos);
+  checkContext(c, root, config);
+  checkRelease(c, root, config);
   checkCaches(c, root);
   await checkModels(c, root, config);
   await checkGraph(c, root, config, lock);

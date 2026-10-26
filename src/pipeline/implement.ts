@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { checkApprovalHash } from "../approval/approval.ts";
+import { instructionPaths } from "../config/instructions.ts";
 import { type FactoryConfig, repoLanguages } from "../config/schema.ts";
 import { PreconditionError } from "../errors.ts";
 import { git, gitOk } from "../exec.ts";
@@ -38,6 +39,7 @@ import {
 } from "../scheduler/scheduler.ts";
 import { claimActive, enqueue, removeFromQueue } from "../state/active.ts";
 import { loadRun, type TaskState } from "../state/run.ts";
+import { agentForTask } from "../tasks/routing.ts";
 import { type GateSnapshot, loadGateSnapshot, snapshotDefinitions } from "../update/snapshot.ts";
 import { capText } from "../util/cap.ts";
 import { fence } from "../util/fence.ts";
@@ -396,6 +398,7 @@ export class PipelineTaskRunner implements TaskRunner {
           spec: cappedSpec(this.p, this.id),
           testGlobs: this.#context(task, dir).testGlobs ?? [],
           gates,
+          instructions: instructionPaths(this.p.config, task.repo),
         })
       : taskPrompt({
           task,
@@ -405,9 +408,10 @@ export class PipelineTaskRunner implements TaskRunner {
         });
 
     const headBefore = (await gitOk(["rev-parse", "HEAD"], { cwd: dir })).trim();
+    const routed = agentForTask(this.p.config, task.repo, task.touches);
     const res = await this.p.call({
       changeId: this.id,
-      agent: isTest ? "tester" : `implementer-${task.repo}`,
+      agent: isTest ? "tester" : routed.agent,
       role: isTest ? "tester" : "implementer",
       modelRole: isTest ? "tester" : "implementer",
       context: this.#context(task, dir),
@@ -459,7 +463,7 @@ export class PipelineTaskRunner implements TaskRunner {
     if (!report.passed) {
       const output = report.results
         .filter((r) => r.status !== "pass" && r.status !== "skipped")
-        .map((r) => `[${r.type}] ${r.command ?? ""}\n${r.output}`)
+        .map((r) => `[${r.name ?? r.type}] ${r.command ?? ""}\n${r.output}`)
         .join("\n\n");
       return {
         status: "gate-failed",
@@ -469,7 +473,10 @@ export class PipelineTaskRunner implements TaskRunner {
     }
     // Follow-up kinds have a fixed commit type; spec tasks derive it from the title.
     const type = task.kind === "test" ? "test" : task.kind === "task" ? undefined : "fix";
-    const commit = await commitTask(dir, this.id, task.id, task.title, type);
+    const commit = await commitTask(dir, this.id, task.id, task.title, type, {
+      style: this.p.config.commits.style,
+      ...(this.p.config.commits.scopes ? { scope: task.repo } : {}),
+    });
     return { status: "passed", ...(commit ? { commit } : {}) };
   }
 
@@ -515,16 +522,17 @@ export class PipelineTaskRunner implements TaskRunner {
     const output =
       report?.results
         .filter((r) => r.status !== "pass" && r.status !== "skipped")
-        .map((r) => `[${r.type}] ${r.output}`)
+        .map((r) => `[${r.name ?? r.type}] ${r.output}`)
         .join("\n\n") ?? "gates failed after the rebase";
     return { status: "gates-failed", output };
   }
 
   async resolveConflict(task: TaskState, conflicts: readonly string[]): Promise<boolean> {
     const path = worktreePath(this.p.root, this.id, task.repo, task.id);
+    const routed = agentForTask(this.p.config, task.repo, task.touches);
     const res = await this.p.call({
       changeId: this.id,
-      agent: `implementer-${task.repo}`,
+      agent: routed.agent,
       role: "implementer",
       modelRole: "implementer",
       context: { ...this.#context(task, path), touches: ["**"] },
