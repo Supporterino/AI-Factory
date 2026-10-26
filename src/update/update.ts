@@ -18,6 +18,7 @@ import { graphStatus } from "../graph/graph.ts";
 import { LOCK_FILE, type Lock, readLock } from "../lock/lock.ts";
 import type { PlannedChange } from "../managed/sync.ts";
 import { migrateConfigText } from "../migrations/index.ts";
+import type { ManagedFile } from "../render/workspace.ts";
 import { readActive, readQueue } from "../state/active.ts";
 import { factoryDir, writeJsonAtomic } from "../state/files.ts";
 import { listRuns } from "../state/run.ts";
@@ -76,6 +77,8 @@ export interface UpdatePlan {
 export interface PlanOptions {
   readonly tools?: boolean;
   readonly restore?: boolean;
+  /** OpenSpec's regenerated opencode files (with `--tools`). */
+  readonly toolFiles?: readonly ManagedFile[];
 }
 
 export async function planUpdate(
@@ -88,6 +91,7 @@ export async function planUpdate(
   const config = parseConfigText(migration.text, CONFIG_FILE);
   const plan = planWorkspace(root, config, {
     ...(options.restore ? { restore: true } : {}),
+    ...(options.toolFiles !== undefined ? { tools: options.toolFiles } : {}),
     merge: true,
   });
   const changes = plan.filter((c) => WRITES.has(c.action));
@@ -142,7 +146,9 @@ export function formatPlan(plan: UpdatePlan): string[] {
     ...(plan.changes.length > 0
       ? plan.changes.map((c) => `  ${label[c.action] ?? c.action}: ${c.path}`)
       : ["managed files: up to date"]),
-    ...(plan.openspecRefresh ? ["tools: refresh OpenSpec's opencode files (openspec init)"] : []),
+    ...(plan.openspecRefresh
+      ? ["tools: OpenSpec's opencode files regenerated and merged like the factory's own"]
+      : []),
     ...(plan.graphRebuild
       ? ["tools: the graph format changed; rebuild the graph (graph --full)"]
       : []),

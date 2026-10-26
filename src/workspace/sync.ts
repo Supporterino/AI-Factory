@@ -6,9 +6,17 @@ import { PreconditionError } from "../errors.ts";
 import { git } from "../exec.ts";
 import { commitPaths } from "../git/commit.ts";
 import { type HookStatus, installPrePush } from "../git/hooks.ts";
-import { buildLock, LOCK_FILE, type Lock, readLock, serializeLock } from "../lock/lock.ts";
+import {
+  buildLock,
+  LOCK_FILE,
+  type Lock,
+  type LockEntry,
+  readLock,
+  serializeLock,
+} from "../lock/lock.ts";
 import { executeSync, type PlannedChange, planSync } from "../managed/sync.ts";
-import { renderWorkspace } from "../render/workspace.ts";
+import { OPENSPEC_TOOLS_TEMPLATE } from "../openspec/cli.ts";
+import { type ManagedFile, renderWorkspace } from "../render/workspace.ts";
 import { PONYTAIL } from "../versions.ts";
 
 /**
@@ -33,6 +41,22 @@ export interface SyncOptions {
   readonly adopt?: readonly string[];
   /** Three-way merge user-edited files with the new templates (`update`). */
   readonly merge?: boolean;
+  /**
+   * OpenSpec's generated opencode files (`renderOpenspecTools`), for init and `update --tools`.
+   * Without them, their lock entries are carried over untouched.
+   */
+  readonly tools?: readonly ManagedFile[];
+}
+
+/** Lock entries of OpenSpec-generated files to carry over when they are not regenerated. */
+function carriedTools(
+  previous: Readonly<Record<string, LockEntry>>,
+  options: SyncOptions,
+): Record<string, LockEntry> {
+  if (options.tools !== undefined) return {};
+  return Object.fromEntries(
+    Object.entries(previous).filter(([, e]) => e.template === OPENSPEC_TOOLS_TEMPLATE),
+  );
 }
 
 export interface SyncResult {
@@ -50,9 +74,13 @@ export function planWorkspace(
   options: SyncOptions = {},
 ): PlannedChange[] {
   const previous = readLock(root)?.managed ?? {};
-  const plan = planSync(root, renderWorkspace(config), previous, {
+  const tools = options.tools ?? [];
+  const plan = planSync(root, [...renderWorkspace(config), ...tools], previous, {
     unmanaged: config.unmanaged,
     ...options,
+    carry: Object.keys(carriedTools(previous, options)),
+    // Installs before OpenSpec files were managed have them without a lock entry.
+    ownEdits: tools.map((f) => f.path),
   });
   // A modified vendored add-on is a hash mismatch, not a user edit to merge (§12).
   const tampered = plan
@@ -84,9 +112,11 @@ export async function syncWorkspace(
   const previous = readLock(root)?.managed ?? {};
   const plan = planWorkspace(root, config, options);
 
-  const { managed, merged, conflicts } = await executeSync(root, plan, previous, {
+  const executed = await executeSync(root, plan, previous, {
     ...(options.merge ? { merge: true } : {}),
   });
+  const { merged, conflicts } = executed;
+  const managed = { ...carriedTools(previous, options), ...executed.managed };
   const ponytail = config.addons.ponytail;
   const lock = buildLock(
     managed,

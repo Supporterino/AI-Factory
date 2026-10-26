@@ -6,7 +6,7 @@ import { PreconditionError } from "../../errors.ts";
 import { commitPaths } from "../../git/commit.ts";
 import { ensureClean } from "../../git/repo.ts";
 import { updateGraph } from "../../graph/graph.ts";
-import { initOpenspec } from "../../openspec/cli.ts";
+import { renderOpenspecTools } from "../../openspec/cli.ts";
 import { checkTools } from "../../tools.ts";
 import {
   backup,
@@ -67,7 +67,13 @@ Upgrades this workspace to the installed factory version, as one local commit
     }
     await ensureClean(root, "the AI repo");
 
-    const plan = await planUpdate(root, lock, { tools: values.tools, restore: values.restore });
+    // `--tools`: OpenSpec's opencode files are regenerated (aside) and merged like the rest.
+    const openspecFiles = values.tools ? await renderOpenspecTools(root) : undefined;
+    const plan = await planUpdate(root, lock, {
+      tools: values.tools,
+      restore: values.restore,
+      ...(openspecFiles !== undefined ? { toolFiles: openspecFiles } : {}),
+    });
     if (!values.json) for (const line of formatPlan(plan)) io.out(line);
     if (values["dry-run"]) {
       if (values.json)
@@ -86,10 +92,10 @@ Upgrades this workspace to the installed factory version, as one local commit
 
     const backupDir = backup(root, plan);
     writeFileSync(join(root, CONFIG_FILE), plan.configText);
-    if (plan.openspecRefresh) await initOpenspec(root);
     const result = await syncWorkspace(root, plan.config, {
       merge: true,
       ...(values.restore ? { restore: true } : {}),
+      ...(openspecFiles !== undefined ? { tools: openspecFiles } : {}),
     });
 
     if (result.conflicts.length > 0) {

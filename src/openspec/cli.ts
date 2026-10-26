@@ -1,7 +1,17 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative, sep } from "node:path";
 import { ExecError } from "../errors.ts";
 import { exec } from "../exec.ts";
+import type { ManagedFile } from "../render/workspace.ts";
 import { type DagTask, validateDag } from "../tasks/dag.ts";
 import { parseTasks } from "../tasks/parse.ts";
 import { toolBin, toolEnv } from "../tools.ts";
@@ -112,19 +122,50 @@ export async function archiveChange(root: string, dir: string, id: string): Prom
  * `openspec init --tools opencode` (also refreshes OpenSpec's opencode files on `update
  * --tools`). Runs with a private config dir so the output does not depend on ~/.config.
  */
-export async function initOpenspec(root: string): Promise<void> {
-  const res = await exec(
-    [
-      toolBin("openspec"),
-      "init",
-      "--tools",
-      "opencode",
-      "--profile",
-      "core",
-      "--no-animation",
-      root,
-    ],
-    { cwd: root, env: env(root), timeoutMs: 120_000 },
-  );
-  if (res.code !== 0) throw new ExecError("openspec init failed", res);
+/** Lock template id of the opencode commands and skills OpenSpec generates. */
+export const OPENSPEC_TOOLS_TEMPLATE = "openspec-tools";
+
+/**
+ * The opencode commands and skills `openspec init` generates, rendered in a scratch directory
+ * so they become ordinary managed files: unchanged ones are refreshed, edited ones kept or
+ * merged, deleted ones stay deleted (audit P19). The workspace itself is never touched.
+ */
+export async function renderOpenspecTools(root: string): Promise<ManagedFile[]> {
+  const scratch = mkdtempSync(join(tmpdir(), "ai-factory-openspec-"));
+  try {
+    const res = await exec(
+      [
+        toolBin("openspec"),
+        "init",
+        "--tools",
+        "opencode",
+        "--profile",
+        "core",
+        "--no-animation",
+        scratch,
+      ],
+      { cwd: scratch, env: env(root), timeoutMs: 120_000 },
+    );
+    if (res.code !== 0) throw new ExecError("openspec init failed", res);
+    const base = join(scratch, ".opencode");
+    if (!existsSync(base)) return [];
+    const files: ManagedFile[] = [];
+    const walk = (dir: string): void => {
+      for (const name of readdirSync(dir).sort()) {
+        const abs = join(dir, name);
+        if (statSync(abs).isDirectory()) walk(abs);
+        else
+          files.push({
+            path: relative(scratch, abs).split(sep).join("/"),
+            template: OPENSPEC_TOOLS_TEMPLATE,
+            mode: "file",
+            content: readFileSync(abs, "utf8"),
+          });
+      }
+    };
+    walk(base);
+    return files;
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }

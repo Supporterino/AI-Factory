@@ -49,8 +49,12 @@ export interface SyncOptions {
   readonly restore?: boolean;
   /** Overwrite pre-existing files the factory never rendered. */
   readonly force?: boolean;
-  /** Paths created moments ago by a tool the factory ran (e.g. `openspec init`): take them over. */
+  /** Paths created moments ago by a tool the factory ran: take them over. */
   readonly adopt?: readonly string[];
+  /** Previous entries kept as they are (not rendered this time, not removed). */
+  readonly carry?: readonly string[];
+  /** Rendered paths that, edited and without a lock entry yet, are the user's edit, not a conflict. */
+  readonly ownEdits?: readonly string[];
 }
 
 export function sha256(text: string): string {
@@ -110,6 +114,8 @@ export function planSync(
       action = "unchanged";
     } else if (prev !== undefined) {
       action = sha256(current) === prev.sha256 ? "update" : "keep-user-edit";
+    } else if (options.ownEdits?.includes(file.path)) {
+      action = "keep-user-edit";
     } else if (options.adopt?.includes(file.path)) {
       action = "create";
     } else {
@@ -119,8 +125,9 @@ export function planSync(
   }
 
   const rendered = new Set(files.map((f) => f.path));
+  const carried = new Set(options.carry);
   for (const [path, prev] of Object.entries(previous)) {
-    if (rendered.has(path) || unmanaged.has(path)) continue;
+    if (rendered.has(path) || unmanaged.has(path) || carried.has(path)) continue;
     const current = currentOwned(root, path, prev.mode);
     if (current === undefined) continue; // already gone; the entry is dropped
     plan.push({ path, action: sha256(current) === prev.sha256 ? "remove" : "keep-removed-edit" });

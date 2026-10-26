@@ -203,6 +203,31 @@ describe("init: single repo", () => {
     expect(lockAfter?.managed[".opencode/standards/rust.md"]).toBeDefined();
   });
 
+  test("OpenSpec's opencode files are managed: edits kept, deletions respected (audit P19)", async () => {
+    await cli(fx.root, "init");
+    const skill = ".opencode/skills/openspec-propose/SKILL.md";
+    const command = ".opencode/commands/opsx-explore.md";
+    expect(readLock(fx.root)?.managed[skill]?.template).toBe("openspec-tools");
+    writeFileSync(
+      join(fx.root, skill),
+      `${read(fx.root, skill)}\nOur team writes specs in German.\n`,
+    );
+    rmSync(join(fx.root, command));
+    await commitAll(fx.root, "chore: customise openspec skills");
+
+    expect((await cli(fx.root, "init")).code).toBe(ExitCode.Ok);
+    expect(read(fx.root, skill)).toContain("Our team writes specs in German.");
+    expect(existsSync(join(fx.root, command))).toBe(false);
+
+    expect((await cli(fx.root, "update", "--tools")).code).toBe(ExitCode.Ok);
+    expect(read(fx.root, skill)).toContain("Our team writes specs in German.");
+    expect(existsSync(join(fx.root, command))).toBe(false);
+    // A plain update keeps them too (they are only regenerated with --tools).
+    expect((await cli(fx.root, "update")).code).toBe(ExitCode.Ok);
+    expect(read(fx.root, skill)).toContain("Our team writes specs in German.");
+    expect(readLock(fx.root)?.managed[skill]).toBeDefined();
+  });
+
   test("unmanaged files are left alone", async () => {
     await cli(fx.root, "init");
     const cfgPath = join(fx.root, "factory.config.jsonc");

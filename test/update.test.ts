@@ -202,7 +202,7 @@ describe(`update from a ${SNAPSHOT.version} install`, () => {
     await commit("chore: pretend an old graph format");
     const tools = await cli(root, "update", "--tools");
     expect(tools.code).toBe(ExitCode.Ok);
-    expect(tools.out).toContain("tools: refresh OpenSpec's opencode files");
+    expect(tools.out).toContain("tools: OpenSpec's opencode files regenerated");
     expect(tools.out).toContain("graph: rebuilt");
     expect(readLock(root)?.graph.schemaVersion).toBe(1);
   });

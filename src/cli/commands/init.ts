@@ -8,7 +8,7 @@ import { PreconditionError } from "../../errors.ts";
 import { gitOk } from "../../exec.ts";
 import { graphFile, updateGraph } from "../../graph/graph.ts";
 import type { SyncAction } from "../../managed/sync.ts";
-import { initOpenspec } from "../../openspec/cli.ts";
+import { renderOpenspecTools } from "../../openspec/cli.ts";
 import { checkTools, type ToolName } from "../../tools.ts";
 import { FACTORY_VERSION } from "../../version.ts";
 import {
@@ -96,14 +96,15 @@ export const initCommand: Command = {
     const config =
       configText !== undefined ? parseConfigText(configText, CONFIG_FILE) : loadConfig(root).config;
 
-    // Plan first so a conflict stops init before anything is written. Files the plan would
-    // create may be written by `openspec init` first; the factory then takes them over.
-    const created = planWorkspace(root, config, { force: values.force })
-      .filter((c) => c.action === "create")
-      .map((c) => c.path);
+    // OpenSpec's opencode files are rendered aside and managed like the factory's own.
+    const openspecFiles = await renderOpenspecTools(root);
+    // Plan first so a conflict stops init before anything is written.
+    planWorkspace(root, config, { force: values.force, tools: openspecFiles });
     if (configText !== undefined) writeFileSync(configPath, configText);
-    await initOpenspec(root);
-    const result = await syncWorkspace(root, config, { force: values.force, adopt: created });
+    const result = await syncWorkspace(root, config, {
+      force: values.force,
+      tools: openspecFiles,
+    });
     const commit = values["no-commit"]
       ? undefined
       : await commitInstall(root, `chore(factory): init v${FACTORY_VERSION}`);
