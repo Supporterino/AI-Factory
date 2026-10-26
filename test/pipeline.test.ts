@@ -430,6 +430,31 @@ describe("pipeline: single repo", () => {
     expect(loadRun(fx.root, ID)?.tasks.find((t) => t.id === "1.1")?.status).not.toBe("merged");
   });
 
+  test("a review without a result pauses the change instead of passing (audit P13)", async () => {
+    await withGates(passAll);
+    const team = factoryScript({
+      changeId: ID,
+      summary: "Math helpers",
+      repos: ["app"],
+      tasks: SINGLE_TASKS,
+    });
+    let broken = true;
+    const runtime = new ScriptedRuntime(async (call) =>
+      call.agent === "reviewer" && broken ? { text: "I ran out of time." } : team(call),
+    );
+    await cliWith(runtime, fx.root, "run", "Add math helpers");
+    expect((await cliWith(runtime, fx.root, "approve", ID)).code).toBe(ExitCode.Paused);
+    const paused = loadRun(fx.root, ID);
+    expect(paused?.phase).toBe("paused");
+    expect(paused?.pausedReason).toContain("review of app produced no result");
+    expect(paused?.reviewed).not.toContain("app");
+    expect(paused?.tasks.some((t) => t.id === "test-app")).toBe(false);
+
+    broken = false;
+    expect((await cliWith(runtime, fx.root, "resume", ID)).code).toBe(ExitCode.Ok);
+    expect(loadRun(fx.root, ID)?.phase).toBe("done");
+  });
+
   test("the approval is voided by a spec edit and survives checkbox ticks", async () => {
     await withGates(passAll);
     const runtime = new ScriptedRuntime(

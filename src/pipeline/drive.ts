@@ -151,14 +151,24 @@ async function step(p: Pipeline, id: string): Promise<Step> {
       return go(id);
     }
     case "reviewing": {
-      const added = await review(p, id);
+      const { added, incomplete } = await review(p, id);
+      if (incomplete.length > 0) {
+        const reason = `${incomplete.join("; ")}; resume to review again`;
+        await setPhase(p, id, "paused", reason);
+        return stop({ id, phase: "paused", detail: reason });
+      }
       await setPhase(p, id, added > 0 ? "implementing" : "contracts");
       return go(id);
     }
     case "contracts": {
       const result = await contractPhase(p, id);
       if (!result.ok) {
-        await setPhase(p, id, "paused", "the contract gate still fails after a fix round");
+        await setPhase(
+          p,
+          id,
+          "paused",
+          result.reason ?? "the contract gate still fails after a fix round",
+        );
         return stop({ id, phase: "paused", detail: result.issues.join("\n") });
       }
       await setPhase(p, id, result.added > 0 ? "implementing" : "full-suite");

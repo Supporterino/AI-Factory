@@ -188,4 +188,32 @@ describe("contract phase in the pipeline", () => {
     ]);
     expect(runtime.calls.filter((c) => c.agent === "contract-reviewer")).toHaveLength(1);
   });
+
+  test("a contract review without a result pauses, and resume reviews again (audit P13)", async () => {
+    const tasks: ScriptedTask[] = [
+      {
+        id: "1.1",
+        title: "Document the health endpoint",
+        repo: "backend",
+        deps: [],
+        touches: ["api/**"],
+        file: "api/openapi.yaml",
+        content: OPENAPI.replace("title: Backend API", "title: Backend API (documented)"),
+      },
+    ];
+    const base = factoryScript({ changeId: "doc-api", summary: "Doc", repos: ["backend"], tasks });
+    let broken = true;
+    const runtime = new ScriptedRuntime(async (call) =>
+      call.agent === "contract-reviewer" && broken ? { text: "timed out" } : base(call),
+    );
+    await cliWith(runtime, fx.root, "run", "Document the API");
+    expect((await cliWith(runtime, fx.root, "approve", "doc-api")).code).toBe(ExitCode.Paused);
+    const paused = loadRun(fx.root, "doc-api");
+    expect(paused?.pausedReason).toContain("the contract review produced no result");
+    expect(paused?.contractReviewed).toBe(false);
+
+    broken = false;
+    expect((await cliWith(runtime, fx.root, "resume", "doc-api")).code).toBe(ExitCode.Ok);
+    expect(loadRun(fx.root, "doc-api")?.contractReviewed).toBe(true);
+  });
 });

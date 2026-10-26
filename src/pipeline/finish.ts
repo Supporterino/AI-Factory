@@ -40,10 +40,14 @@ function addTask(
  * repo). Must/should findings and the tester's work become tasks with their own budget.
  * Returns the number of tasks added.
  */
-export async function review(p: Pipeline, id: string): Promise<number> {
+export async function review(
+  p: Pipeline,
+  id: string,
+): Promise<{ added: number; incomplete: string[] }> {
   const run = p.run(id);
   const repos = touchedRepos(run).filter((r) => !run.reviewed.includes(r));
-  if (repos.length === 0) return 0;
+  const incomplete: string[] = [];
+  if (repos.length === 0) return { added: 0, incomplete };
   p.out(`▶ review + tests: ${repos.join(", ")}`);
   const spec = specText(p, id);
   let added = 0;
@@ -69,9 +73,15 @@ export async function review(p: Pipeline, id: string): Promise<number> {
             profiles: profilesFor(repo.languages).map((pr) => pr.title),
           }),
         });
-        const findings: Finding[] = res.handoff?.findings ?? [];
+        // No valid handoff (crash, timeout, garbage) is no review: the repo stays unreviewed.
+        if (res.handoff === undefined) {
+          incomplete.push(`review of ${name} produced no result (${res.problem ?? res.outcome})`);
+          return;
+        }
+        const handoff = res.handoff;
+        const findings: Finding[] = handoff.findings ?? [];
         await p.update(id, (d) => {
-          if (res.handoff) d.handoffs[`review:${name}`] = res.handoff;
+          d.handoffs[`review:${name}`] = handoff;
           d.reviewed.push(name);
           let n = 0;
           for (const f of findings.filter((x) => x.severity !== "nice")) {
@@ -102,7 +112,7 @@ export async function review(p: Pipeline, id: string): Promise<number> {
       }),
     ),
   );
-  return added;
+  return { added, incomplete };
 }
 
 /**

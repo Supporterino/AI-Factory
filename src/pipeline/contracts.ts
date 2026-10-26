@@ -18,6 +18,8 @@ const MAX_CONTRACT_ROUNDS = 1;
 
 export interface ContractOutcome {
   readonly ok: boolean;
+  /** Why the change pauses when not ok (defaults to the contract gate still failing). */
+  readonly reason?: string;
   /** Fix tasks added (the pipeline goes back to implementation). */
   readonly added: number;
   readonly issues: string[];
@@ -139,7 +141,12 @@ export async function contractPhase(p: Pipeline, id: string): Promise<ContractOu
       diffs,
     }),
   });
-  const findings: Finding[] = (res.handoff?.findings ?? []).filter((f) => f.severity !== "nice");
+  // A contract review without a result is no review: pause, review again on resume (audit P13).
+  if (res.handoff === undefined) {
+    const reason = `the contract review produced no result (${res.problem ?? res.outcome})`;
+    return { ok: false, added: 0, issues: [reason], reason };
+  }
+  const findings: Finding[] = (res.handoff.findings ?? []).filter((f) => f.severity !== "nice");
   let added = 0;
   await p.update(id, (d) => {
     d.contractReviewed = true;
