@@ -18,6 +18,21 @@ All notable changes per release. `ai-factory update` applies them to an installe
 - `ai-factory doctor`: checks tool versions and lock drift, the install, submodules, clean trees, hooks, the resolved gate table with toolchain lookup, cache sizes, model availability, graph freshness and stale locks.
 - `README.md`, `ARCHITECTURE.md`, and E2E transcripts per layout in `docs/e2e/`, recorded with real opencode and a scripted model (`scripts/e2e-transcript.ts`).
 
+### Security
+
+- **Shell-policy and git hardening.** Fixes all enforcement bypasses from the 2026-10-26 audit (S1–S10, S12):
+  - shell keywords and `cd` are parsed and tracked;
+  - xargs, interpreter, awk/sed and runner evasions are closed;
+  - git env, `-c` keys and exec options are restricted; `fetch` refspecs and agent commits are blocked;
+  - writes are judged on real paths (symlinks), more writers are covered, and protected paths match case-insensitively.
+- **Every shell spawn is guarded.** opencode's `shell create.before` hook only spawns approved commands and scrubs the server password, model keys and forge tokens. Non-factory agents and opencode's REST shell are refused.
+- **OS sandbox (macOS `sandbox-exec`).**
+  - Covers agent shells and gates.
+  - Writes are limited to the session's own directories; run state, factory files and `.git` stay read-only.
+  - Credential files and git credential helpers are off-limits, and ssh (port 22) is blocked.
+  - New config key `security.sandbox` (`"auto"` | `"off"`).
+- **Gates and installs.** Both run without credentials and with pushes blocked. A task may not change the scripts or targets its gates run.
+
 ### Changed: language standards
 
 - Every standard (TypeScript, React, Python, Go, Rust, Helm, Tauri) is rewritten from its primary docs, e.g. Effective Go and Go Code Review Comments, the TypeScript Handbook's Do's and Don'ts, react.dev's Rules of React, PEP 8/257 and the typing best practices, the Rust API Guidelines, Helm's chart best practices and the Pod Security Standards, and the v2.tauri.app security and IPC guides.

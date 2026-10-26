@@ -1,5 +1,7 @@
 # ADR-0018: Enforcement layers (plugin, CLI, git)
 
+> Extended by ADR-0026 (2026-10-26). The audit found the matrix below overstated, notably a non-existent "AI-repo status audit"; ADR-0026 adds the OS sandbox and the guarded shell spawn, and ARCHITECTURE.md has the current matrix.
+
 **Context.** §8 asks for the opencode plugin where hooks exist and CLI enforcement for anything the plugin cannot guarantee. The V2 plugin API is young (gap G1), and opencode cannot resolve npm packages from `.opencode/plugins/`.
 
 **Decision.**

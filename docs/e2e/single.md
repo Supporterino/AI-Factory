@@ -1,6 +1,6 @@
 # E2E: single repo
 
-Recorded 2026-10-23 with `bun scripts/e2e-transcript.ts single` (ai-factory 0.2.0).
+Recorded 2026-10-26 with `bun scripts/e2e-transcript.ts single` (ai-factory 0.2.0).
 
 **Real:**
 - the opencode server: opencode v2.1.2 with the factory's agents, permissions and guard plugin;
@@ -44,13 +44,14 @@ created: .opencode/standards/helm.md
 created: .opencode/standards/python.md
 created: .opencode/standards/react.md
 created: .opencode/standards/rust.md
+created: .opencode/standards/tauri.md
 created: .opencode/standards/typescript.md
 created: AGENTS.md
 created: openspec/config.yaml
 hook app: installed
-graph: built (505 nodes, 3.6s)
-committed e4dbf1c3e673 chore(factory): init v0.2.0
-# exit 0 · 4.8s
+graph: built (575 nodes, 6.7s)
+committed 31ceccea38c8 chore(factory): init v0.2.0
+# exit 0 · 7.9s
 ```
 
 Config edits for the run: every role uses the stub model. The fixture has no installed formatter, linter or `tsc`, so those gates are `skip`; tests run for real with `bun test` (the repo's `test` script for the full suite, the test files related to each task's changes per task).
@@ -58,7 +59,7 @@ Config edits for the run: every role uses the stub model. The fixture has no ins
 ```console
 $ git diff HEAD~1 -- factory.config.jsonc
 diff --git a/factory.config.jsonc b/factory.config.jsonc
-index 946f21d..19030e1 100644
+index 4a861bc..ce59361 100644
 --- a/factory.config.jsonc
 +++ b/factory.config.jsonc
 @@ -12,12 +12,12 @@
@@ -111,15 +112,15 @@ config migrations: none
   update: .opencode/agents/orchestrator.md
   update: .opencode/agents/reviewer.md
   update: .opencode/agents/tester.md
-committed 938c92054785 chore(factory): update to v0.2.0
-backup: /private<tmp>/app/.factory/backups/2026-10-23T13-09-52-634Z
+committed 281c0748d01f chore(factory): update to v0.2.0
+backup: /private<tmp>/app/.factory/backups/2026-10-26T10-03-18-486Z
 # exit 0 · 0.9s
 ```
 
 ```console
 $ ai-factory graph
-graph updated: 505 nodes, 604 links in 1.8s
-# exit 0 · 1.9s
+graph updated: 575 nodes, 724 links in 2.0s
+# exit 0 · 2.1s
 ```
 
 ```console
@@ -132,7 +133,10 @@ tools
   ✓ factory: 0.2.0
 install
   ✓ config: schemaVersion 2, layout single
-  ✓ managed files: 27 up to date
+security
+  ✓ sandbox: agent shells and gates run under macOS sandbox-exec
+install
+  ✓ managed files: 28 up to date
 repos
   ✓ AI repo working tree: clean
   ✓ AI repo pre-push hook: installed
@@ -140,7 +144,7 @@ gates
   ✓ app: 1 gate command(s) resolved, toolchain present
 caches
   ✓ dependency caches: 0 B
-  ✓ backups: 81 KiB
+  ✓ backups: 85 KiB
 models
   ✓ orchestrator: stub/claude-stub
   ✓ architect: stub/claude-stub
@@ -149,7 +153,7 @@ models
   ✓ tester: stub/claude-stub
   ✓ explorer: stub/claude-stub
 graph
-  ✓ graph: 0 min old, no code changes since it was built (505 nodes)
+  ✓ graph: 0 min old, no code changes since it was built (575 nodes)
 changes
   ✓ active: none
 gate table (full mode; per task, scoped commands and affected tests are used)
@@ -158,7 +162,7 @@ gate table (full mode; per task, scoped commands and affected tests are used)
   app lint    skip: gates.overrides.app.lint
   app types   skip: gates.overrides.app.types
 all checks passed
-# exit 0 · 0.8s
+# exit 0 · 1.0s
 ```
 
 ## Run up to the spec
@@ -176,7 +180,7 @@ add-text-helpers: awaiting approval — review openspec/changes/add-text-helpers
 ```console
 $ ai-factory status add-text-helpers
 change add-text-helpers — awaiting-approval (not active; factory 0.2.0)
-  branches: . change/add-text-helpers @938c92054785
+  branches: . change/add-text-helpers @281c0748d01f
   usage: 17.3k tokens (1.4k cache read, 294 out) · cost n/a in 3 sessions
     by agent: architect 12.4k, orchestrator 2.5k, explorer 2.5k
     retry overhead: 0 · wasted re-reads: 0
@@ -206,7 +210,7 @@ change add-text-helpers — awaiting-approval (not active; factory 0.2.0)
 
 ```console
 $ ai-factory approve add-text-helpers
-✓ approved add-text-helpers by fixture@example.com (spec 10a96965caab, 3 tasks)
+✓ approved add-text-helpers by fixture@example.com (spec 841915a3ad1d, 3 tasks)
 ▶ context packs (3)
 ▶ implement: 3 tasks (max 4 agents)
   ✓ 1.2 merged (app)
@@ -220,19 +224,19 @@ $ ai-factory approve add-text-helpers
 ▶ close
 ✓ add-text-helpers done — report: /private<tmp>/app/.factory/reports/add-text-helpers.md
 add-text-helpers: done
-# exit 0 · 14.3s
+# exit 0 · 16.0s
 ```
 
 ```console
 $ ai-factory status add-text-helpers
 change add-text-helpers — done (not active; factory 0.2.0)
-  branches: . change/add-text-helpers @938c92054785 · app change/add-text-helpers @938c92054785
+  branches: . change/add-text-helpers @281c0748d01f · app change/add-text-helpers @281c0748d01f
   graph: covers 4 of 4 merges
   tasks: 4/4 merged (merge seq 4)
-    ✓ 1.1      app Add the greet helper — merged cd153f20aabf · 9.9k tok
-    ✓ 1.2      app Add the clamp helper — merged 47313d4ca481 · 5.0k tok
-    ✓ 1.3      app Export the helpers from src/index.ts — merged 381e54f7f9a6 · 5.0k tok
-    ✓ test-app app Ensure every scenario of app has a test — merged ad754ec7d653 · 7.4k tok
+    ✓ 1.1      app Add the greet helper — merged ab4c6f793c8a · 9.9k tok
+    ✓ 1.2      app Add the clamp helper — merged a7fbe4d2ef07 · 5.0k tok
+    ✓ 1.3      app Export the helpers from src/index.ts — merged 7cb1923bd1eb · 5.0k tok
+    ✓ test-app app Ensure every scenario of app has a test — merged b7c38562fc92 · 7.4k tok
   usage: 56.9k tokens (4.6k cache read, 966 out) · cost n/a in 9 sessions
     by agent: architect 22.3k, implementer-app 19.8k, tester 7.4k, orchestrator 2.5k, explorer 2.5k, reviewer 2.5k
     retry overhead: 0 · wasted re-reads: 0
@@ -243,12 +247,12 @@ change add-text-helpers — done (not active; factory 0.2.0)
 
 ```console
 $ git log --format='%h %s' main..change/add-text-helpers
-a673ee4 chore(spec): archive add-text-helpers
-ad754ec test: ensure every scenario of app has a test
-381e54f feat: export the helpers from src/index.ts
-cd153f2 feat: add the greet helper
-47313d4 feat: add the clamp helper
-10a9696 docs(spec): add-text-helpers
+4ad7691 chore(spec): archive add-text-helpers
+b7c3856 test: ensure every scenario of app has a test
+7cb1923 feat: export the helpers from src/index.ts
+ab4c6f7 feat: add the greet helper
+a7fbe4d feat: add the clamp helper
+841915a docs(spec): add-text-helpers
 ```
 
 ```console
@@ -258,7 +262,7 @@ $ git branch --list '*change*'
 
 ```console
 $ git worktree list
-/private<tmp>/app a673ee4 [change/add-text-helpers]
+/private<tmp>/app 4ad7691 [change/add-text-helpers]
 ```
 
 ### Gate runs
@@ -282,8 +286,8 @@ full:app       format skipped · lint skipped · types skipped · test pass (npm
 Every tool call the agents made is logged (redacted). These are the calls the plugin blocked:
 
 ```json
-{"at":"2026-10-23T13:10:00.960Z","kind":"blocked","session":"ses_e971e0cf5ffejR501nafsbOM4M","agent":"implementer-app","tool":"shell","input":{"command":"git push origin HEAD"},"reason":"ai-factory blocked this call: git push is not allowed: the factory never pushes"}
-{"at":"2026-10-23T13:10:01.029Z","kind":"blocked","session":"ses_e971e0cf5ffejR501nafsbOM4M","agent":"implementer-app","tool":"shell","input":{"command":"sh -c 'git push --force origin main'"},"reason":"ai-factory blocked this call: git push is not allowed: the factory never pushes"}
+{"at":"2026-10-26T10:03:27.132Z","kind":"blocked","session":"ses_e8855c6dcffeKSTyuDZuebpys8","agent":"implementer-app","tool":"shell","input":{"command":"git push origin HEAD"},"reason":"ai-factory blocked this call: git push is not allowed: the factory never pushes"}
+{"at":"2026-10-26T10:03:27.210Z","kind":"blocked","session":"ses_e8855c6dcffeKSTyuDZuebpys8","agent":"implementer-app","tool":"shell","input":{"command":"sh -c 'git push --force origin main'"},"reason":"ai-factory blocked this call: git push is not allowed: the factory never pushes"}
 ```
 
 ### Final report
@@ -295,8 +299,8 @@ Add greet and clamp helpers, exported from the package entry point
 
 ## Branches (local only; nothing was pushed)
 
-- app: `change/add-text-helpers` at a673ee45f833 (6 commits)
-- AI repo: `change/add-text-helpers` (archive commit a673ee45f833)
+- app: `change/add-text-helpers` at 4ad769114757 (6 commits)
+- AI repo: `change/add-text-helpers` (archive commit 4ad769114757)
 
 ## Tasks
 
@@ -307,7 +311,7 @@ Add greet and clamp helpers, exported from the package entry point
 
 ## Spec
 
-Archived as `openspec/changes/archive/2026-10-23-add-text-helpers`.
+Archived as `openspec/changes/archive/2026-10-26-add-text-helpers`.
 
 ## Review findings
 
@@ -331,4 +335,4 @@ Retry overhead: 0 tokens (0%).
 Wasted re-reads of unchanged files: 0.
 ```
 
-Total wall time: 26s. Model requests served by the stub: 23.
+Total wall time: 32s. Model requests served by the stub: 23.
