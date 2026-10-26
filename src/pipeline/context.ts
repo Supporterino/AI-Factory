@@ -43,6 +43,13 @@ export interface AgentResult {
   readonly model: string;
 }
 
+/** `ai-factory abort` was requested for the change: stop at the next safe point. */
+export class ChangeAborted extends Error {
+  constructor(readonly changeId: string) {
+    super(`${changeId} was aborted`);
+  }
+}
+
 export class Pipeline {
   readonly limiter = new RateLimiter();
   readonly agents: Semaphore;
@@ -85,8 +92,38 @@ export class Pipeline {
     return updateRun(this.root, id, mutate);
   }
 
+  /** Whether `ai-factory abort` asked this change to stop. */
+  abortRequested(id: string): boolean {
+    return id !== "intake" && loadRun(this.root, id)?.abortRequested === true;
+  }
+
+  /**
+   * A signal that fires on SIGINT/SIGTERM or when `abort` marks the change (polled), so a
+   * running session is interrupted either way.
+   */
+  #callSignal(id: string): { signal: AbortSignal; stop: () => void } {
+    const controller = new AbortController();
+    const timer = setInterval(() => {
+      if (this.abortRequested(id)) controller.abort();
+    }, 1000);
+    return {
+      signal: AbortSignal.any([this.deps.signal, controller.signal]),
+      stop: () => clearInterval(timer),
+    };
+  }
+
   /** One agent session: open, prompt for a handoff (one repair), optional follow-ups. */
   async call(call: AgentCall): Promise<AgentResult> {
+    if (this.abortRequested(call.changeId)) throw new ChangeAborted(call.changeId);
+    const watch = this.#callSignal(call.changeId);
+    try {
+      return await this.#call(call, watch.signal);
+    } finally {
+      watch.stop();
+    }
+  }
+
+  async #call(call: AgentCall, signal: AbortSignal): Promise<AgentResult> {
     const model = modelFor(this.config, call.modelRole);
     const provider = model.split("/")[0] ?? model;
     const raw = await this.deps.runtime.open({
@@ -96,12 +133,12 @@ export class Pipeline {
       context: { ...call.context, changeId: call.changeId, role: call.role },
     });
     const session = limited(raw, this.limiter, provider);
-    let turn = await promptForHandoff(session, call.prompt, this.deps.signal);
+    let turn = await promptForHandoff(session, call.prompt, signal);
     let usage = turn.usage;
     for (let attempt = 1; call.retry && turn.outcome === "succeeded"; attempt++) {
       const next = await call.retry(turn.handoff, attempt);
       if (next === undefined) break;
-      turn = await promptForHandoff(session, next, this.deps.signal);
+      turn = await promptForHandoff(session, next, signal);
       usage = addUsage(usage, turn.usage);
     }
     appendLog(

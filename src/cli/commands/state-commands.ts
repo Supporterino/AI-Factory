@@ -185,10 +185,11 @@ export const abortCommand: Command = {
   summary: "Stop a change safely; keep branches and worktrees",
   help: `Usage: ai-factory abort <change-id>
 
-Asks the process driving the change to stop (it finishes in-flight merges and interrupts
-agents), marks the change aborted, removes it from the queue and releases the
-active-change lock. Branches and worktrees are kept for inspection. The next queued
-change is not started automatically; resume it when you are ready.`,
+Marks the change aborted and removes it from the queue. A process driving it stops at its
+next safe point in any phase (it interrupts running agents) and then frees the workspace;
+if nothing drives it, the active-change lock is released at once. Branches and worktrees
+are kept for inspection. The next queued change is not started automatically; \`resume\`
+the aborted change (or another one) when you are ready.`,
   async run(args, io) {
     const { positionals } = parseCommandArgs("abort", args, {}, true);
     const id = changeId("abort", positionals);
@@ -200,8 +201,22 @@ change is not started automatically; resume it when you are ready.`,
       draft.phase = "aborted";
     });
     await removeFromQueue(root, id);
-    await releaseActive(root, id);
-    io.out(`aborted ${id}`);
+    // A live driver in another process stops at its next safe point and frees the
+    // workspace itself; otherwise nothing is running and the lock goes now.
+    const active = readActive(root);
+    const driver =
+      active?.changeId === id &&
+      active.pid !== null &&
+      active.pid !== process.pid &&
+      driverAlive(active)
+        ? active.pid
+        : undefined;
+    if (driver === undefined) await releaseActive(root, id);
+    io.out(
+      driver === undefined
+        ? `aborted ${id}`
+        : `aborted ${id}; pid ${driver} stops at its next safe point and frees the workspace`,
+    );
     const branches = Object.entries(run.branches).map(([repo, b]) => `${repo}: ${b.branch}`);
     if (branches.length > 0) io.out(`kept branches: ${branches.join(", ")}`);
     const worktrees = worktreesOf(root, id);

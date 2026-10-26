@@ -1,8 +1,8 @@
 import { PreconditionError } from "../errors.ts";
 import { checkDesign } from "../openspec/cli.ts";
-import { claimActive, dequeue } from "../state/active.ts";
+import { claimActive, dequeue, readActive, releaseActive } from "../state/active.ts";
 import type { Phase } from "../state/run.ts";
-import type { Pipeline } from "./context.ts";
+import { ChangeAborted, type Pipeline } from "./context.ts";
 import { contractPhase } from "./contracts.ts";
 import { design, specDir } from "./design.ts";
 import { close, fullSuite, review, writePauseReport } from "./finish.ts";
@@ -32,107 +32,140 @@ async function ensureDriver(p: Pipeline, id: string): Promise<void> {
 
 async function setPhase(p: Pipeline, id: string, phase: Phase, reason?: string): Promise<void> {
   await p.update(id, (d) => {
+    if (d.abortRequested) return; // `abort` won: the change stays aborted
     d.phase = phase;
     if (reason === undefined) delete d.pausedReason;
     else d.pausedReason = reason;
   });
 }
 
+/** Stops an aborted change: it stays aborted and frees the workspace for the next one. */
+async function stopAborted(p: Pipeline, id: string): Promise<DriveOutcome> {
+  await p.update(id, (d) => {
+    d.phase = "aborted";
+  });
+  if (readActive(p.root)?.changeId === id) await releaseActive(p.root, id);
+  return { id, phase: "aborted", detail: "aborted; branches and worktrees are kept" };
+}
+
 /** Drives one change as far as it can go; continues with the next queued change on close. */
 export async function drive(p: Pipeline, firstId: string): Promise<DriveOutcome> {
   let id = firstId;
+  // `resume` of an aborted change is the decision to continue it.
+  if (p.run(id).phase === "aborted") {
+    await p.update(id, (d) => {
+      d.abortRequested = false;
+    });
+  }
   for (;;) {
     if (p.deps.signal.aborted) return { id, phase: p.run(id).phase, detail: "interrupted" };
-    const run = p.run(id);
-    switch (run.phase) {
-      case "intake":
-      case "design": {
-        const result = await design(p, id);
-        if (!result.ok) return { id, phase: "paused", detail: result.issues.join("\n") };
-        continue;
-      }
-      case "awaiting-approval":
-        return {
-          id,
-          phase: run.phase,
-          detail: `review openspec/changes/${id}/ and run \`ai-factory approve ${id}\``,
-        };
-      case "aborted":
-        // `resume` after `abort`: implementation continues from where it stopped.
-        await setPhase(p, id, run.tasks.length > 0 ? "queued" : "design");
-        continue;
-      case "paused": {
-        if (run.tasks.length === 0) {
-          // Paused in design: a hand-fixed spec goes to approval, otherwise the architect repairs it.
-          const { issues } = await checkDesign(
-            p.root,
-            specDir(p, run.draft),
-            id,
-            p.codeRepos().map((r) => r.name),
-          );
-          await setPhase(p, id, issues.length === 0 ? "awaiting-approval" : "design");
-        } else {
-          await setPhase(p, id, "implementing");
-        }
-        continue;
-      }
-      case "queued": {
-        const activation = await activate(p, id);
-        if (activation.status === "queued")
-          return { id, phase: "queued", detail: "waits for the active change to close" };
-        if (activation.status === "running")
-          return { id, phase: "queued", detail: `already driven by pid ${activation.pid}` };
-        continue;
-      }
-      case "implementing": {
-        await ensureDriver(p, id);
-        await ensureContextPacks(p, id);
-        const summary = await implement(p, id);
-        if (summary.status === "aborted" || p.deps.signal.aborted) {
-          return { id, phase: p.run(id).phase, detail: "aborted; branches and worktrees are kept" };
-        }
-        if (summary.status === "paused") {
-          const report = writePauseReport(p, id, summary);
-          return { id, phase: "paused", detail: `report: ${report}` };
-        }
-        await setPhase(p, id, "reviewing");
-        continue;
-      }
-      case "reviewing": {
-        const added = await review(p, id);
-        await setPhase(p, id, added > 0 ? "implementing" : "contracts");
-        continue;
-      }
-      case "contracts": {
-        const result = await contractPhase(p, id);
-        if (!result.ok) {
-          await setPhase(p, id, "paused", "the contract gate still fails after a fix round");
-          return { id, phase: "paused", detail: result.issues.join("\n") };
-        }
-        await setPhase(p, id, result.added > 0 ? "implementing" : "full-suite");
-        continue;
-      }
-      case "full-suite": {
-        const failing = await fullSuite(p, id);
-        if (failing.length > 0) {
-          const reason = `full suite still failing in ${failing.join(", ")} after fix rounds`;
-          await setPhase(p, id, "paused", reason);
-          return { id, phase: "paused", detail: reason };
-        }
-        const pending = p.run(id).tasks.some((t) => t.status === "pending");
-        await setPhase(p, id, pending ? "implementing" : "closing");
-        continue;
-      }
-      case "closing": {
-        await close(p, id);
-        const next = await dequeue(p.root);
-        if (next === undefined) return { id, phase: "done" };
-        p.out(`▶ starting queued change ${next}`);
-        id = next;
-        continue;
-      }
-      case "done":
-        return { id, phase: "done" };
+    if (p.abortRequested(id)) return stopAborted(p, id);
+    try {
+      const next = await step(p, id);
+      if (next.kind === "stop") return next.outcome;
+      id = next.id;
+    } catch (err) {
+      if (err instanceof ChangeAborted) return stopAborted(p, err.changeId);
+      throw err;
     }
+  }
+}
+
+type Step = { kind: "continue"; id: string } | { kind: "stop"; outcome: DriveOutcome };
+const go = (id: string): Step => ({ kind: "continue", id });
+const stop = (outcome: DriveOutcome): Step => ({ kind: "stop", outcome });
+
+/** One phase transition of the state machine. */
+async function step(p: Pipeline, id: string): Promise<Step> {
+  const run = p.run(id);
+  switch (run.phase) {
+    case "intake":
+    case "design": {
+      const result = await design(p, id);
+      if (!result.ok) return stop({ id, phase: "paused", detail: result.issues.join("\n") });
+      return go(id);
+    }
+    case "awaiting-approval":
+      return stop({
+        id,
+        phase: run.phase,
+        detail: `review openspec/changes/${id}/ and run \`ai-factory approve ${id}\``,
+      });
+    case "aborted":
+      // `resume` after `abort`: implementation continues from where it stopped.
+      await setPhase(p, id, run.tasks.length > 0 ? "queued" : "design");
+      return go(id);
+    case "paused": {
+      if (run.tasks.length === 0) {
+        // Paused in design: a hand-fixed spec goes to approval, otherwise the architect repairs it.
+        const { issues } = await checkDesign(
+          p.root,
+          specDir(p, run.draft),
+          id,
+          p.codeRepos().map((r) => r.name),
+        );
+        await setPhase(p, id, issues.length === 0 ? "awaiting-approval" : "design");
+      } else {
+        await setPhase(p, id, "implementing");
+      }
+      return go(id);
+    }
+    case "queued": {
+      const activation = await activate(p, id);
+      if (activation.status === "queued")
+        return stop({ id, phase: "queued", detail: "waits for the active change to close" });
+      if (activation.status === "running")
+        return stop({ id, phase: "queued", detail: `already driven by pid ${activation.pid}` });
+      return go(id);
+    }
+    case "implementing": {
+      await ensureDriver(p, id);
+      await ensureContextPacks(p, id);
+      const summary = await implement(p, id);
+      if (summary.status === "aborted" || p.deps.signal.aborted) {
+        if (p.abortRequested(id)) return stop(await stopAborted(p, id));
+        return stop({ id, phase: p.run(id).phase, detail: "interrupted" });
+      }
+      if (summary.status === "paused") {
+        const report = writePauseReport(p, id, summary);
+        return stop({ id, phase: "paused", detail: `report: ${report}` });
+      }
+      await setPhase(p, id, "reviewing");
+      return go(id);
+    }
+    case "reviewing": {
+      const added = await review(p, id);
+      await setPhase(p, id, added > 0 ? "implementing" : "contracts");
+      return go(id);
+    }
+    case "contracts": {
+      const result = await contractPhase(p, id);
+      if (!result.ok) {
+        await setPhase(p, id, "paused", "the contract gate still fails after a fix round");
+        return stop({ id, phase: "paused", detail: result.issues.join("\n") });
+      }
+      await setPhase(p, id, result.added > 0 ? "implementing" : "full-suite");
+      return go(id);
+    }
+    case "full-suite": {
+      const failing = await fullSuite(p, id);
+      if (failing.length > 0) {
+        const reason = `full suite still failing in ${failing.join(", ")} after fix rounds`;
+        await setPhase(p, id, "paused", reason);
+        return stop({ id, phase: "paused", detail: reason });
+      }
+      const pending = p.run(id).tasks.some((t) => t.status === "pending");
+      await setPhase(p, id, pending ? "implementing" : "closing");
+      return go(id);
+    }
+    case "closing": {
+      await close(p, id);
+      const next = await dequeue(p.root);
+      if (next === undefined) return stop({ id, phase: "done" });
+      p.out(`▶ starting queued change ${next}`);
+      return go(next);
+    }
+    case "done":
+      return stop({ id, phase: "done" });
   }
 }

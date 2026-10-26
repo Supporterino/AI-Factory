@@ -370,6 +370,36 @@ describe("pipeline: single repo", () => {
     );
   });
 
+  test("abort works outside implementation too, and resume then finishes the change", async () => {
+    await withGates(passAll);
+    let aborted = false;
+    const runtime = new ScriptedRuntime(
+      factoryScript({
+        changeId: ID,
+        summary: "Math helpers",
+        repos: ["app"],
+        tasks: SINGLE_TASKS,
+        onCall: async (call) => {
+          if (call.agent === "reviewer" && !aborted) {
+            aborted = true;
+            expect((await cli(fx.root, "abort", ID)).code).toBe(ExitCode.Ok);
+          }
+        },
+      }),
+    );
+    await cliWith(runtime, fx.root, "run", "Add math helpers");
+    expect((await cliWith(runtime, fx.root, "approve", ID)).code).toBe(ExitCode.Paused);
+    expect(loadRun(fx.root, ID)?.phase).toBe("aborted");
+    expect(readActive(fx.root)).toBeUndefined();
+    expect(await gitOut(fx.root, "log", "-1", "--format=%s", `change/${ID}`)).not.toContain(
+      "archive",
+    );
+
+    const resume = await cliWith(runtime, fx.root, "resume", ID);
+    expect(resume.code).toBe(ExitCode.Ok);
+    expect(loadRun(fx.root, ID)).toMatchObject({ phase: "done", abortRequested: false });
+  });
+
   test("the approval is voided by a spec edit and survives checkbox ticks", async () => {
     await withGates(passAll);
     const runtime = new ScriptedRuntime(
