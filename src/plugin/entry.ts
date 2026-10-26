@@ -69,11 +69,21 @@ function readText(abs: string): string | undefined {
   }
 }
 
+/** The context each session started with: the file must not change under a running session. */
+const pinned = new Map<string, string>();
+
 function loadContext(workspace: string, sessionID: string): SessionContext | undefined {
+  let raw: string;
   try {
-    return parseSessionContext(
-      JSON.parse(readFileSync(sessionContextFile(workspace, sessionID), "utf8")),
-    );
+    raw = readFileSync(sessionContextFile(workspace, sessionID), "utf8");
+  } catch {
+    return undefined;
+  }
+  const first = pinned.get(sessionID);
+  if (first === undefined) pinned.set(sessionID, raw);
+  else if (first !== raw) return undefined; // rewritten mid-session: refuse everything
+  try {
+    return parseSessionContext(JSON.parse(raw));
   } catch {
     return undefined;
   }

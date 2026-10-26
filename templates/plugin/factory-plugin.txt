@@ -1168,11 +1168,7 @@ function checkGit(state, args) {
         checkWrite(state, p, "git mv");
       return;
     case "commit":
-      if (f.has("--amend") || f.has("--fixup") || f.has("--squash"))
-        return block("rewriting commits is not allowed");
-      if (f.has("--no-verify") || f.has("-n"))
-        return block("skipping commit hooks is not allowed");
-      return;
+      return block("the factory commits your work after the gates pass; do not commit yourself");
     case "reflog":
       if (pos[0] === "expire" || pos[0] === "delete")
         return block("expiring the reflog destroys history");
@@ -1962,9 +1958,21 @@ function readText(abs) {
     return;
   }
 }
+var pinned = new Map;
 function loadContext(workspace, sessionID) {
+  let raw;
   try {
-    return parseSessionContext(JSON.parse(readFileSync2(sessionContextFile(workspace, sessionID), "utf8")));
+    raw = readFileSync2(sessionContextFile(workspace, sessionID), "utf8");
+  } catch {
+    return;
+  }
+  const first = pinned.get(sessionID);
+  if (first === undefined)
+    pinned.set(sessionID, raw);
+  else if (first !== raw)
+    return;
+  try {
+    return parseSessionContext(JSON.parse(raw));
   } catch {
     return;
   }

@@ -155,6 +155,15 @@ describe("plugin guards", () => {
     writeFileSync(tasks, TASKS);
   });
 
+  test("a session context rewritten mid-session is refused", async () => {
+    session("pin", { role: "reviewer", directory: wt });
+    expect(await call("pin", "reviewer", "read", { path: "src/sum.ts" })).toBeUndefined();
+    session("pin", { role: "implementer", directory: ws, touches: ["**"] });
+    expect(await call("pin", "reviewer", "read", { path: "src/sum.ts" })).toContain(
+      "no session context",
+    );
+  });
+
   test("symlinks cannot carry an edit or a read out of scope", async () => {
     approve();
     mkdirSync(join(ws, "outside"), { recursive: true });

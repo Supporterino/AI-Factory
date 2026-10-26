@@ -538,10 +538,7 @@ function checkGit(state: State, args: readonly string[]): undefined {
       for (const p of pos) checkWrite(state, p, "git mv");
       return;
     case "commit":
-      if (f.has("--amend") || f.has("--fixup") || f.has("--squash"))
-        return block("rewriting commits is not allowed");
-      if (f.has("--no-verify") || f.has("-n")) return block("skipping commit hooks is not allowed");
-      return;
+      return block("the factory commits your work after the gates pass; do not commit yourself");
     case "reflog":
       if (pos[0] === "expire" || pos[0] === "delete")
         return block("expiring the reflog destroys history");

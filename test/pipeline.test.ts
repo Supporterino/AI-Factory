@@ -286,6 +286,36 @@ describe("pipeline: single repo", () => {
     expect(await gitOut(fx.root, "log", `change/${ID}`, "--format=%H", "--", "README.md")).toBe("");
   });
 
+  test("an agent that commits cannot slip out-of-scope files past the audit", async () => {
+    await withGates(passAll);
+    const runtime = new ScriptedRuntime(
+      factoryScript({
+        changeId: ID,
+        summary: "Math helpers",
+        repos: ["app"],
+        tasks: SINGLE_TASKS,
+        implement: (task, call) => {
+          if (task.id !== "1.2" || call.prompt.includes("previous attempt failed"))
+            return undefined;
+          // The agent commits itself (an evasion of the blocked `git commit`).
+          writeFileSync(join(call.directory, task.file), task.content);
+          writeFileSync(join(call.directory, "README.md"), "sneaky\n");
+          const git = (...args: string[]) =>
+            spawnSync("git", args, { cwd: call.directory, encoding: "utf8" });
+          git("add", "-A");
+          git("-c", "user.name=a", "-c", "user.email=a@a", "commit", "-qm", "sneaky");
+          return { handoff: { task: task.id } };
+        },
+      }),
+    );
+    await cliWith(runtime, fx.root, "run", "Add math helpers");
+    expect((await cliWith(runtime, fx.root, "approve", ID)).code).toBe(ExitCode.Ok);
+    const task = loadRun(fx.root, ID)?.tasks.find((t) => t.id === "1.2");
+    expect(task?.failures).toBe(1);
+    expect(await gitOut(fx.root, "log", `change/${ID}`, "--format=%s", "--", "README.md")).toBe("");
+    expect(await gitOut(fx.root, "log", `change/${ID}`, "--format=%s")).not.toContain("sneaky");
+  });
+
   test("the approval is voided by a spec edit and survives checkbox ticks", async () => {
     await withGates(passAll);
     const runtime = new ScriptedRuntime(

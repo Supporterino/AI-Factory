@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { checkApprovalHash } from "../approval/approval.ts";
 import type { FactoryConfig } from "../config/schema.ts";
 import { PreconditionError } from "../errors.ts";
 import { git, gitOk } from "../exec.ts";
@@ -283,6 +284,21 @@ export class PipelineTaskRunner implements TaskRunner {
     };
   }
 
+  /**
+   * Agents may not commit (the factory does), but if HEAD moved anyway, its commits are undone
+   * into the working tree so the audit and the task commit see every change.
+   */
+  async #foldAgentCommits(task: TaskState, dir: string, headBefore: string): Promise<void> {
+    const head = (await gitOk(["rev-parse", "HEAD"], { cwd: dir })).trim();
+    if (head === headBefore) return;
+    await gitOk(["reset", "-q", "--soft", headBefore], { cwd: dir });
+    appendLog(this.p.root, this.id, {
+      kind: "agent-commit",
+      task: task.id,
+      note: `HEAD moved during the session (${headBefore.slice(0, 12)} → ${head.slice(0, 12)}); folded back for the audit`,
+    });
+  }
+
   /** Reverts files an agent changed outside its scope (shell writes bypass the plugin). */
   async #audit(task: TaskState, dir: string): Promise<string[]> {
     const changed = await changedFiles(dir, "HEAD");
@@ -292,12 +308,15 @@ export class PipelineTaskRunner implements TaskRunner {
       role: task.kind === "test" ? "tester" : "implementer",
       ...this.#context(task, dir),
     };
-    const violations = auditChanges(ctx, changed, true);
+    const violations = auditChanges(ctx, changed, checkApprovalHash(this.p.root, this.id).valid);
     for (const v of violations) {
-      const tracked =
-        (await git(["ls-files", "--error-unmatch", "--", v.path], { cwd: dir })).code === 0;
-      if (tracked) await gitOk(["checkout", "-q", "HEAD", "--", v.path], { cwd: dir });
-      else rmSync(join(dir, v.path), { force: true, recursive: true });
+      // Restore what HEAD has; a file HEAD lacks (new, possibly staged) is removed.
+      const inHead = (await git(["cat-file", "-e", `HEAD:${v.path}`], { cwd: dir })).code === 0;
+      if (inHead) await gitOk(["checkout", "-q", "HEAD", "--", v.path], { cwd: dir });
+      else {
+        await git(["rm", "-q", "--cached", "--ignore-unmatch", "--", v.path], { cwd: dir });
+        rmSync(join(dir, v.path), { force: true, recursive: true });
+      }
     }
     return violations.map((v) => `${v.path}: ${v.reason}`);
   }
@@ -339,6 +358,7 @@ export class PipelineTaskRunner implements TaskRunner {
           ...(ctx.feedback === undefined ? {} : { feedback: ctx.feedback }),
         });
 
+    const headBefore = (await gitOk(["rev-parse", "HEAD"], { cwd: dir })).trim();
     const res = await this.p.call({
       changeId: this.id,
       agent: isTest ? "tester" : `implementer-${task.repo}`,
@@ -367,6 +387,7 @@ export class PipelineTaskRunner implements TaskRunner {
       return { status: "blocked", reason: why };
     }
 
+    await this.#foldAgentCommits(task, dir, headBefore);
     const violations = await this.#audit(task, dir);
     if (violations.length > 0) {
       return {
