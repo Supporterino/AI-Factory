@@ -110,6 +110,11 @@ export const RunState = z.strictObject({
     .record(z.string(), z.strictObject({ passed: z.boolean(), summary: z.string() }))
     .default({}),
   pointerCommit: z.string().optional(),
+  /** Close steps already done, so a resumed close skips them (audit P6). */
+  pointersBumped: z.boolean().default(false),
+  pointers: z.array(z.string()).default([]),
+  archivedAs: z.string().optional(),
+  archiveCommit: z.string().optional(),
   reportPath: z.string().optional(),
 });
 export type RunState = z.infer<typeof RunState>;

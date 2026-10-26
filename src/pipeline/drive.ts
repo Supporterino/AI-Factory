@@ -6,7 +6,7 @@ import { verifyApproval } from "./approve.ts";
 import { ChangeAborted, type Pipeline } from "./context.ts";
 import { contractPhase } from "./contracts.ts";
 import { design, specDir } from "./design.ts";
-import { close, fullSuite, review, writePauseReport } from "./finish.ts";
+import { archivedName, close, fullSuite, review, writePauseReport } from "./finish.ts";
 import { activate, ensureContextPacks, implement } from "./implement.ts";
 
 /**
@@ -94,7 +94,9 @@ const APPROVED_PHASES: ReadonlySet<Phase> = new Set([
 /** One phase transition of the state machine. */
 async function step(p: Pipeline, id: string): Promise<Step> {
   const run = p.run(id);
-  if (APPROVED_PHASES.has(run.phase)) await verifyApproval(p, id, p.root);
+  // Once archived the spec has moved (a close resumed after a crash): nothing left to check.
+  const archived = run.phase === "closing" && archivedName(p.root, id) !== undefined;
+  if (APPROVED_PHASES.has(run.phase) && !archived) await verifyApproval(p, id, p.root);
   switch (run.phase) {
     case "intake":
     case "design": {

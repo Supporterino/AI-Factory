@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ExitCode } from "../src/cli/exit-codes.ts";
 import { readActive } from "../src/state/active.ts";
-import { loadRun } from "../src/state/run.ts";
+import { loadRun, updateRun } from "../src/state/run.ts";
 import { factoryScript, type ScriptedTask } from "./fixtures/factory-script.ts";
 import { ScriptedRuntime } from "./fixtures/scripted-runtime.ts";
 import {
@@ -453,6 +453,43 @@ describe("pipeline: single repo", () => {
     broken = false;
     expect((await cliWith(runtime, fx.root, "resume", ID)).code).toBe(ExitCode.Ok);
     expect(loadRun(fx.root, ID)?.phase).toBe("done");
+  });
+
+  test("close resumes after a crash, after or before the archive commit (audit P6)", async () => {
+    await withGates(passAll);
+    const runtime = new ScriptedRuntime(
+      factoryScript({ changeId: ID, summary: "Math helpers", repos: ["app"], tasks: SINGLE_TASKS }),
+    );
+    await cliWith(runtime, fx.root, "run", "Add math helpers");
+    expect((await cliWith(runtime, fx.root, "approve", ID)).code).toBe(ExitCode.Ok);
+    const archive = await gitOut(fx.root, "rev-parse", `change/${ID}`);
+
+    // Crash after the archive commit, before the run was marked done.
+    await updateRun(fx.root, ID, (d) => {
+      d.phase = "closing";
+    });
+    const again = await cliWith(runtime, fx.root, "resume", ID);
+    expect(again.err).toBe("");
+    expect(again.code).toBe(ExitCode.Ok);
+    expect(loadRun(fx.root, ID)?.phase).toBe("done");
+    expect(await gitOut(fx.root, "rev-parse", `change/${ID}`)).toBe(archive);
+
+    // Crash between `openspec archive` and its commit.
+    await updateRun(fx.root, ID, (d) => {
+      d.phase = "closing";
+      delete d.archivedAs;
+      delete d.archiveCommit;
+    });
+    await fixtureGit(fx.root, "reset", "-q", "--soft", "HEAD~1");
+    const resumed = await cliWith(runtime, fx.root, "resume", ID);
+    expect(resumed.code).toBe(ExitCode.Ok);
+    expect(await gitOut(fx.root, "log", "-1", "--format=%s", `change/${ID}`)).toBe(
+      `chore(spec): archive ${ID}`,
+    );
+    expect(await gitOut(fx.root, "status", "--porcelain")).toBe("");
+    expect(readFileSync(join(fx.root, ".factory/reports", `${ID}.md`), "utf8")).toContain(
+      "Archived as",
+    );
   });
 
   test("the approval is voided by a spec edit and survives checkbox ticks", async () => {

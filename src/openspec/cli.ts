@@ -118,10 +118,6 @@ export async function archiveChange(root: string, dir: string, id: string): Prom
   return parsed.archive?.archivedAs ?? id;
 }
 
-/**
- * `openspec init --tools opencode` (also refreshes OpenSpec's opencode files on `update
- * --tools`). Runs with a private config dir so the output does not depend on ~/.config.
- */
 /** Lock template id of the opencode commands and skills OpenSpec generates. */
 export const OPENSPEC_TOOLS_TEMPLATE = "openspec-tools";
 

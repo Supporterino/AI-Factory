@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { changeShortcuts } from "../addons/shortcuts.ts";
 import { PreconditionError } from "../errors.ts";
@@ -237,6 +237,17 @@ export function writePauseReport(p: Pipeline, id: string, summary: RunSummary): 
 }
 
 /** §7 step 11: pointer bumps, archive, report, release. Never pushes. */
+/** The archive folder name once `openspec archive` moved the change, else undefined. */
+export function archivedName(root: string, id: string): string | undefined {
+  if (existsSync(join(root, "openspec", "changes", id))) return undefined;
+  const archive = join(root, "openspec", "changes", "archive");
+  if (!existsSync(archive)) return undefined;
+  return readdirSync(archive)
+    .filter((n) => n === id || n.endsWith(`-${id}`))
+    .sort()
+    .at(-1);
+}
+
 export async function close(p: Pipeline, id: string): Promise<string> {
   const run = p.run(id);
   const open = run.tasks.filter((t) => t.status !== "merged");
@@ -255,29 +266,43 @@ export async function close(p: Pipeline, id: string): Promise<string> {
     writeFileSync(tasksFile, text);
   }
 
-  let pointerCommit: string | undefined;
-  let pointers: string[] = [];
-  if (p.config.layout === "submodules") {
+  // Each step is recorded once done, so a close resumed after a crash skips it (audit P6).
+  if (p.config.layout === "submodules" && !run.pointersBumped) {
     const repos = touchedRepos(run)
       .map((n) => p.repo(n))
       .filter((r) => r.path !== ".");
     const bump = await bumpPointers(p.root, id, repos);
-    pointerCommit = bump?.commit;
-    pointers =
-      bump?.pointers.map(
+    await p.update(id, (d) => {
+      d.pointersBumped = true;
+      if (bump === undefined) return;
+      d.pointerCommit = bump.commit;
+      d.pointers = bump.pointers.map(
         (ptr) => `${ptr.path}: ${ptr.from.slice(0, 12)} → ${ptr.to.slice(0, 12)}`,
-      ) ?? [];
+      );
+    });
   }
 
-  const issues = await validateChange(p.root, p.root, id);
-  if (issues.length > 0)
-    throw new PreconditionError(`openspec validate ${id} failed before archive`, issues);
-  const archivedAs = await archiveChange(p.root, p.root, id);
-  const archiveCommit = await commitPaths(p.root, ["openspec"], `chore(spec): archive ${id}`, {
-    "Change-Id": id,
-  });
+  if (p.run(id).archivedAs === undefined) {
+    // A crash between `openspec archive` and its commit leaves the moved folder behind.
+    let archivedAs = archivedName(p.root, id);
+    if (archivedAs === undefined) {
+      const issues = await validateChange(p.root, p.root, id);
+      if (issues.length > 0)
+        throw new PreconditionError(`openspec validate ${id} failed before archive`, issues);
+      archivedAs = await archiveChange(p.root, p.root, id);
+    }
+    const commit = await commitPaths(p.root, ["openspec"], `chore(spec): archive ${id}`, {
+      "Change-Id": id,
+    });
+    const name = archivedAs;
+    await p.update(id, (d) => {
+      d.archivedAs = name;
+      if (commit !== undefined) d.archiveCommit = commit;
+    });
+  }
 
   const done = p.run(id);
+  const { pointerCommit, pointers, archivedAs, archiveCommit } = done;
   const shortcutLines: string[] = [];
   if (p.config.addons.ponytail.enabled && p.config.addons.ponytail.shortcutComments === "report") {
     for (const name of touchedRepos(done)) {
@@ -351,7 +376,6 @@ export async function close(p: Pipeline, id: string): Promise<string> {
 
   await p.update(id, (d) => {
     d.phase = "done";
-    if (pointerCommit) d.pointerCommit = pointerCommit;
     d.reportPath = file;
   });
   dropAgentSnapshot(p.root, id);
