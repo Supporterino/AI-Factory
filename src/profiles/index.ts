@@ -295,8 +295,17 @@ export const PROFILES: Readonly<Record<Language, Profile>> = {
 };
 
 /** The bullet lines of the profile's `## Summary` section. */
+/**
+ * Drops HTML comments (the standards cite their sources and mark factory rules in them) and
+ * the blank lines they leave. Agent prompts get the stripped text; the rendered
+ * `.opencode/standards/*.md` files keep the comments for people.
+ */
+export function stripComments(text: string): string {
+  return text.replace(/[ \t]*<!--[\s\S]*?-->[ \t]*/g, "").replace(/\n{3,}/g, "\n\n");
+}
+
 export function profileSummary(profile: Profile): string[] {
-  const lines = profile.prose.split("\n");
+  const lines = stripComments(profile.prose).split("\n");
   const start = lines.findIndex((l) => l.trim() === "## Summary");
   if (start === -1) return [];
   const out: string[] = [];
@@ -314,7 +323,8 @@ function describe(req: Requirement): string {
 }
 
 /** The full standards file: prose plus generated test-path and gate sections. */
-export function renderStandard(profile: Profile): string {
+export function renderStandard(profile: Profile, options: { comments?: boolean } = {}): string {
+  const prose = options.comments === false ? stripComments(profile.prose) : profile.prose;
   const gates = (Object.keys(profile.gates) as GateType[])
     .map((g) => {
       const options = profile.gates[g].map(
@@ -323,7 +333,7 @@ export function renderStandard(profile: Profile): string {
       return `- ${g}: ${options.join("; or ")}`;
     })
     .join("\n");
-  return `${profile.prose.trimEnd()}
+  return `${prose.trimEnd()}
 
 ## Test paths (tester edit scope)
 ${profile.testGlobs.map((g) => `- \`${g}\``).join("\n")}

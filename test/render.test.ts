@@ -27,15 +27,43 @@ const config = FactoryConfig.parse({
 });
 
 describe("profiles", () => {
-  test.each([...LANGUAGES])("%s: ≤150 lines, has a summary, globs and every gate", (lang) => {
-    const profile = PROFILES[lang];
-    expect(renderStandard(profile).split("\n").length).toBeLessThanOrEqual(150);
-    expect(profileSummary(profile).length).toBeGreaterThanOrEqual(3);
-    expect(profile.testGlobs.length).toBeGreaterThan(0);
-    for (const gate of ["format", "lint", "types", "test", "testAffected"] as const) {
-      expect(profile.gates[gate].length).toBeGreaterThan(0);
-    }
-  });
+  test.each([...LANGUAGES])(
+    "%s: ≤150 prompt lines, has a summary, globs and every gate",
+    (lang) => {
+      const profile = PROFILES[lang];
+      expect(renderStandard(profile, { comments: false }).split("\n").length).toBeLessThanOrEqual(
+        150,
+      );
+      expect(profileSummary(profile).length).toBeGreaterThanOrEqual(3);
+      expect(profile.testGlobs.length).toBeGreaterThan(0);
+      for (const gate of ["format", "lint", "types", "test", "testAffected"] as const) {
+        expect(profile.gates[gate].length).toBeGreaterThan(0);
+      }
+    },
+  );
+
+  test.each([...LANGUAGES])(
+    "%s: grounded in cited sources, comments kept out of prompts",
+    (lang) => {
+      const prose = PROFILES[lang].prose;
+      const sources = prose.match(/<!-- Sources:\n([\s\S]*?)-->/)?.[1] ?? "";
+      const keys = [...sources.matchAll(/^\s*\[([\w-]+)\] .+ — https:\/\/\S+$/gm)].map((m) => m[1]);
+      expect(keys.length).toBeGreaterThanOrEqual(2);
+      // Every section after the summary says what grounds it, using the listed keys.
+      const sections = [...prose.matchAll(/^## (.+)\n\n?(.*)$/gm)].filter(
+        (m) => m[1] !== "Summary",
+      );
+      expect(sections.length).toBeGreaterThan(0);
+      for (const [, title, next] of sections) {
+        expect({ title, next }).toEqual({ title, next: expect.stringMatching(/^<!-- .+ -->$/) });
+        for (const cited of (next ?? "").matchAll(/\[([\w-]+)\]/g))
+          expect(keys).toContain(cited[1]);
+      }
+      expect(renderStandard(PROFILES[lang])).toContain("<!-- Sources:");
+      expect(renderStandard(PROFILES[lang], { comments: false })).not.toContain("<!--");
+      expect(profileSummary(PROFILES[lang]).join("\n")).not.toContain("<!--");
+    },
+  );
 
   test("react stacks on typescript", () => {
     expect(profilesFor(["react"]).map((p) => p.id)).toEqual(["typescript", "react"]);

@@ -28,3 +28,4 @@ Short ADRs for every choice the build prompt did not lock. Format: Context / Dec
 | [0022](0022-update-migrations-rollback.md)      | Update, migrations and rollback                                     |
 | [0023](0023-doctor-and-e2e.md)                  | Doctor checks and the manual E2E method                             |
 | [0024](0024-tauri-profile.md)                   | Tauri v2 profile                                                    |
+| [0025](0025-grounded-standards.md)              | Standards are grounded in primary sources                           |

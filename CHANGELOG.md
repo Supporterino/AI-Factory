@@ -18,6 +18,12 @@ All notable changes per release. `ai-factory update` applies them to an installe
 - `ai-factory doctor`: checks tool versions and lock drift, the install, submodules, clean trees, hooks, the resolved gate table with toolchain lookup, cache sizes, model availability, graph freshness and stale locks.
 - `README.md`, `ARCHITECTURE.md`, and E2E transcripts per layout in `docs/e2e/`, recorded with real opencode and a scripted model (`scripts/e2e-transcript.ts`).
 
+### Changed: language standards
+
+- Every standard (TypeScript, React, Python, Go, Rust, Helm, Tauri) is rewritten from its primary docs, e.g. Effective Go and Go Code Review Comments, the TypeScript Handbook's Do's and Don'ts, react.dev's Rules of React, PEP 8/257 and the typing best practices, the Rust API Guidelines, Helm's chart best practices and the Pod Security Standards, and the v2.tauri.app security and IPC guides.
+- Each standard lists its sources in an HTML comment, cites them per section, and marks factory-specific rules (such as Rust unit tests in a sibling `tests.rs`, which keeps them within the tester's edit scope). Comments are stripped from agent prompts.
+- Corrections: Tauri app commands need no capability unless they are listed in `AppManifest::commands`; Tauri state uses `std::sync::Mutex` by default, with no `Arc`.
+
 ### Fixed
 
 - The architect and tester agents get edit permissions for their own paths (change and context folders, test globs). Before, opencode's permission layer denied their writes.

@@ -171,7 +171,8 @@ function workspaceTestGlobs(config: FactoryConfig): string[] {
 }
 
 function renderImplementer(config: FactoryConfig, repo: RepoConfig): ManagedFile {
-  const standards = profilesFor(repo.languages).map((p) => renderStandard(p));
+  // Source comments help people, not the model: keep them out of the system prompt.
+  const standards = profilesFor(repo.languages).map((p) => renderStandard(p, { comments: false }));
   const langs = repo.languages.length > 0 ? repo.languages.join(", ") : "none detected";
   const addon = ponytailSection(config, "implementer");
   return {

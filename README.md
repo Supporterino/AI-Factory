@@ -158,7 +158,12 @@ Logs: `.factory/logs/<id>/` (redacted tool calls and gate results). Run state: `
 A profile is the language's prose standard plus a machine-readable part: test globs, markers, gate commands and install steps.
 1. Add the id to `LANGUAGES` in `src/config/schema.ts`. Enum additions need no config migration, and the editor JSON schema is generated from it.
 2. Add detection in `src/detect/languages.ts`: the manifest or marker files that imply it.
-3. Write `templates/standards/<id>.md`, with a `## Summary` section of bullet lines; agents get the summary inline.
+3. Write `templates/standards/<id>.md` from the language's primary docs:
+   - a `<!-- Sources: [key] Title — URL -->` block under the title;
+   - a `## Summary` of standalone bullets (they go into `AGENTS.md`);
+   - under each section, a `<!-- [key] … -->` comment naming what grounds it, and `<!-- factory -->` after rules that come from the factory rather than a source.
+
+   A test enforces the citations. The comments are stripped from agent prompts.
 4. Add the profile to `PROFILES` in `src/profiles/index.ts`:
    - `testGlobs`: what the tester may edit;
    - `markers` and `targets`: where gates run;
