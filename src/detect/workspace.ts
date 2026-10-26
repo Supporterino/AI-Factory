@@ -1,5 +1,7 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { parse as parseYaml } from "yaml";
+import { parseJsonc } from "../config/jsonc.ts";
 import type { ContractConfig, FactoryConfig, Language, RepoConfig } from "../config/schema.ts";
 import { git } from "../exec.ts";
 import { detectContracts, type ScannedRepo } from "./contracts.ts";
@@ -21,6 +23,12 @@ export interface Detection {
   readonly layout: FactoryConfig["layout"];
   readonly repos: DetectedRepo[];
   readonly contracts: ContractConfig[];
+  /** Existing `opencode.json` instruction paths, proposed for the v3 config. */
+  readonly instructions: { workspace: string[]; repos: Record<string, string[]> };
+  /** Package scripts that look like end-to-end suites, proposed as full-suite gates. */
+  readonly e2e: { repo: string; command: string }[];
+  /** Taskfile tasks that map to a whole-repo check (docs, kustomize, chart, verify). */
+  readonly tasks: { repo: string; names: string[] }[];
   readonly notes: string[];
 }
 
@@ -80,6 +88,79 @@ function isInitialized(dir: string): boolean {
   return existsSync(join(dir, ".git"));
 }
 
+function readScripts(dir: string): Record<string, string> {
+  try {
+    const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as {
+      scripts?: Record<string, unknown>;
+    };
+    return Object.fromEntries(
+      Object.entries(pkg.scripts ?? {}).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function packageRunner(dir: string): string {
+  if (existsSync(join(dir, "bun.lock")) || existsSync(join(dir, "bun.lockb"))) return "bun run";
+  if (existsSync(join(dir, "pnpm-lock.yaml"))) return "pnpm run";
+  if (existsSync(join(dir, "yarn.lock"))) return "yarn";
+  return "npm run";
+}
+
+function e2eScript(dir: string): string | undefined {
+  const scripts = readScripts(dir);
+  const name =
+    scripts["test:e2e"] !== undefined ? "test:e2e" : scripts.e2e !== undefined ? "e2e" : undefined;
+  return name === undefined ? undefined : `${packageRunner(dir)} ${name}`;
+}
+
+function taskNames(dir: string): string[] {
+  for (const file of ["Taskfile.yml", "Taskfile.yaml"]) {
+    const path = join(dir, file);
+    if (!existsSync(path)) continue;
+    try {
+      const doc = parseYaml(readFileSync(path, "utf8"), { logLevel: "silent" }) as {
+        tasks?: Record<string, unknown>;
+      } | null;
+      return Object.keys(doc?.tasks ?? {}).sort();
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+/** Instructions an existing opencode config would inject, as workspace-relative paths. */
+function readInstructions(dir: string): string[] {
+  for (const file of [
+    "opencode.json",
+    "opencode.jsonc",
+    ".opencode/opencode.json",
+    ".opencode/opencode.jsonc",
+  ]) {
+    if (!existsSync(join(dir, file))) continue;
+    try {
+      const text = readFileSync(join(dir, file), "utf8");
+      const value = parseJsonc(text).value as { instructions?: unknown } | undefined;
+      const list = Array.isArray(value?.instructions) ? value.instructions : [];
+      return list.filter(
+        (v): v is string =>
+          typeof v === "string" &&
+          !v.startsWith("/") &&
+          !v.startsWith("~") &&
+          !v.includes("://") &&
+          !v.split("/").includes(".."),
+      );
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 function withOptional(
   base: Omit<DetectedRepo, "subPaths" | "defaultBranch">,
   subPaths: DetectedRepo["subPaths"],
@@ -98,6 +179,12 @@ export async function detectWorkspace(root: string): Promise<Detection> {
   const repos: DetectedRepo[] = [];
   const scanned: ScannedRepo[] = [];
   const taken = new Set<string>();
+  const instructions: Detection["instructions"] = {
+    workspace: readInstructions(root),
+    repos: {},
+  };
+  const e2e: Detection["e2e"] = [];
+  const tasks: Detection["tasks"] = [];
 
   const submodules = existsSync(join(root, ".gitmodules")) ? await readSubmodules(root) : [];
   const layout = submodules.length > 0 ? "submodules" : "single";
@@ -114,6 +201,9 @@ export async function detectWorkspace(root: string): Promise<Detection> {
       ),
     );
     scanned.push({ name, root, files });
+    const singleE2e = e2eScript(root);
+    if (singleE2e !== undefined) e2e.push({ repo: name, command: singleE2e });
+    tasks.push({ repo: name, names: taskNames(root) });
     if (languages.length === 0) notes.push("no language markers found in the repository");
   } else {
     taken.add("ai");
@@ -138,11 +228,24 @@ export async function detectWorkspace(root: string): Promise<Detection> {
           await defaultBranchOf(dir),
         ),
       );
+      const inherited = readInstructions(dir);
+      if (inherited.length > 0) instructions.repos[name] = inherited;
+      const repoE2e = e2eScript(dir);
+      if (repoE2e !== undefined) e2e.push({ repo: name, command: repoE2e });
+      tasks.push({ repo: name, names: taskNames(dir) });
       scanned.push({ name, root: dir, files });
     }
   }
 
-  return { layout, repos, contracts: detectContracts(scanned), notes };
+  return {
+    layout,
+    repos,
+    contracts: detectContracts(scanned),
+    instructions,
+    e2e,
+    tasks,
+    notes,
+  };
 }
 
 /** The config entry for a detected repo (drops detection-only fields). */

@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
-import type { FactoryConfig } from "../config/schema.ts";
+import { allModels, type FactoryConfig } from "../config/schema.ts";
 import { TransientError } from "../errors.ts";
 import { agentGitEnv } from "../git/hooks.ts";
 import { appendLog } from "../logs/log.ts";
@@ -44,8 +44,7 @@ const PROXY_ENV = [
 ];
 
 export function providersOf(config: FactoryConfig): string[] {
-  const models = Object.values(config.models).filter((m): m is string => typeof m === "string");
-  return [...new Set(models.map((m) => m.split("/")[0] ?? ""))].filter(Boolean);
+  return [...new Set(allModels(config).map((m) => m.split("/")[0] ?? ""))].filter(Boolean);
 }
 
 export function serverEnv(

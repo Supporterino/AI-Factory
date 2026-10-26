@@ -19,6 +19,8 @@ export interface Io {
   readonly runtime?: RuntimeFactory;
   /** Asks the user a yes/no question; undefined when nobody can answer (no TTY). */
   readonly confirm?: (question: string) => Promise<boolean>;
+  /** Asks for free text; undefined when nobody can answer (no TTY). */
+  readonly ask?: (question: string, initial?: string) => Promise<string | undefined>;
 }
 
 export interface Command {

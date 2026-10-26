@@ -40,6 +40,7 @@ export function designPrompt(input: {
   explorations: Readonly<Record<string, string>>;
   repos: readonly RepoConfig[];
   contracts: readonly ContractConfig[];
+  instructions?: readonly string[];
 }): string {
   const explored = Object.entries(input.explorations)
     .map(([repo, text]) => `### ${repo}\n${text}`)
@@ -47,6 +48,10 @@ export function designPrompt(input: {
   const contracts = input.contracts.map(
     (c) => `- ${c.kind} ${c.provider}:${c.path} → ${c.consumers.join(", ") || "no consumers"}`,
   );
+  const instructions =
+    input.instructions === undefined || input.instructions.length === 0
+      ? "- none configured"
+      : input.instructions.map((p) => `- \`${p}\``).join("\n");
   return `Write the OpenSpec change \`${input.id}\` in \`openspec/changes/${input.id}/\` (the folder exists; fill proposal.md, specs/<capability>/spec.md, design.md and tasks.md).
 
 Request:
@@ -60,6 +65,9 @@ ${repoLines(input.repos)}
 
 Contracts:
 ${contracts.length > 0 ? contracts.join("\n") : "- none configured"}
+
+Project instructions (read these before writing the spec):
+${instructions}
 
 Explorer findings:
 ${explored || "(none)"}
@@ -114,10 +122,15 @@ export function reviewPrompt(input: {
   head: string;
   spec: string;
   profiles: readonly string[];
+  instructions?: readonly string[];
 }): string {
+  const instructions =
+    input.instructions === undefined || input.instructions.length === 0
+      ? ""
+      : `\nProject instructions (read these before judging the diff; paths are relative to this checkout):\n${input.instructions.map((p) => `- \`${p}\``).join("\n")}\n`;
   return `Review repo \`${input.repo.name}\` for this change: \`git diff ${input.base}..${input.head}\` (run it in this directory), plus the code around it.
-Standards in force: ${input.profiles.join(", ") || "none"} (see .opencode/standards/ in the workspace).
-
+Standards in force: ${input.profiles.join(", ") || "none"} (the full standards are in the workspace's .opencode/standards/).
+${instructions}
 Spec of the change:
 ${input.spec}
 
@@ -129,10 +142,15 @@ export function testerPrompt(input: {
   spec: string;
   testGlobs: readonly string[];
   gates: readonly string[];
+  instructions?: readonly string[];
 }): string {
+  const instructions =
+    input.instructions === undefined || input.instructions.length === 0
+      ? ""
+      : `\nProject instructions (follow these test conventions; paths are workspace-relative, so open \`$AI_FACTORY_WORKSPACE/<path>\` from a worktree):\n${input.instructions.map((p) => `- \`${p}\``).join("\n")}\n`;
   return `Task ${input.task.id}: make sure every scenario below that concerns repo \`${input.task.repo}\` has a test.
 You may only edit test files (${input.testGlobs.join(", ")}).
-
+${instructions}
 Spec of the change:
 ${input.spec}
 
@@ -154,6 +172,27 @@ export function findingPack(f: Finding): string {
 - Fix: ${f.fix}
 - Impact if skipped: ${f.impact}
 ${f.file ? `- Location: ${f.file}${f.line ? `:${f.line}` : ""}` : ""}`;
+}
+
+export function quickPrompt(input: { task: string; repo: RepoConfig }): string {
+  return `Quick task in repo \`${input.repo.name}\` (no OpenSpec change):
+"""
+${input.task}
+"""
+Make the smallest complete change that satisfies the task. You may edit any file in this
+repository except the factory-managed files and secrets. Tests for the change belong with it.
+The factory runs the repository's gates after you finish; report the result in your handoff.
+Use \`task: "quick"\`.`;
+}
+
+export function quickReviewPrompt(input: { task: string; repo: RepoConfig }): string {
+  return `Review the uncommitted quick-task change in repo \`${input.repo.name}\`:
+"""
+${input.task}
+"""
+Run \`git diff\` in this repository and read the code around the changes. Report only real
+bugs, security problems, missing tests for risky logic, and contract/convention violations.
+Use \`task: "quick-review"\` and the normal findings handoff.`;
 }
 
 export function contractReviewPrompt(input: {

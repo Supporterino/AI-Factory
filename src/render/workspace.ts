@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Document, isMap, isSeq, stringify as toYaml } from "yaml";
 import { z } from "zod";
 import architect from "../../templates/agents/architect.md" with { type: "text" };
@@ -18,6 +20,7 @@ import {
   precedence,
   vendoredFiles,
 } from "../addons/ponytail.ts";
+import { allInstructionPaths, instructionPaths } from "../config/instructions.ts";
 import {
   FactoryConfig,
   LANGUAGES,
@@ -27,7 +30,12 @@ import {
   repoLanguages,
 } from "../config/schema.ts";
 import { handoffJsonSchema } from "../handoff/schema.ts";
-import { type AgentRole, agentRules } from "../policy/permissions.ts";
+import {
+  type AgentRole,
+  type AgentRuleOptions,
+  agentRules,
+  customAgentRules,
+} from "../policy/permissions.ts";
 import { PROFILES, profileSummary, profilesFor, renderStandard } from "../profiles/index.ts";
 
 /** A file the factory owns. `block` files only own the text between their markers. */
@@ -115,12 +123,14 @@ function frontmatter(spec: {
   model: string;
   role: AgentRole;
   testGlobs?: readonly string[];
+  mode?: "primary" | "subagent" | "all";
+  permissions?: ReturnType<typeof agentRules>;
 }): string {
   const data = {
     description: spec.description,
-    mode: "primary",
+    mode: spec.mode ?? "primary",
     model: spec.model,
-    permissions: agentRules(spec.role, spec.testGlobs),
+    permissions: spec.permissions ?? agentRules(spec.role, spec.testGlobs),
   };
   // One rule per line keeps the long rule lists readable.
   const doc = new Document(data);
@@ -139,13 +149,56 @@ function agentFile(parts: { head: string; sections: readonly string[] }): string
   return `${parts.head}\n${parts.sections.map((s) => s.trim()).join("\n\n")}\n`;
 }
 
+const ROLE_FOR_PHASE: Readonly<Record<string, Role>> = {
+  orchestrator: "orchestrator",
+  architect: "architect",
+  explorer: "explorer",
+  reviewer: "reviewer",
+  "contract-reviewer": "contractReviewer",
+  tester: "tester",
+  implementer: "implementer",
+};
+
+function skillNames(config: FactoryConfig, role: Role, repo?: string): string[] {
+  return [
+    ...new Set([
+      ...(config.skills.roles[role] ?? []),
+      ...(repo === undefined ? [] : (config.skills.repos[repo] ?? [])),
+    ]),
+  ];
+}
+
+function skillsSection(names: readonly string[]): string | undefined {
+  if (names.length === 0) return undefined;
+  return `## Skills\n\nLoad these skills first: ${names.map((n) => `\`${n}\``).join(", ")}. Use the skill tool before you start; follow the loaded skill over your own habits.`;
+}
+
+function instructionsSection(config: FactoryConfig, repo?: string): string | undefined {
+  const paths = instructionPaths(config, repo);
+  if (paths.length === 0) return undefined;
+  return `## Project instructions\n\nRead these files before you change anything; they are the project's own bar and take precedence over your general knowledge. Paths are workspace-relative; from a worktree or repo checkout, open \`$AI_FACTORY_WORKSPACE/<path>\`:\n${paths.map((p) => `- \`${p}\``).join("\n")}`;
+}
+
+function sharedSections(role: AgentRole): string[] {
+  return role === "orchestrator"
+    ? [untrusted, handoffRules]
+    : [untrusted, graphRules, handoffRules];
+}
+
 function renderAgent(config: FactoryConfig, spec: AgentSpec): ManagedFile {
-  const shared =
-    spec.role === "orchestrator"
-      ? [untrusted, handoffRules]
-      : [untrusted, graphRules, handoffRules];
+  const skillList = skillNames(config, spec.modelRole);
+  const web = spec.role === "reviewer" || spec.role === "contract-reviewer";
+  const options: AgentRuleOptions = {
+    ...(skillList.length > 0 ? { skills: true } : {}),
+    ...(web ? { web: true } : {}),
+    ...(config.mcp.roles[spec.modelRole] === undefined
+      ? {}
+      : { mcp: config.mcp.roles[spec.modelRole] }),
+  };
   const section = spec.role === "reviewer" ? ponytailSection(config, "reviewer") : undefined;
   const addon = section === undefined ? [] : [section];
+  const skills = skillsSection(skillList);
+  const instructions = instructionsSection(config);
   return {
     path: `.opencode/agents/${spec.id}.md`,
     template: `agents/${spec.id}`,
@@ -156,8 +209,19 @@ function renderAgent(config: FactoryConfig, spec: AgentSpec): ManagedFile {
         model: modelFor(config, spec.modelRole),
         role: spec.role,
         ...(spec.role === "tester" ? { testGlobs: workspaceTestGlobs(config) } : {}),
+        permissions: agentRules(
+          spec.role,
+          spec.role === "tester" ? workspaceTestGlobs(config) : [],
+          options,
+        ),
       }),
-      sections: [spec.body, ...addon, ...shared],
+      sections: [
+        spec.body,
+        ...(instructions === undefined ? [] : [instructions]),
+        ...(skills === undefined ? [] : [skills]),
+        ...addon,
+        ...sharedSections(spec.role),
+      ],
     }),
   };
 }
@@ -177,6 +241,8 @@ function renderImplementer(config: FactoryConfig, repo: RepoConfig): ManagedFile
   const standards = profilesFor(languages).map((p) => renderStandard(p, { comments: false }));
   const langs = languages.length > 0 ? languages.join(", ") : "none detected";
   const addon = ponytailSection(config, "implementer");
+  const skills = skillsSection(skillNames(config, "implementer", repo.name));
+  const instructions = instructionsSection(config, repo.name);
   return {
     path: `.opencode/agents/implementer-${repo.name}.md`,
     template: "agents/implementer",
@@ -184,16 +250,70 @@ function renderImplementer(config: FactoryConfig, repo: RepoConfig): ManagedFile
     content: agentFile({
       head: frontmatter({
         description: `ai-factory implementer for ${repo.name} (${repo.path}; ${langs}).`,
-        model: modelFor(config, "implementer"),
+        model: modelFor(config, "implementer", { repo: repo.name }),
         role: "implementer",
+        ...(skills === undefined && config.mcp.roles.implementer === undefined
+          ? {}
+          : {
+              permissions: agentRules("implementer", [], {
+                skills: skills !== undefined,
+                ...(config.mcp.roles.implementer === undefined
+                  ? {}
+                  : { mcp: config.mcp.roles.implementer }),
+              }),
+            }),
       }),
       sections: [
         implementer.replaceAll("{{repo}}", repo.name),
+        ...(instructions === undefined ? [] : [instructions]),
+        ...(skills === undefined ? [] : [skills]),
         ...standards,
         ...(addon === undefined ? [] : [addon]),
         untrusted,
         graphRules,
         handoffRules,
+      ],
+    }),
+  };
+}
+
+function renderCustomAgent(
+  config: FactoryConfig,
+  agent: FactoryConfig["agents"][number],
+  root?: string,
+): ManagedFile {
+  const role = (ROLE_FOR_PHASE[agent.phase] ?? "implementer") as Role;
+  const agentRole = agent.phase as AgentRole;
+  const body =
+    agent.prompt ??
+    (agent.promptFile !== undefined && root !== undefined
+      ? readFileSync(join(root, agent.promptFile), "utf8")
+      : `# Role: ${agent.id}\n\n${agent.description}`);
+  const skills = skillsSection(agent.skills);
+  const instructions = instructionsSection(config);
+  return {
+    path: `.opencode/agents/${agent.id}.md`,
+    template: `agents/custom/${agent.id}`,
+    mode: "file",
+    content: agentFile({
+      head: frontmatter({
+        description: agent.description,
+        model: agent.model ?? modelFor(config, role, { agent: agent.id }),
+        role: agentRole,
+        mode: agent.mode,
+        permissions: customAgentRules(agentRole, {
+          edits: agent.edits,
+          shell: agent.shell,
+          skills: agent.skills.length > 0,
+          web: agent.web,
+          mcp: agent.mcp,
+        }),
+      }),
+      sections: [
+        body,
+        ...(instructions === undefined ? [] : [instructions]),
+        ...(skills === undefined ? [] : [skills]),
+        ...sharedSections(agentRole),
       ],
     }),
   };
@@ -232,8 +352,13 @@ function renderGraphifyIgnore(config: FactoryConfig): string {
   return `# ${MANAGED_HEADER}\n# Source: graph.exclude in factory.config.jsonc. Graphify also honours every .gitignore.\n${config.graph.exclude.join("\n")}\n`;
 }
 
-function renderOpencodeConfig(): string {
-  const config = { $schema: "https://opencode.ai/config.json", update: "disable" };
+function renderOpencodeConfig(factory: FactoryConfig): string {
+  const instructions = allInstructionPaths(factory);
+  const config = {
+    $schema: "https://opencode.ai/config.json",
+    update: "disable",
+    ...(instructions.length > 0 ? { instructions } : {}),
+  };
   return `// ${MANAGED_HEADER}\n// Agents and their permissions are in .opencode/agents/.\n${JSON.stringify(config, null, 2)}\n`;
 }
 
@@ -308,7 +433,10 @@ function ponytailFiles(config: FactoryConfig): ManagedFile[] {
 }
 
 /** Every managed file for a config, sorted by path. Pure: same config, same output. */
-export function renderWorkspace(config: FactoryConfig): ManagedFile[] {
+export function renderWorkspace(
+  config: FactoryConfig,
+  options: { readonly root?: string } = {},
+): ManagedFile[] {
   const files: ManagedFile[] = [
     { path: "AGENTS.md", template: "agents-md", mode: "block", content: renderAgentsMd(config) },
     { path: ".gitignore", template: "gitignore", mode: "block", content: renderGitignore() },
@@ -322,7 +450,7 @@ export function renderWorkspace(config: FactoryConfig): ManagedFile[] {
       path: ".opencode/opencode.jsonc",
       template: "opencode-config",
       mode: "file",
-      content: renderOpencodeConfig(),
+      content: renderOpencodeConfig(config),
     },
     {
       path: ".opencode/plugins/factory.js",
@@ -359,6 +487,7 @@ export function renderWorkspace(config: FactoryConfig): ManagedFile[] {
     ...ponytailFiles(config),
     ...AGENTS.map((spec) => renderAgent(config, spec)),
     ...config.repos.filter((r) => r.role === "code").map((r) => renderImplementer(config, r)),
+    ...config.agents.map((agent) => renderCustomAgent(config, agent, options.root)),
   ];
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }

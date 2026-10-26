@@ -145,7 +145,20 @@ const READ_TOOLS: PermissionRule[] = [
  * relative to the session directory; the plugin narrows them to the active change, the task
  * worktree and the repo's own test globs (ADR-0011).
  */
-export function agentRules(role: AgentRole, testGlobs: readonly string[] = []): PermissionRule[] {
+export interface AgentRuleOptions {
+  /** Allow the skill tool; the prompt names the skills to load. */
+  readonly skills?: boolean;
+  /** Allow read-only web search/fetch. */
+  readonly web?: boolean;
+  /** Extra MCP tool action patterns (e.g. `mantine_*`). */
+  readonly mcp?: readonly string[];
+}
+
+export function agentRules(
+  role: AgentRole,
+  testGlobs: readonly string[] = [],
+  options: AgentRuleOptions = {},
+): PermissionRule[] {
   const rules: PermissionRule[] = ACTIONS.map((a) => rule(a, "*", "deny"));
   switch (role) {
     case "orchestrator":
@@ -160,6 +173,7 @@ export function agentRules(role: AgentRole, testGlobs: readonly string[] = []): 
         ...allowAll("shell", GRAPH_QUERY_COMMANDS),
         rule("edit", "openspec/changes/*", "allow"),
       );
+      rules.push(...optionalTools(options));
       // Context packs live under .factory/, which is protected for everyone else.
       return [...rules, ...alwaysDeny([".factory/context/*"])];
     case "reviewer":
@@ -173,7 +187,41 @@ export function agentRules(role: AgentRole, testGlobs: readonly string[] = []): 
       rules.push(...READ_TOOLS, rule("shell", "*", "allow"), rule("edit", "*", "allow"));
       break;
   }
+  rules.push(...optionalTools(options));
   return [...rules, ...alwaysDeny()];
+}
+
+/** Explicit custom agent: exactly the scope in its config, never `edit: *`. */
+export function customAgentRules(
+  phase: AgentRole,
+  options: {
+    readonly edits?: readonly string[];
+    readonly shell?: readonly string[];
+    readonly skills?: boolean;
+    readonly web?: boolean;
+    readonly mcp?: readonly string[];
+  },
+): PermissionRule[] {
+  const rules: PermissionRule[] = ACTIONS.map((a) => rule(a, "*", "deny"));
+  rules.push(...READ_TOOLS);
+  if (phase === "reviewer" || phase === "contract-reviewer") {
+    rules.push(...allowAll("shell", [...GRAPH_QUERY_COMMANDS, ...READ_ONLY_GIT]));
+  } else {
+    rules.push(rule("shell", "*", "allow"));
+  }
+  rules.push(...allowAll("shell", options.shell ?? []));
+  rules.push(...allowAll("edit", options.edits ?? []));
+  rules.push(...optionalTools(options));
+  return [...rules, ...alwaysDeny()];
+}
+
+function optionalTools(options: AgentRuleOptions): PermissionRule[] {
+  const out: PermissionRule[] = [];
+  if (options.skills === true) out.push(rule("skill", "*", "allow"));
+  if (options.web === true)
+    out.push(rule("webfetch", "*", "allow"), rule("websearch", "*", "allow"));
+  for (const action of options.mcp ?? []) out.push(rule(action, "*", "allow"));
+  return out;
 }
 
 /**

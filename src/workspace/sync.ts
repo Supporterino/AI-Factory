@@ -75,7 +75,7 @@ export function planWorkspace(
 ): PlannedChange[] {
   const previous = readLock(root)?.managed ?? {};
   const tools = options.tools ?? [];
-  const plan = planSync(root, [...renderWorkspace(config), ...tools], previous, {
+  const plan = planSync(root, [...renderWorkspace(config, { root }), ...tools], previous, {
     unmanaged: config.unmanaged,
     ...options,
     carry: Object.keys(carriedTools(previous, options)),

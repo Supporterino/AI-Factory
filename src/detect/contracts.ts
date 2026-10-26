@@ -48,6 +48,10 @@ interface FoundContract {
   readonly path: string;
   /** Text that marks a reference to this contract in a consumer repo. */
   readonly needles: readonly string[];
+  /** Generated/custom contracts: the command that regenerates or validates it. */
+  readonly command?: string;
+  readonly outputs?: string[];
+  readonly validate?: Record<string, string>;
 }
 
 /** Contract files a repo provides. Test and example directories are ignored. */
@@ -60,6 +64,67 @@ function findProvided(repo: ScannedRepo): FoundContract[] {
 
   const protoDirs: string[] = [];
   const protoPackages = new Set<string>();
+
+  // Generated artifacts are contracts too. The command is the repo's own script, so the
+  // factory does not guess a toolchain.
+  const pkgText = read(repo.root, "package.json");
+  let scripts: Record<string, unknown> = {};
+  if (pkgText !== undefined) {
+    try {
+      scripts = (JSON.parse(pkgText) as { scripts?: Record<string, unknown> }).scripts ?? {};
+    } catch {
+      scripts = {};
+    }
+  }
+  const runner = /bun\.lockb?/.test(repo.files.map((f) => f.path).join("\n"))
+    ? "bun run"
+    : "npm run";
+  for (const binding of ["src/bindings.ts", "bindings.ts"]) {
+    if (candidates.some((f) => f.path === binding) && typeof scripts["gen:bindings"] === "string") {
+      found.push({
+        kind: "ipc",
+        path: binding,
+        needles: [binding],
+        command: `${runner} gen:bindings`,
+        outputs: [binding],
+      });
+    }
+  }
+  if (
+    candidates.some((f) => f.path === "src/routeTree.gen.ts") &&
+    typeof scripts.build === "string"
+  ) {
+    found.push({
+      kind: "generated",
+      path: "src/routeTree.gen.ts",
+      needles: ["src/routeTree.gen.ts"],
+      command: `${runner} build`,
+      outputs: ["src/routeTree.gen.ts"],
+    });
+  }
+  for (const dir of ["operator/config/crd/bases", "config/crd/bases"]) {
+    if (!candidates.some((f) => f.path.startsWith(`${dir}/`))) continue;
+    const taskfile = read(repo.root, "Taskfile.yml") ?? read(repo.root, "Taskfile.yaml");
+    if (taskfile !== undefined && /^ {2}manifests:/m.test(taskfile)) {
+      const root = dir.includes("/config/crd/bases")
+        ? dir.slice(0, dir.indexOf("/config/crd/bases"))
+        : ".";
+      const outputs = [
+        dir,
+        ...["config/rbac", "api/v1alpha1/zz_generated.deepcopy.go"].map((path) =>
+          root === "." ? path : `${root}/${path}`,
+        ),
+      ].filter((path) => candidates.some((f) => f.path === path || f.path.startsWith(`${path}/`)));
+      found.push({
+        kind: "crd",
+        path: dir,
+        needles: [],
+        command: "task manifests generate",
+        outputs,
+      });
+      break;
+    }
+  }
 
   for (const file of candidates) {
     const name = baseOf(file.path);
@@ -134,6 +199,9 @@ export function detectContracts(repos: readonly ScannedRepo[]): ContractConfig[]
         provider: provider.name,
         path: found.path,
         consumers: consumers.sort(),
+        ...(found.command === undefined ? {} : { command: found.command }),
+        ...(found.outputs === undefined ? {} : { outputs: found.outputs }),
+        ...(found.validate === undefined ? {} : { validate: found.validate }),
       });
     }
   }

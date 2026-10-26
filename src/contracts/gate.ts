@@ -9,6 +9,7 @@ import { listFiles } from "../detect/walk.ts";
 import { exec, git } from "../exec.ts";
 import { compactOutput } from "../gates/compact.ts";
 import { changedSince, restore, snapshot } from "../gates/guard.ts";
+import { opencodeGlobRegExp } from "../tasks/glob.ts";
 import { diffOpenApi, isOpenApi3, referencedRemovedPaths } from "./openapi.ts";
 import { diffProto, parseProtoFiles } from "./proto.ts";
 import { type Breaking, diffSchema, localResolver } from "./schema-diff.ts";
@@ -153,7 +154,53 @@ export async function checkContract(
   const consumerIssues: string[] = [];
   const notes: string[] = [];
 
-  if (contract.kind === "proto") {
+  if (
+    contract.kind === "generated" ||
+    contract.kind === "crd" ||
+    contract.kind === "ipc" ||
+    contract.kind === "custom"
+  ) {
+    if (contract.command === undefined) {
+      consumerIssues.push(`${contract.kind} contract has no command`);
+    } else if (contract.kind === "custom") {
+      const issue = await runValidate(
+        contract.command,
+        providerDir,
+        join(providerDir, contract.path),
+        input.gateOutputMaxLines,
+      );
+      if (issue) consumerIssues.push(`${provider.name}: ${issue}`);
+    } else {
+      const before = await snapshot(providerDir);
+      const res = await exec(["sh", "-c", contract.command], {
+        cwd: providerDir,
+        env: { CI: "1", NO_COLOR: "1" },
+        timeoutMs: 15 * 60_000,
+      });
+      const modified = await changedSince(before);
+      if (modified.length > 0) await restore(before, modified);
+      if (res.code !== 0) {
+        consumerIssues.push(
+          `\`${contract.command}\` failed:\n${compactOutput(`${res.stdout}\n${res.stderr}`, input.gateOutputMaxLines)}`,
+        );
+      } else {
+        const outputs = contract.outputs ?? [contract.path];
+        const drifted = modified.filter((file) =>
+          outputs.some(
+            (glob) =>
+              file === glob ||
+              file.startsWith(`${glob.replace(/\/$/, "")}/`) ||
+              opencodeGlobRegExp(glob).test(file),
+          ),
+        );
+        if (drifted.length > 0) {
+          consumerIssues.push(
+            `generated artifacts are stale: ${drifted.join(", ")}; regenerate and commit them`,
+          );
+        }
+      }
+    }
+  } else if (contract.kind === "proto") {
     const oldFiles = await filesAt(providerDir, base, contract.path, ".proto");
     const newFiles = await filesAt(providerDir, head, contract.path, ".proto");
     if (newFiles.length === 0)

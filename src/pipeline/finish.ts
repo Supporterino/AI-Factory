@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { changeShortcuts } from "../addons/shortcuts.ts";
+import { sessionInstructionPaths } from "../config/instructions.ts";
 import { repoLanguages } from "../config/schema.ts";
 import { PreconditionError } from "../errors.ts";
 import { gitOk } from "../exec.ts";
@@ -73,6 +74,7 @@ export async function review(
             head: changeBranch(id),
             spec,
             profiles: profilesFor(repoLanguages(repo)).map((pr) => pr.title),
+            instructions: sessionInstructionPaths(p.config, name, repo.path),
           }),
         });
         // No valid handoff (crash, timeout, garbage) is no review: the repo stays unreviewed.
@@ -153,7 +155,7 @@ export async function fullSuite(p: Pipeline, id: string): Promise<string[]> {
       });
       const output = report.results
         .filter((r) => r.status !== "pass" && r.status !== "skipped")
-        .map((r) => `[${r.type}] ${r.command ?? ""}\n${r.output}`)
+        .map((r) => `[${r.name ?? r.type}] ${r.command ?? ""}\n${r.output}`)
         .join("\n\n");
       await p.update(id, (d) => {
         d.fullSuite[name] = { passed: report.passed, output };

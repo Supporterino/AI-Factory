@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { findWorkspaceRoot, loadConfig } from "../../config/load.ts";
 import { PreconditionError, UsageError } from "../../errors.ts";
 import { CHANGE_ID } from "../../git/repo.ts";
@@ -9,6 +9,7 @@ import { approve } from "../../pipeline/approve.ts";
 import { Pipeline } from "../../pipeline/context.ts";
 import { design, intake } from "../../pipeline/design.ts";
 import { type DriveOutcome, drive } from "../../pipeline/drive.ts";
+import { refineRequest } from "../../pipeline/refine.ts";
 import { OpencodeRuntime } from "../../runtime/opencode.ts";
 import { readActive, releaseDriver } from "../../state/active.ts";
 import { readOrCorrupt } from "../../state/files.ts";
@@ -33,7 +34,7 @@ async function setup(
  * dispatch, interrupts agents and leaves a resumable state. The runtime is always closed and
  * the active-change driver released (the change itself stays active).
  */
-async function withPipeline<T>(
+export async function withPipeline<T>(
   io: Io,
   changeId: string,
   work: (p: Pipeline) => Promise<T>,
@@ -81,18 +82,40 @@ function changeIdArg(command: string, positionals: readonly string[]): string {
 export const runCommand: Command = {
   name: "run",
   summary: "Start a change from a request and run it up to spec approval",
-  help: `Usage: ai-factory run "<request>"
+  help: `Usage: ai-factory run "<request>" [--request <file>] [--interactive]
 
 Intake (change id and summary), a change branch in the AI repo, explorers per likely repo,
 then the architect writes the OpenSpec change. Stops at spec approval: review
 openspec/changes/<id>/ and run \`ai-factory approve <id>\`. If another change is active, the
-new one is drafted in .factory/drafts/<id> and queued after approval.`,
+new one is drafted in .factory/drafts/<id> and queued after approval.
+
+  --request <file>  Read the request from a file (e.g. one written by \`ai-factory refine\`)
+  --interactive     Ask scope/verification questions before intake`,
   async run(args, io) {
-    const { positionals } = parseCommandArgs("run", args, {}, true);
-    const request = positionals.join(" ").trim();
+    const { values, positionals } = parseCommandArgs(
+      "run",
+      args,
+      {
+        request: { type: "string" },
+        interactive: { type: "boolean", default: false },
+      },
+      true,
+    );
+    let request = positionals.join(" ").trim();
+    if (values.request !== undefined) {
+      request = readFileSync(resolve(io.cwd, values.request), "utf8").trim();
+    }
     if (request === "")
       throw new UsageError('run: expected a request, e.g. ai-factory run "add a health endpoint"');
     return withPipeline(io, "intake", async (p) => {
+      if (values.interactive) {
+        if (!p.config.workflow.refine) {
+          throw new PreconditionError("workflow.refine is disabled");
+        }
+        const refined = await refineRequest(io, request);
+        request = refined.text;
+        io.out(`refined request: ${refined.path}`);
+      }
       const id = await intake(p, request);
       const result = await design(p, id);
       if (!result.ok) {

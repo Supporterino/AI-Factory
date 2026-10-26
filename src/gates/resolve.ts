@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { FactoryConfig, GateType, Language, RepoConfig } from "../config/schema.ts";
 import type { Profile } from "../profiles/index.ts";
+import { opencodeGlobRegExp } from "../tasks/glob.ts";
 import {
   fillPlaceholders,
   type PlaceholderValues,
@@ -30,13 +31,24 @@ export const GATES_BY_MODE: Readonly<Record<GateMode, readonly GateType[]>> = {
 
 export interface ResolvedGate {
   readonly type: GateType;
+  /** Human-readable id for an extra/generated gate. */
+  readonly name?: string;
   readonly command: string;
   /** Worktree-relative directory to run in. */
   readonly cwd: string;
-  readonly source: "override" | "script" | "profile";
+  readonly source: "override" | "script" | "profile" | "extra";
   readonly profile?: Language;
   /** Worktree-relative tool directories to prepend to PATH. */
   readonly binDirs: readonly string[];
+  /** Extra environment for this gate only. */
+  readonly env?: Readonly<Record<string, string>>;
+  /** Runs before `command`; a failure fails the gate. */
+  readonly setup?: string;
+  /** Generated-artifact gate: files that must not drift. */
+  readonly outputs?: readonly string[];
+  /** False allows a gate to write files (used with outputs/format generators). */
+  readonly checkOnly?: boolean;
+  readonly timeoutMs?: number;
 }
 
 export interface GateGap {
@@ -243,6 +255,47 @@ export function resolveGates(input: ResolveInput): GatePlan {
       else if (result.reason.startsWith("skip:")) plan.skipped.push(result);
       else plan.missing.push(result);
     }
+  }
+
+  for (const extra of input.config.gates.extra) {
+    if (!extra.phases.includes(input.mode)) continue;
+    const wanted = extra.when.changed;
+    if (
+      wanted.length > 0 &&
+      input.mode === "task" &&
+      !input.changed.some((file) => wanted.some((glob) => opencodeGlobRegExp(glob).test(file)))
+    ) {
+      plan.skipped.push({
+        type: extra.type,
+        cwd: extra.cwd,
+        reason: `skip: ${extra.name} does not match the changed paths`,
+      });
+      continue;
+    }
+    const values = repoPlaceholders(input, targets);
+    const command = fillPlaceholders(extra.command, values);
+    if (command === undefined) {
+      plan.skipped.push({
+        type: extra.type,
+        cwd: extra.cwd,
+        reason: `skip: nothing affected for ${extra.name}`,
+      });
+      continue;
+    }
+    const setup = extra.setup === undefined ? undefined : fillPlaceholders(extra.setup, values);
+    plan.gates.push({
+      type: extra.type,
+      name: extra.name,
+      command,
+      cwd: extra.cwd,
+      source: "extra",
+      binDirs: rootBins,
+      ...(Object.keys(extra.env).length > 0 ? { env: extra.env } : {}),
+      ...(setup === undefined ? {} : { setup }),
+      ...(extra.outputs.length > 0 ? { outputs: extra.outputs } : {}),
+      checkOnly: extra.checkOnly,
+      ...(extra.timeoutMs === undefined ? {} : { timeoutMs: extra.timeoutMs }),
+    });
   }
   return plan;
 }
