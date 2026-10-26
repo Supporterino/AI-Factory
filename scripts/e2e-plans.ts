@@ -144,7 +144,7 @@ const SUB_TASKS: Task[] = [
     id: "2.1",
     title: "Show the backend version in the frontend",
     repo: "frontend",
-    deps: [],
+    deps: ["1.1"],
     touches: ["src/Version.tsx"],
   },
 ];

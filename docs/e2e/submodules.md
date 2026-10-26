@@ -37,10 +37,22 @@ created: .opencode/agents/implementer-frontend.md
 created: .opencode/agents/orchestrator.md
 created: .opencode/agents/reviewer.md
 created: .opencode/agents/tester.md
+created: .opencode/commands/opsx-apply.md
+created: .opencode/commands/opsx-archive.md
+created: .opencode/commands/opsx-explore.md
+created: .opencode/commands/opsx-propose.md
+created: .opencode/commands/opsx-sync.md
+created: .opencode/commands/opsx-update.md
 created: .opencode/opencode.jsonc
 created: .opencode/plugins/factory.js
 created: .opencode/schemas/factory.config.schema.json
 created: .opencode/schemas/handoff.schema.json
+created: .opencode/skills/openspec-apply-change/SKILL.md
+created: .opencode/skills/openspec-archive-change/SKILL.md
+created: .opencode/skills/openspec-explore/SKILL.md
+created: .opencode/skills/openspec-propose/SKILL.md
+created: .opencode/skills/openspec-sync-specs/SKILL.md
+created: .opencode/skills/openspec-update-change/SKILL.md
 created: .opencode/standards/go.md
 created: .opencode/standards/helm.md
 created: .opencode/standards/python.md
@@ -54,9 +66,9 @@ hook ai: installed
 hook backend: installed
 hook deploy: installed
 hook frontend: installed
-graph: built (667 nodes, 3.9s)
-committed efba3dbf009d chore(factory): init v0.2.0
-# exit 0 · 5.4s
+graph: built (678 nodes, 2.5s)
+committed 571f6850b9fa chore(factory): init v0.2.0
+# exit 0 · 3.8s
 ```
 
 Config edits for the run: every role uses the stub model, and the detected OpenAPI contract is confirmed with `frontend` as its consumer. The backend gates are the Go profile's (`gofmt`, `go vet`, `go test -race`); `golangci-lint` is not installed here, so lint runs `go vet`. The frontend fixture has no `node_modules`, so its gates are `skip`. `deploy` keeps `helm lint` and checks rendering with `helm template`.
@@ -146,15 +158,15 @@ config migrations: none
   update: openspec/config.yaml
 detection differs from the config (not applied; see `ai-factory detect`):
   + contract helm-values deploy:charts/app/values.schema.json → consumers [backend]
-committed 7cfac579fa5b chore(factory): update to v0.2.0
-backup: /private<tmp>/ai/.factory/backups/2026-10-26T10-03-53-309Z
-# exit 0 · 1.1s
+committed f0dd39d99461 chore(factory): update to v0.2.0
+backup: /private<tmp>/ai/.factory/backups/2026-10-26T14-28-53-218Z
+# exit 0 · 1.0s
 ```
 
 ```console
 $ ai-factory graph
-graph updated: 667 nodes, 815 links in 2.0s
-# exit 0 · 2.2s
+graph updated: 678 nodes, 853 links in 1.6s
+# exit 0 · 1.6s
 ```
 
 ```console
@@ -169,6 +181,8 @@ install
   ✓ config: schemaVersion 2, layout submodules
 security
   ✓ sandbox: agent shells and gates run under macOS sandbox-exec
+environment
+  ✓ graphify env: no auto-refresh, no LLM backend
 install
   ✓ managed files: 30 up to date
 repos
@@ -186,7 +200,7 @@ gates
   ✓ frontend: 0 gate command(s) resolved, toolchain present
 caches
   ✓ dependency caches: 0 B
-  ✓ backups: 140 KiB
+  ✓ backups: 168 KiB
 models
   ✓ orchestrator: stub/claude-stub
   ✓ architect: stub/claude-stub
@@ -195,7 +209,7 @@ models
   ✓ tester: stub/claude-stub
   ✓ explorer: stub/claude-stub
 graph
-  ✓ graph: 0 min old, no code changes since it was built (667 nodes)
+  ✓ graph: 0 min old, no code changes since it was built (678 nodes)
 changes
   ✓ active: none
 gate table (full mode; per task, scoped commands and affected tests are used)
@@ -212,7 +226,7 @@ gate table (full mode; per task, scoped commands and affected tests are used)
   frontend types   skip: gates.overrides.frontend.types
   frontend test    skip: gates.overrides.frontend.test
 all checks passed
-# exit 0 · 1.2s
+# exit 0 · 1.0s
 ```
 
 ## Run up to the spec
@@ -224,13 +238,13 @@ $ ai-factory run Add GET /version (with the OpenAPI contract) and GET /ready to 
 ▶ explore: backend, frontend
 ▶ design: openspec/changes/add-version-endpoint
 add-version-endpoint: awaiting approval — review openspec/changes/add-version-endpoint/ then run `ai-factory approve add-version-endpoint`
-# exit 0 · 4.1s
+# exit 0 · 2.7s
 ```
 
 ```console
 $ ai-factory status add-version-endpoint
 change add-version-endpoint — awaiting-approval (not active; factory 0.2.0)
-  branches: . change/add-version-endpoint @7cfac579fa5b
+  branches: . change/add-version-endpoint @f0dd39d99461
   usage: 19.8k tokens (1.6k cache read, 336 out) · cost n/a in 4 sessions
     by agent: architect 12.4k, explorer 5.0k, orchestrator 2.5k
     retry overhead: 0 · wasted re-reads: 0
@@ -259,7 +273,7 @@ change add-version-endpoint — awaiting-approval (not active; factory 0.2.0)
 
 - [ ] 2.1 Show the backend version in the frontend
   - repo: frontend
-  - deps: none
+  - deps: 1.1
   - touches: src/Version.tsx
 ```
 
@@ -267,12 +281,12 @@ change add-version-endpoint — awaiting-approval (not active; factory 0.2.0)
 
 ```console
 $ ai-factory approve add-version-endpoint
-✓ approved add-version-endpoint by fixture@example.com (spec 92d2828dc845, 4 tasks)
+✓ approved add-version-endpoint by fixture@example.com (spec f2f0d787dffb, 4 tasks)
 ▶ context packs (4)
 ▶ implement: 4 tasks (max 4 agents)
-  ✓ 2.1 merged (frontend)
   ✓ 1.2 merged (backend)
   ✓ 1.1 merged (backend)
+  ✓ 2.1 merged (frontend)
   ✓ 1.3 merged (backend)
 ▶ review + tests: backend, frontend
 ▶ implement: 2 tasks (max 4 agents)
@@ -285,21 +299,24 @@ $ ai-factory approve add-version-endpoint
 ▶ close
 ✓ add-version-endpoint done — report: /private<tmp>/ai/.factory/reports/add-version-endpoint.md
 add-version-endpoint: done
-# exit 0 · 58.9s
+# exit 0 · 42.7s
 ```
 
 ```console
 $ ai-factory status add-version-endpoint
 change add-version-endpoint — done (not active; factory 0.2.0)
-  branches: . change/add-version-endpoint @7cfac579fa5b · backend change/add-version-endpoint @dcc0e6a2ee97 · frontend change/add-version-endpoint @a9de5531d2a4
+  branches: . change/add-version-endpoint @f0dd39d99461 · backend change/add-version-endpoint @d264ed229a45 · frontend change/add-version-endpoint @f875d2997cb3
   graph: covers 6 of 6 merges
   tasks: 6/6 merged (merge seq 6)
-    ✓ 1.1           backend  Add GET /version to the backend and its OpenAPI contract — merged 2516a206256c · 12.4k tok
-    ✓ 1.2           backend  Add the readiness handler — merged 9895410c1b66 · 5.0k tok
-    ✓ 1.3           backend  Register GET /ready — merged 7f50e5e78c2e · 5.0k tok
-    ✓ 2.1           frontend Show the backend version in the frontend — merged 790f7146a39c · 5.0k tok
-    ✓ test-frontend frontend Ensure every scenario of frontend has a test — merged 971913d4923b · 5.0k tok
-    ✓ test-backend  backend  Ensure every scenario of backend has a test — merged ab6a7f654873 · 5.0k tok
+    ✓ 1.1           backend  Add GET /version to the backend and its OpenAPI contract — merged 6c95035e0cce · 12.4k tok
+    ✓ 1.2           backend  Add the readiness handler — merged 049bbb00e67b · 5.0k tok
+    ✓ 1.3           backend  Register GET /ready — merged 89398cdb8411 · 5.0k tok
+    ✓ 2.1           frontend Show the backend version in the frontend — merged 29eacef9c5ef · 5.0k tok
+    ✓ test-backend  backend  Ensure every scenario of backend has a test — merged 4d11b9eb1467 · 5.0k tok
+    ✓ test-frontend frontend Ensure every scenario of frontend has a test — merged 5898071f096c · 5.0k tok
+  full suite: frontend ✓, backend ✓
+  contracts: openapi:backend:api/openapi.yaml ✓
+  pointers: 95c32d2945a8 (provisional; repos/backend: d264ed229a45 → 4d11b9eb1467, repos/frontend: f875d2997cb3 → 5898071f096c)
   usage: 76.8k tokens (6.2k cache read, 1.3k out) · cost n/a in 14 sessions
     by agent: architect 24.8k, implementer-backend 22.3k, tester 9.9k, explorer 5.0k, implementer-frontend 5.0k, reviewer 5.0k, orchestrator 2.5k, contract-reviewer 2.5k
     retry overhead: 0 · wasted re-reads: 0
@@ -310,28 +327,28 @@ change add-version-endpoint — done (not active; factory 0.2.0)
 
 ```console
 $ git log --format='%h %s' main..change/add-version-endpoint
-f572392 chore(spec): archive add-version-endpoint
-fc8e62e chore(submodules): bump for add-version-endpoint [provisional]
-92d2828 docs(spec): add-version-endpoint
+99c1211 chore(spec): archive add-version-endpoint
+95c32d2 chore(submodules): bump for add-version-endpoint [provisional]
+f2f0d78 docs(spec): add-version-endpoint
 ```
 
 ```console
 $ git -C repos/backend log --format='%h %s  [%(trailers:key=Task,valueonly,separator=)]' main..change/add-version-endpoint
-ab6a7f6 test: ensure every scenario of backend has a test  [test-backend]
-7f50e5e feat: register GET /ready  [1.3]
-2516a20 feat: add GET /version to the backend and its OpenAPI contract  [1.1]
-9895410 feat: add the readiness handler  [1.2]
+4d11b9e test: ensure every scenario of backend has a test  [test-backend]
+89398cd feat: register GET /ready  [1.3]
+6c95035 feat: add GET /version to the backend and its OpenAPI contract  [1.1]
+049bbb0 feat: add the readiness handler  [1.2]
 ```
 
 ```console
 $ git -C repos/frontend log --format='%h %s  [%(trailers:key=Task,valueonly,separator=)]' main..change/add-version-endpoint
-971913d test: ensure every scenario of frontend has a test  [test-frontend]
-790f714 feat: show the backend version in the frontend  [2.1]
+5898071 test: ensure every scenario of frontend has a test  [test-frontend]
+29eacef feat: show the backend version in the frontend  [2.1]
 ```
 
 ```console
 $ git show --stat change/add-version-endpoint~1
-fc8e62e chore(submodules): bump for add-version-endpoint [provisional]
+95c32d2 chore(submodules): bump for add-version-endpoint [provisional]
 
 Change-Id: add-version-endpoint
 
@@ -358,7 +375,7 @@ $ git -C repos/frontend branch --list '*change*'
 
 ```console
 $ git worktree list
-/private<tmp>/ai f572392 [change/add-version-endpoint]
+/private<tmp>/ai 99c1211 [change/add-version-endpoint]
 ```
 
 ### Gate runs
@@ -366,12 +383,12 @@ $ git worktree list
 Each task's gates, as logged (per task in its worktree, then again after the rebase in the merge queue; `full:<repo>` is the full suite at the end):
 
 ```text
-2.1            format skipped · lint skipped · types skipped · testAffected skipped
-2.1            format skipped · lint skipped · types skipped · testAffected skipped
 1.2            format pass (out="$(gofmt -l ready.go)"; [ -z "$out" ] || { echo "need...) · lint pass (go vet ./...) · types pass (go vet .) · testAffected pass (go test -race .)
 1.1            format pass (out="$(gofmt -l main.go version.go)"; [ -z "$out" ] || { ...) · lint pass (go vet ./...) · types pass (go vet .) · testAffected pass (go test -race .)
 1.2            format pass (out="$(gofmt -l ready.go)"; [ -z "$out" ] || { echo "need...) · lint pass (go vet ./...) · types pass (go vet .) · testAffected pass (go test -race .)
 1.1            format pass (out="$(gofmt -l main.go version.go)"; [ -z "$out" ] || { ...) · lint pass (go vet ./...) · types pass (go vet .) · testAffected pass (go test -race .)
+2.1            format skipped · lint skipped · types skipped · testAffected skipped
+2.1            format skipped · lint skipped · types skipped · testAffected skipped
 1.3            format pass (out="$(gofmt -l main.go)"; [ -z "$out" ] || { echo "needs...) · lint pass (go vet ./...) · types pass (go vet .) · testAffected pass (go test -race .)
 1.3            format pass (out="$(gofmt -l main.go)"; [ -z "$out" ] || { echo "needs...) · lint pass (go vet ./...) · types pass (go vet .) · testAffected pass (go test -race .)
 test-frontend  format skipped · lint skipped · types skipped · testAffected skipped
@@ -388,9 +405,9 @@ Every tool call the agents made is logged (redacted). These are the calls the pl
 
 ```json
 {
-  "at": "2026-10-26T10:04:04.243Z",
+  "at": "2026-10-26T14:29:01.591Z",
   "kind": "blocked",
-  "session": "ses_e885535caffdKtSYi2gP076NJP",
+  "session": "ses_e8762a28effe0DPOHV5wTan0Ng",
   "agent": "implementer-backend",
   "tool": "shell",
   "input": { "command": "git push origin HEAD" },
@@ -407,9 +424,9 @@ Add GET /version and GET /ready to the backend; show the version in the frontend
 
 ## Branches (local only; nothing was pushed)
 
-- backend: `change/add-version-endpoint` at ab6a7f654873 (4 commits)
-- frontend: `change/add-version-endpoint` at 971913d4923b (2 commits)
-- AI repo: `change/add-version-endpoint` (archive commit f5723925afaa)
+- backend: `change/add-version-endpoint` at 4d11b9eb1467 (4 commits)
+- frontend: `change/add-version-endpoint` at 5898071f096c (2 commits)
+- AI repo: `change/add-version-endpoint` (archive commit 99c1211982ae)
 
 ## Tasks
 
@@ -417,13 +434,13 @@ Add GET /version and GET /ready to the backend; show the version in the frontend
 - [x] 1.2 (backend, task): Add the readiness handler
 - [x] 1.3 (backend, task): Register GET /ready
 - [x] 2.1 (frontend, task): Show the backend version in the frontend
-- [x] test-frontend (frontend, test): Ensure every scenario of frontend has a test
 - [x] test-backend (backend, test): Ensure every scenario of backend has a test
+- [x] test-frontend (frontend, test): Ensure every scenario of frontend has a test
 
 ## Submodule pointers (provisional)
 
-- repos/backend: dcc0e6a2ee97 → ab6a7f654873
-- repos/frontend: a9de5531d2a4 → 971913d4923b
+- repos/backend: d264ed229a45 → 4d11b9eb1467
+- repos/frontend: f875d2997cb3 → 5898071f096c
 
 Push each `change/add-version-endpoint` branch and open your MRs. After they merge, run `ai-factory repoint add-version-endpoint` to replace these pointers with the merged commits.
 
@@ -446,9 +463,26 @@ Total: 76.8k tokens (6.2k cache read, 1.3k out) · cost n/a over 14 sessions.
 | orchestrator         | 2.5k   | 3%    | cost n/a |
 | contract-reviewer    | 2.5k   | 3%    | cost n/a |
 
+| Task or step     | Tokens | Share | Cost     |
+| ---------------- | ------ | ----- | -------- |
+| design           | 12.4k  | 16%   | cost n/a |
+| context-packs    | 12.4k  | 16%   | cost n/a |
+| 1.1              | 12.4k  | 16%   | cost n/a |
+| 1.2              | 5.0k   | 6%    | cost n/a |
+| 2.1              | 5.0k   | 6%    | cost n/a |
+| 1.3              | 5.0k   | 6%    | cost n/a |
+| test-backend     | 5.0k   | 6%    | cost n/a |
+| test-frontend    | 5.0k   | 6%    | cost n/a |
+| intake           | 2.5k   | 3%    | cost n/a |
+| explore:backend  | 2.5k   | 3%    | cost n/a |
+| explore:frontend | 2.5k   | 3%    | cost n/a |
+| review:backend   | 2.5k   | 3%    | cost n/a |
+| review:frontend  | 2.5k   | 3%    | cost n/a |
+| contract-review  | 2.5k   | 3%    | cost n/a |
+
 Top consumers: design (12.4k), context-packs (12.4k), 1.1 (12.4k), 1.2 (5.0k), 2.1 (5.0k).
 Retry overhead: 0 tokens (0%).
 Wasted re-reads of unchanged files: 0.
 ```
 
-Total wall time: 73s. Model requests served by the stub: 31.
+Total wall time: 53s. Model requests served by the stub: 31.

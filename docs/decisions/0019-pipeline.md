@@ -15,7 +15,10 @@
 - **Approval.** Commits `docs(spec): <id>` (or reuses the last commit of the change folder) and records `{approver, specCommit, hash}`.
   - `approve` checks the phase again under the run lock, so a concurrent `approve` or `resume` cannot reset loaded tasks (audit P14).
   - On activation **and** on entering every later phase (implementing, reviewing, contracts, full suite, closing), the CLI re-checks the hash and that the spec commit is an ancestor of `change/<id>` (audit P9). Once implementation has started the change cannot be approved again: the error shows how to restore the approved spec, or to abort. Closing skips the check once the archive has moved the spec.
-- **Context packs.** One architect session writes all missing packs after approval. A missing pack gets a deterministic fallback (task, metadata, spec text), and any pack is truncated to `contextPackMaxTokens` (estimated at 4 characters per token).
+- **Context packs.** One architect session writes all missing packs after approval. A missing pack gets a deterministic fallback (task, metadata, spec text), and any pack is truncated to `contextPackMaxTokens` (estimated at 4 characters per token), cut at the last whole line (audit P20). Reviewer and tester prompts cap the spec the same way and point to the spec files for the rest.
+- **Explorers** are context, not a gate: one that fails is noted in the architect's prompt and the others still count (audit P20). Only when every explorer fails (the runtime is down) does the design pause.
+- **Contract order.** Design validation requires every task in a consumer repo to depend on the tasks that change a contract it consumes; before, only the architect's prompt asked for it (audit G9).
+- **`touches` globs** must be valid: unbalanced `[` or `{` fails design validation (audit G9).
 - **Attempts.** Each attempt is a fresh session. Earlier work stays in the worktree, and the full compacted gate output is the feedback, with a note on top when it repeats the previous attempt's. Diff-only feedback left fresh sessions without the error text (audit P1).
   - After the session, the CLI audits the worktree diff against the scope. Out-of-scope files are reverted and the attempt counts as a failure.
   - On a successful attempt the CLI commits: spec tasks get a Conventional type from the title, testers `test:`, follow-ups `fix:`.
@@ -25,6 +28,7 @@
   - `must` and `should` findings become `fix-<repo>-<n>` tasks (touches `**`; the finding is their context pack). `nice` findings go to the report only.
   - The tester task is `test-<repo>`.
   - A reviewer or contract reviewer that returns no handoff (crash, timeout, prose) is not a clean review: the change pauses and the repo is reviewed again on `resume` (audit P13).
+  - Reviews start once every repo has merged, and the tester task follows its repo's review. This is deliberate (audit G9 asked): the reviewer sees the integrated change, and tests are not written for code that a review fix then rewrites. Starting per-repo reviews earlier would mean running the scheduler inside the review phase.
 - **Full suite.** Failures become `suite-<repo>-<round>` fix tasks, seeded with the gate output. After two rounds the change pauses.
 - **Close.** In order:
   1. Mirror the task checkboxes into `tasks.md`.

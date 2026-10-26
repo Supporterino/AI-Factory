@@ -43,23 +43,31 @@ export const PROTECTED_PATHS = [
   ".gitmodules",
 ] as const;
 
-/** Files no agent may read or edit. */
+/**
+ * Files no agent may read or edit: the opencode-rule form of `isSecretPath` (paths.ts). A test
+ * keeps both lists in agreement (audit S11).
+ */
 export const SECRET_PATHS = [
   ".env*",
   "*/.env*",
   "*.pem",
   "*.key",
-  "id_rsa*",
-  "id_ed25519*",
-  "id_ecdsa*",
-  "*/id_rsa*",
-  "*/id_ed25519*",
-  "*/id_ecdsa*",
+  "*.p12",
+  "*.pfx",
+  ...["id_rsa*", "id_dsa*", "id_ed25519*", "id_ecdsa*"].flatMap((n) => [n, `*/${n}`]),
   "*kubeconfig*",
-  "*/.kube/*",
-  "*/.aws/*",
-  "*/.config/gcloud/*",
+  ...[
+    ".kube/*",
+    ".aws/*",
+    ".config/gcloud/*",
+    ".config/gh/*",
+    ".azure/*",
+    ".ssh/*",
+    ".docker/config.json",
+  ].flatMap((n) => [n, `*/${n}`]),
+  ...[".netrc", ".npmrc", ".pypirc", ".git-credentials"].flatMap((n) => [n, `*/${n}`]),
   "*.tfstate",
+  "*.tfstate.backup",
 ] as const;
 
 /** Read-only graph queries agents may run (graph updates are the CLI's job). */

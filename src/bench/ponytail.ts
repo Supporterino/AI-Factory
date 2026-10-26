@@ -44,7 +44,44 @@ export const BENCH_CASES: readonly BenchCase[] = [
         'import { expect, test } from "bun:test";\nimport { sum } from "./sum";\n\ntest("adds", () => expect(sum(1, 2)).toBe(3));\n',
     },
   },
+  {
+    // A fix in existing code: does the add-on keep the diff small without skipping the test?
+    id: "paginate-fix",
+    request:
+      "Fix pageOf(items, page, size) in src/page.ts: page numbers start at 1, but page 1 currently skips the first `size` items and the last page can come back empty. Pages past the end return an empty list.",
+    files: {
+      "package.json": `${JSON.stringify({ name: "bench-app", private: true, type: "module", scripts: { test: "bun test" } }, null, 2)}\n`,
+      "bunfig.toml": "[test]\n",
+      "tsconfig.json": `${JSON.stringify({ compilerOptions: { strict: true, noEmit: true, module: "esnext", target: "es2022" } }, null, 2)}\n`,
+      "src/page.ts":
+        "export function pageOf<T>(items: readonly T[], page: number, size: number): T[] {\n  const start = page * size;\n  return items.slice(start, start + size);\n}\n",
+      "src/page.test.ts":
+        'import { expect, test } from "bun:test";\nimport { pageOf } from "./page";\n\ntest("size limits a page", () => expect(pageOf([1, 2, 3], 0, 2)).toHaveLength(2));\n',
+    },
+  },
 ];
+
+/** A Ponytail setting a run uses: off, or on at a level (§12). */
+export interface BenchVariant {
+  readonly name: string;
+  readonly label: string;
+  readonly enabled: boolean;
+  readonly level?: "lite" | "full" | "ultra";
+}
+
+/** "without" plus one "with" variant per level ("with" alone for the default level). */
+export function benchVariants(levels: readonly ("lite" | "full" | "ultra")[]): BenchVariant[] {
+  const single = levels.length === 1 && levels[0] === "full";
+  return [
+    ...levels.map(
+      (level): BenchVariant =>
+        single
+          ? { name: "with", label: "With Ponytail", enabled: true, level }
+          : { name: `with-${level}`, label: `Ponytail ${level}`, enabled: true, level },
+    ),
+    { name: "without", label: "Without", enabled: false },
+  ];
+}
 
 /** Gates for the bench fixture: only tests (the fixture installs no formatter or linter). */
 const BENCH_GATES = {
@@ -60,7 +97,7 @@ export const SESSIONS_PER_RUN = 10;
 export const TOKENS_PER_RUN_ESTIMATE = 250_000;
 
 export interface RunMetrics {
-  readonly variant: "with" | "without";
+  readonly variant: string;
   readonly run: number;
   readonly phase: string;
   readonly tokens: number;
@@ -109,7 +146,7 @@ function walk(dir: string, rel = ""): string[] {
 async function collect(
   root: string,
   id: string,
-  variant: RunMetrics["variant"],
+  variant: string,
   run: number,
 ): Promise<RunMetrics> {
   const state = loadRun(root, id);
@@ -168,14 +205,18 @@ export interface BenchOptions {
   readonly cli: (argv: readonly string[], io: Io) => Promise<number>;
   readonly io: Io;
   readonly cases?: readonly BenchCase[];
+  readonly variants?: readonly BenchVariant[];
+  /** Called after every run with the results so far, so an interrupted bench keeps them. */
+  readonly onRun?: (partial: readonly BenchResult[]) => void;
 }
 
 async function oneRun(
   opts: BenchOptions,
   bench: BenchCase,
-  variant: RunMetrics["variant"],
+  v: BenchVariant,
   run: number,
 ): Promise<RunMetrics> {
+  const variant = v.name;
   const base = mkdtempSync(join(tmpdir(), `ai-factory-bench-${variant}-`));
   const root = join(base, "app");
   try {
@@ -200,7 +241,8 @@ async function oneRun(
     const file = join(root, "factory.config.jsonc");
     let text = readFileSync(file, "utf8");
     text = setJsonc(text, ["models"], opts.config.models);
-    text = setJsonc(text, ["addons", "ponytail", "enabled"], variant === "with");
+    text = setJsonc(text, ["addons", "ponytail", "enabled"], v.enabled);
+    if (v.level !== undefined) text = setJsonc(text, ["addons", "ponytail", "level"], v.level);
     // The single repo is named after its directory ("app").
     text = setJsonc(text, ["gates", "overrides"], { app: BENCH_GATES });
     writeFileSync(file, text);
@@ -219,31 +261,56 @@ async function oneRun(
   }
 }
 
+export interface VariantSummary {
+  /** Runs that reached `done`; quality metrics are over these only. */
+  readonly finished: number;
+  readonly total: number;
+  readonly metrics: Record<(typeof METRICS)[number], Stat>;
+}
+
 export interface BenchResult {
   readonly case: string;
+  readonly variants: readonly BenchVariant[];
   readonly runs: readonly RunMetrics[];
-  readonly summary: Record<"with" | "without", Record<(typeof METRICS)[number], Stat>>;
+  readonly summary: Record<string, VariantSummary>;
+}
+
+/**
+ * Tokens count every run (they were spent). The quality metrics use finished runs only: an
+ * unfinished run has no review and few tests, which would flatter or punish a variant.
+ */
+export function summarizeVariant(runs: readonly RunMetrics[]): VariantSummary {
+  const finished = runs.filter((r) => r.phase === "done");
+  return {
+    finished: finished.length,
+    total: runs.length,
+    metrics: Object.fromEntries(
+      METRICS.map((m) => [m, stat((m === "tokens" ? runs : finished).map((r) => r[m]))]),
+    ) as Record<(typeof METRICS)[number], Stat>,
+  };
 }
 
 export async function runBench(opts: BenchOptions): Promise<BenchResult[]> {
+  const variants = opts.variants ?? benchVariants(["full"]);
   const results: BenchResult[] = [];
   for (const bench of opts.cases ?? BENCH_CASES) {
     const runs: RunMetrics[] = [];
+    const result = (): BenchResult => ({
+      case: bench.id,
+      variants,
+      runs,
+      summary: Object.fromEntries(
+        variants.map((v) => [v.name, summarizeVariant(runs.filter((r) => r.variant === v.name))]),
+      ),
+    });
     for (let i = 1; i <= opts.runs; i++) {
-      for (const variant of ["with", "without"] as const) {
-        opts.io.out(`▶ ${bench.id}: run ${i}/${opts.runs} ${variant} Ponytail`);
-        runs.push(await oneRun(opts, bench, variant, i));
+      for (const v of variants) {
+        opts.io.out(`▶ ${bench.id}: run ${i}/${opts.runs} ${v.label}`);
+        runs.push(await oneRun(opts, bench, v, i));
+        opts.onRun?.([...results, result()]);
       }
     }
-    const summarize = (variant: "with" | "without") =>
-      Object.fromEntries(
-        METRICS.map((m) => [m, stat(runs.filter((r) => r.variant === variant).map((r) => r[m]))]),
-      ) as Record<(typeof METRICS)[number], Stat>;
-    results.push({
-      case: bench.id,
-      runs,
-      summary: { with: summarize("with"), without: summarize("without") },
-    });
+    results.push(result());
   }
   return results;
 }
@@ -264,22 +331,24 @@ export function benchMarkdown(
     `# Ponytail bench (${date})`,
     "",
     `Models: implementer \`${models.implementer}\`, reviewer \`${models.reviewer}\`, architect \`${models.architect}\`.`,
-    "Medians with min–max over the runs. Lower is better for tokens, lines and retries; higher for pass rate and coverage.",
+    "Medians with min–max. Tokens count every run; the other metrics only runs that finished. Lower is better for tokens, lines and retries; higher for pass rate and coverage.",
     "",
   ];
   for (const r of results) {
+    const perVariant = r.runs.length / Math.max(1, r.variants.length);
     lines.push(
-      `## ${r.case} (${r.runs.length / 2} run${r.runs.length === 2 ? "" : "s"} per variant)`,
+      `## ${r.case} (${perVariant} run${perVariant === 1 ? "" : "s"} per variant)`,
       "",
-      "| Metric | With Ponytail | Without |",
-      "|---|---|---|",
+      `| Metric | ${r.variants.map((v) => v.label).join(" | ")} |`,
+      `|---|${r.variants.map(() => "---").join("|")}|`,
+      `| finished | ${r.variants.map((v) => `${r.summary[v.name]?.finished ?? 0}/${r.summary[v.name]?.total ?? 0}`).join(" | ")} |`,
     );
     for (const m of METRICS) {
-      const w = r.summary.with[m];
-      const o = r.summary.without[m];
-      lines.push(
-        `| ${m} | ${fmt(m, w.median)} (${fmt(m, w.min)}–${fmt(m, w.max)}) | ${fmt(m, o.median)} (${fmt(m, o.min)}–${fmt(m, o.max)}) |`,
-      );
+      const cells = r.variants.map((v) => {
+        const s = r.summary[v.name]?.metrics[m] ?? { median: 0, min: 0, max: 0 };
+        return `${fmt(m, s.median)} (${fmt(m, s.min)}–${fmt(m, s.max)})`;
+      });
+      lines.push(`| ${m} | ${cells.join(" | ")} |`);
     }
     const unfinished = r.runs
       .filter((x) => x.phase !== "done")

@@ -35,10 +35,22 @@ created: .opencode/agents/implementer-app.md
 created: .opencode/agents/orchestrator.md
 created: .opencode/agents/reviewer.md
 created: .opencode/agents/tester.md
+created: .opencode/commands/opsx-apply.md
+created: .opencode/commands/opsx-archive.md
+created: .opencode/commands/opsx-explore.md
+created: .opencode/commands/opsx-propose.md
+created: .opencode/commands/opsx-sync.md
+created: .opencode/commands/opsx-update.md
 created: .opencode/opencode.jsonc
 created: .opencode/plugins/factory.js
 created: .opencode/schemas/factory.config.schema.json
 created: .opencode/schemas/handoff.schema.json
+created: .opencode/skills/openspec-apply-change/SKILL.md
+created: .opencode/skills/openspec-archive-change/SKILL.md
+created: .opencode/skills/openspec-explore/SKILL.md
+created: .opencode/skills/openspec-propose/SKILL.md
+created: .opencode/skills/openspec-sync-specs/SKILL.md
+created: .opencode/skills/openspec-update-change/SKILL.md
 created: .opencode/standards/go.md
 created: .opencode/standards/helm.md
 created: .opencode/standards/python.md
@@ -49,9 +61,9 @@ created: .opencode/standards/typescript.md
 created: AGENTS.md
 created: openspec/config.yaml
 hook app: installed
-graph: built (575 nodes, 6.7s)
-committed 31ceccea38c8 chore(factory): init v0.2.0
-# exit 0 · 7.9s
+graph: built (586 nodes, 5.3s)
+committed 3cc6f8582890 chore(factory): init v0.2.0
+# exit 0 · 6.5s
 ```
 
 Config edits for the run: every role uses the stub model. The fixture has no installed formatter, linter or `tsc`, so those gates are `skip`; tests run for real with `bun test` (the repo's `test` script for the full suite, the test files related to each task's changes per task).
@@ -112,15 +124,15 @@ config migrations: none
   update: .opencode/agents/orchestrator.md
   update: .opencode/agents/reviewer.md
   update: .opencode/agents/tester.md
-committed 281c0748d01f chore(factory): update to v0.2.0
-backup: /private<tmp>/app/.factory/backups/2026-10-26T10-03-18-486Z
-# exit 0 · 0.9s
+committed c599a9387213 chore(factory): update to v0.2.0
+backup: /private<tmp>/app/.factory/backups/2026-10-26T14-27-41-566Z
+# exit 0 · 0.8s
 ```
 
 ```console
 $ ai-factory graph
-graph updated: 575 nodes, 724 links in 2.0s
-# exit 0 · 2.1s
+graph updated: 586 nodes, 762 links in 1.6s
+# exit 0 · 1.7s
 ```
 
 ```console
@@ -135,6 +147,8 @@ install
   ✓ config: schemaVersion 2, layout single
 security
   ✓ sandbox: agent shells and gates run under macOS sandbox-exec
+environment
+  ✓ graphify env: no auto-refresh, no LLM backend
 install
   ✓ managed files: 28 up to date
 repos
@@ -144,7 +158,7 @@ gates
   ✓ app: 1 gate command(s) resolved, toolchain present
 caches
   ✓ dependency caches: 0 B
-  ✓ backups: 85 KiB
+  ✓ backups: 108 KiB
 models
   ✓ orchestrator: stub/claude-stub
   ✓ architect: stub/claude-stub
@@ -153,7 +167,7 @@ models
   ✓ tester: stub/claude-stub
   ✓ explorer: stub/claude-stub
 graph
-  ✓ graph: 0 min old, no code changes since it was built (575 nodes)
+  ✓ graph: 0 min old, no code changes since it was built (586 nodes)
 changes
   ✓ active: none
 gate table (full mode; per task, scoped commands and affected tests are used)
@@ -162,7 +176,7 @@ gate table (full mode; per task, scoped commands and affected tests are used)
   app lint    skip: gates.overrides.app.lint
   app types   skip: gates.overrides.app.types
 all checks passed
-# exit 0 · 1.0s
+# exit 0 · 0.9s
 ```
 
 ## Run up to the spec
@@ -174,13 +188,13 @@ $ ai-factory run Add a greet(name) helper and a clamp(n, min, max) helper, expor
 ▶ explore: app
 ▶ design: openspec/changes/add-text-helpers
 add-text-helpers: awaiting approval — review openspec/changes/add-text-helpers/ then run `ai-factory approve add-text-helpers`
-# exit 0 · 2.8s
+# exit 0 · 2.3s
 ```
 
 ```console
 $ ai-factory status add-text-helpers
 change add-text-helpers — awaiting-approval (not active; factory 0.2.0)
-  branches: . change/add-text-helpers @281c0748d01f
+  branches: . change/add-text-helpers @c599a9387213
   usage: 17.3k tokens (1.4k cache read, 294 out) · cost n/a in 3 sessions
     by agent: architect 12.4k, orchestrator 2.5k, explorer 2.5k
     retry overhead: 0 · wasted re-reads: 0
@@ -210,7 +224,7 @@ change add-text-helpers — awaiting-approval (not active; factory 0.2.0)
 
 ```console
 $ ai-factory approve add-text-helpers
-✓ approved add-text-helpers by fixture@example.com (spec 841915a3ad1d, 3 tasks)
+✓ approved add-text-helpers by fixture@example.com (spec 9f40f0fe80be, 3 tasks)
 ▶ context packs (3)
 ▶ implement: 3 tasks (max 4 agents)
   ✓ 1.2 merged (app)
@@ -224,19 +238,20 @@ $ ai-factory approve add-text-helpers
 ▶ close
 ✓ add-text-helpers done — report: /private<tmp>/app/.factory/reports/add-text-helpers.md
 add-text-helpers: done
-# exit 0 · 16.0s
+# exit 0 · 13.5s
 ```
 
 ```console
 $ ai-factory status add-text-helpers
 change add-text-helpers — done (not active; factory 0.2.0)
-  branches: . change/add-text-helpers @281c0748d01f · app change/add-text-helpers @281c0748d01f
+  branches: . change/add-text-helpers @c599a9387213 · app change/add-text-helpers @c599a9387213
   graph: covers 4 of 4 merges
   tasks: 4/4 merged (merge seq 4)
-    ✓ 1.1      app Add the greet helper — merged ab4c6f793c8a · 9.9k tok
-    ✓ 1.2      app Add the clamp helper — merged a7fbe4d2ef07 · 5.0k tok
-    ✓ 1.3      app Export the helpers from src/index.ts — merged 7cb1923bd1eb · 5.0k tok
-    ✓ test-app app Ensure every scenario of app has a test — merged b7c38562fc92 · 7.4k tok
+    ✓ 1.1      app Add the greet helper — merged a78d35a8df45 · 9.9k tok
+    ✓ 1.2      app Add the clamp helper — merged 1ca844965650 · 5.0k tok
+    ✓ 1.3      app Export the helpers from src/index.ts — merged fe4b231be611 · 5.0k tok
+    ✓ test-app app Ensure every scenario of app has a test — merged 56ffa1108122 · 7.4k tok
+  full suite: app ✓
   usage: 56.9k tokens (4.6k cache read, 966 out) · cost n/a in 9 sessions
     by agent: architect 22.3k, implementer-app 19.8k, tester 7.4k, orchestrator 2.5k, explorer 2.5k, reviewer 2.5k
     retry overhead: 0 · wasted re-reads: 0
@@ -247,12 +262,12 @@ change add-text-helpers — done (not active; factory 0.2.0)
 
 ```console
 $ git log --format='%h %s' main..change/add-text-helpers
-4ad7691 chore(spec): archive add-text-helpers
-b7c3856 test: ensure every scenario of app has a test
-7cb1923 feat: export the helpers from src/index.ts
-ab4c6f7 feat: add the greet helper
-a7fbe4d feat: add the clamp helper
-841915a docs(spec): add-text-helpers
+02a248d chore(spec): archive add-text-helpers
+56ffa11 test: ensure every scenario of app has a test
+fe4b231 feat: export the helpers from src/index.ts
+a78d35a feat: add the greet helper
+1ca8449 feat: add the clamp helper
+9f40f0f docs(spec): add-text-helpers
 ```
 
 ```console
@@ -262,7 +277,7 @@ $ git branch --list '*change*'
 
 ```console
 $ git worktree list
-/private<tmp>/app 4ad7691 [change/add-text-helpers]
+/private<tmp>/app 02a248d [change/add-text-helpers]
 ```
 
 ### Gate runs
@@ -286,8 +301,8 @@ full:app       format skipped · lint skipped · types skipped · test pass (npm
 Every tool call the agents made is logged (redacted). These are the calls the plugin blocked:
 
 ```json
-{"at":"2026-10-26T10:03:27.132Z","kind":"blocked","session":"ses_e8855c6dcffeKSTyuDZuebpys8","agent":"implementer-app","tool":"shell","input":{"command":"git push origin HEAD"},"reason":"ai-factory blocked this call: git push is not allowed: the factory never pushes"}
-{"at":"2026-10-26T10:03:27.210Z","kind":"blocked","session":"ses_e8855c6dcffeKSTyuDZuebpys8","agent":"implementer-app","tool":"shell","input":{"command":"sh -c 'git push --force origin main'"},"reason":"ai-factory blocked this call: git push is not allowed: the factory never pushes"}
+{"at":"2026-10-26T14:27:48.779Z","kind":"blocked","session":"ses_e8763befcffeXGEh8Qsxk5eLRM","agent":"implementer-app","tool":"shell","input":{"command":"git push origin HEAD"},"reason":"ai-factory blocked this call: git push is not allowed: the factory never pushes"}
+{"at":"2026-10-26T14:27:48.834Z","kind":"blocked","session":"ses_e8763befcffeXGEh8Qsxk5eLRM","agent":"implementer-app","tool":"shell","input":{"command":"sh -c 'git push --force origin main'"},"reason":"ai-factory blocked this call: git push is not allowed: the factory never pushes"}
 ```
 
 ### Final report
@@ -299,8 +314,8 @@ Add greet and clamp helpers, exported from the package entry point
 
 ## Branches (local only; nothing was pushed)
 
-- app: `change/add-text-helpers` at 4ad769114757 (6 commits)
-- AI repo: `change/add-text-helpers` (archive commit 4ad769114757)
+- app: `change/add-text-helpers` at 02a248da8192 (6 commits)
+- AI repo: `change/add-text-helpers` (archive commit 02a248da8192)
 
 ## Tasks
 
@@ -330,9 +345,21 @@ Total: 56.9k tokens (4.6k cache read, 966 out) · cost n/a over 9 sessions.
 | explorer        | 2.5k   | 4%    | cost n/a |
 | reviewer        | 2.5k   | 4%    | cost n/a |
 
+| Task or step  | Tokens | Share | Cost     |
+| ------------- | ------ | ----- | -------- |
+| design        | 12.4k  | 22%   | cost n/a |
+| context-packs | 9.9k   | 17%   | cost n/a |
+| 1.1           | 9.9k   | 17%   | cost n/a |
+| test-app      | 7.4k   | 13%   | cost n/a |
+| 1.2           | 5.0k   | 9%    | cost n/a |
+| 1.3           | 5.0k   | 9%    | cost n/a |
+| intake        | 2.5k   | 4%    | cost n/a |
+| explore:app   | 2.5k   | 4%    | cost n/a |
+| review:app    | 2.5k   | 4%    | cost n/a |
+
 Top consumers: design (12.4k), context-packs (9.9k), 1.1 (9.9k), test-app (7.4k), 1.2 (5.0k).
 Retry overhead: 0 tokens (0%).
 Wasted re-reads of unchanged files: 0.
 ```
 
-Total wall time: 32s. Model requests served by the stub: 23.
+Total wall time: 27s. Model requests served by the stub: 23.

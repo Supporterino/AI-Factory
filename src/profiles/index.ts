@@ -262,7 +262,8 @@ export const PROFILES: Readonly<Record<Language, Profile>> = {
       types: [
         {
           command:
-            'for c in {charts}; do helm template "$c" | kubeconform -strict -summary || exit 1; done',
+            // No pipefail in POSIX sh: render first, so a template error fails the gate (G8).
+            'for c in {charts}; do m="$(helm template "$c")" || exit 1; printf \'%s\\n\' "$m" | kubeconform -strict -summary || exit 1; done',
         },
       ],
       test: [{ command: "helm unittest {charts}" }],

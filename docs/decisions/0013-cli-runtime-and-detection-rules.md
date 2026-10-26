@@ -18,4 +18,4 @@
   - Helm values: the chart's `values.yaml` mentions a repo name.
   - Test, testdata, fixture and example directories are never proposed as contracts.
 - **Uninitialised submodules** keep their config values. Detection reports a note with the `git submodule update --init` command and never guesses languages.
-- **`detect --apply`** edits only the changed JSONC values, validates the result and writes atomically. Regenerating agents, scopes and hooks after `--apply` hooks in with slice 2.
+- **`detect --apply`** edits only the changed JSONC values, validates the result and writes atomically. After `--apply`, agents, scopes and hooks are regenerated, edited agents merged three-way (like `update`), and the result is committed.

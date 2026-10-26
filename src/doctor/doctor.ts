@@ -1,6 +1,7 @@
-import { existsSync, lstatSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, extname, join } from "node:path";
+import { parseJsonc } from "../config/jsonc.ts";
 import { loadConfig } from "../config/load.ts";
 import type { FactoryConfig, GateType, RepoConfig } from "../config/schema.ts";
 import { FactoryError } from "../errors.ts";
@@ -9,7 +10,7 @@ import { type ResolvedGate, resolveGates } from "../gates/resolve.ts";
 import { worktreeFiles } from "../gates/targets.ts";
 import { prePushState } from "../git/hooks.ts";
 import { dirtyPaths } from "../git/repo.ts";
-import { graphStatus } from "../graph/graph.ts";
+import { graphRebuildReason, graphStatus } from "../graph/graph.ts";
 import { buildLock, type Lock, readLock } from "../lock/lock.ts";
 import { sandboxEnabled } from "../policy/sandbox.ts";
 import { parseScript, type Script } from "../policy/shell-parse.ts";
@@ -18,7 +19,7 @@ import { serverEnv } from "../runtime/opencode.ts";
 import { driverAlive, readActive, readQueue } from "../state/active.ts";
 import { readOrCorrupt } from "../state/files.ts";
 import { scanRuns } from "../state/run.ts";
-import { checkTools, compareVersions, type ToolName, toolBin } from "../tools.ts";
+import { checkTools, compareVersions, type ToolName, toolBin, toolEnv } from "../tools.ts";
 import { FACTORY_VERSION, runVersion } from "../version.ts";
 import { GRAPHIFY } from "../versions.ts";
 import { INSTALL_PATHS, planWorkspace } from "../workspace/sync.ts";
@@ -388,11 +389,42 @@ function checkGates(
         "install them, or run the repo's install step (node_modules/.bin, .venv/bin count)",
       );
     }
+    const loose = looseTsconfig(dir, plan.gates);
+    if (loose !== undefined)
+      c.add(
+        "warn",
+        `${repo.name} strict`,
+        `${loose} does not enable "strict": the types gate checks only what the project's config enforces`,
+        `set "compilerOptions": { "strict": true } in ${loose}`,
+      );
     if (plan.missing.length === 0 && missingTools.size === 0) {
       c.add("ok", repo.name, `${plan.gates.length} gate command(s) resolved, toolchain present`);
     }
   }
   return rows;
+}
+
+/**
+ * The tsconfig next to the types gate, when it does not turn on `strict` (audit G8). The
+ * gate keeps the project's own settings (forcing `--strict` would fail every task on old
+ * code); doctor says so instead. A config that `extends` another is not second-guessed.
+ */
+function looseTsconfig(dir: string, gates: readonly ResolvedGate[]): string | undefined {
+  // The types gate of a TypeScript project, directly `tsc` or a script that runs it.
+  const gate = gates.find((g) => g.type === "types");
+  if (gate === undefined || /--strict\b/.test(gate.command)) return undefined;
+  const rel = join(gate.cwd, "tsconfig.json");
+  let text: string;
+  try {
+    text = readFileSync(join(dir, rel), "utf8");
+  } catch {
+    return undefined;
+  }
+  const tsconfig = parseJsonc(text).value as
+    | { extends?: unknown; compilerOptions?: { strict?: unknown } }
+    | undefined;
+  if (tsconfig === undefined || tsconfig.extends !== undefined) return undefined;
+  return tsconfig.compilerOptions?.strict === true ? undefined : rel;
 }
 
 function checkCaches(c: Checks, root: string): void {
@@ -477,6 +509,12 @@ async function checkGraph(
     );
     return;
   }
+  const [graphify] = await checkTools(["graphify"], root);
+  const drift = graphRebuildReason(status, graphify?.version);
+  if (drift !== undefined) {
+    c.add("warn", "graph", drift, "ai-factory graph --full");
+    return;
+  }
   const age = `${Math.round(status.ageMs / 60_000)} min old`;
   const built = status.builtAtCommit;
   if (built === undefined) {
@@ -539,6 +577,34 @@ function checkChanges(c: Checks, root: string): void {
     c.add("fail", `run ${bad.id}`, bad.error.message, bad.error.fix);
 }
 
+/** Proxy variables seen applied to a 127.0.0.1 provider (docs/research/opencode-e2e.md). */
+const PROXY_VARS = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+];
+
+function checkEnvironment(c: Checks, env: NodeJS.ProcessEnv): void {
+  c.in("environment");
+  const proxies = PROXY_VARS.filter((v) => (env[v] ?? "") !== "");
+  if (proxies.length > 0)
+    c.add(
+      "warn",
+      "proxy",
+      `${proxies.join(", ")} set: opencode was seen sending local (127.0.0.1) provider traffic through a proxy despite NO_PROXY`,
+      "unset them for ai-factory runs if a local provider fails",
+    );
+  // Graphify must never refresh files in $HOME or call an LLM backend (tooling.md G9).
+  const graphify = toolEnv("graphify");
+  if (graphify.GRAPHIFY_NO_AUTO_REFRESH === "1" && graphify.GRAPHIFY_BACKEND === "none")
+    c.add("ok", "graphify env", "no auto-refresh, no LLM backend");
+  else
+    c.add("fail", "graphify env", "graphify runs without its safety variables", "report this bug");
+}
+
 function checkSandbox(c: Checks, config: FactoryConfig): void {
   c.in("security");
   if (config.security.sandbox === "off")
@@ -580,6 +646,7 @@ export async function runDoctor(root: string): Promise<DoctorReport> {
   }
   c.add("ok", "config", `schemaVersion ${config.schemaVersion}, layout ${config.layout}`);
   checkSandbox(c, config);
+  checkEnvironment(c, process.env);
   checkManaged(c, root, config);
   const repos = await checkRepos(c, root, config, uninitialised);
   const gates = checkGates(c, root, config, repos);

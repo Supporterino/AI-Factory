@@ -6,7 +6,7 @@
 - with a random `OPENCODE_PASSWORD` and `OPENCODE_DB=.factory/opencode/opencode.db`
 - with agent env markers (`AI_FACTORY_AGENT=1`, the push block from ADR-0003)
 
-It drives the server through `@opencode/client`, pinned to the opencode version:
+It drives the server through its REST API (originally planned with `@opencode/client`; ADR-0019 explains the switch), pinned to the opencode version:
 - one session per task, with `location.directory = <task worktree>`
 - session-level `permissions` for the dynamic scopes
 

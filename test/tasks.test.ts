@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { dependentsOf, findCycle, validateDag } from "../src/tasks/dag.ts";
+import { contractOrderIssues, dependentsOf, findCycle, validateDag } from "../src/tasks/dag.ts";
 import { globsOverlap, matchGlob, touchesOverlap } from "../src/tasks/glob.ts";
 import { normalizeCheckboxes, parseTasks, setTaskChecked } from "../src/tasks/parse.ts";
 
@@ -97,6 +97,10 @@ describe("validateDag", () => {
 - [ ] 1.4 D
   - repo: backend
   - touches: ../x
+- [ ] 1.5 E
+  - repo: backend
+  - deps: none
+  - touches: src/[ab, docs/{a
 `;
     const { issues } = validateDag(parseTasks(text).tasks, ["backend"]);
     expect(issues.map((i) => `${i.task ?? "-"}: ${i.message}`)).toEqual([
@@ -105,8 +109,29 @@ describe("validateDag", () => {
       "1.3: missing `touches:` globs",
       "1.4: missing `deps:` line (use `deps: none`)",
       '1.4: touches glob "../x" must stay inside the repo',
+      '1.5: touches glob "src/[ab" is not a valid glob (unclosed [)',
+      '1.5: touches glob "docs/{a" is not a valid glob (unclosed {)',
       "-: dependency cycle: 1.1 → 1.2 → 1.1",
     ]);
+  });
+
+  test("consumers depend on the tasks that change their contract (audit G9)", () => {
+    const tasks = [
+      { id: "1.1", title: "API", repo: "backend", deps: [], touches: ["api/openapi.yaml"] },
+      { id: "1.2", title: "Handler", repo: "backend", deps: ["1.1"], touches: ["internal/**"] },
+      { id: "2.1", title: "Badge", repo: "frontend", deps: [], touches: ["src/**"] },
+      { id: "2.2", title: "Client", repo: "frontend", deps: ["2.3"], touches: ["src/api/**"] },
+      { id: "2.3", title: "Types", repo: "frontend", deps: ["1.1"], touches: ["src/types/**"] },
+    ];
+    const contracts = [{ provider: "backend", path: "api/openapi.yaml", consumers: ["frontend"] }];
+    expect(contractOrderIssues(tasks, contracts)).toEqual([
+      {
+        task: "2.1",
+        message:
+          "consumes backend:api/openapi.yaml, so it must depend on 1.1 (contract changes come first)",
+      },
+    ]);
+    expect(contractOrderIssues(tasks.slice(1), contracts)).toEqual([]);
   });
 
   test("cycle search and transitive dependents", () => {

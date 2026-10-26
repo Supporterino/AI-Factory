@@ -65,6 +65,25 @@ describe("status, retry and abort", () => {
     expect(json.runs.map((r) => r.id).sort()).toEqual(["add-x", "next-thing"]);
   });
 
+  test("status shows the full suite, contract results and provisional pointers (audit G4)", async () => {
+    const run = newRun("closed-x", "Close it", "done");
+    run.fullSuite = { app: { passed: true, output: "" }, web: { passed: false, output: "x" } };
+    run.contractResults = {
+      "openapi backend:api/openapi.yaml": { passed: false, summary: "breaking: GET /x removed" },
+    };
+    run.pointerCommit = "fedcba9876543210";
+    run.pointers = ["repos/backend: 111111111111 → 222222222222"];
+    saveRun(fx.root, run);
+    const out = (await cli(fx.root, "status", "closed-x")).out.split("\n");
+    expect(out).toContain("  full suite: app ✓, web ✗");
+    expect(out).toContain(
+      "  contracts: openapi backend:api/openapi.yaml ✗ (breaking: GET /x removed)",
+    );
+    expect(out).toContain(
+      "  pointers: fedcba987654 (provisional; repos/backend: 111111111111 → 222222222222)",
+    );
+  });
+
   test("retry requeues a failed task and its cancelled dependents", async () => {
     expect((await cli(fx.root, "retry", "add-x", "--task", "1.3")).code).toBe(
       ExitCode.Precondition,

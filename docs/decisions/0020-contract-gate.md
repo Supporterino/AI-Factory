@@ -23,4 +23,4 @@
   - A failing gate gets one round of `contract-<provider>-<round>-<n>` fix tasks (provider side, the gate output as the context pack).
   - If the gate still fails, the change pauses, because the break may be intended (set `allowBreaking`).
 - **Contract review.** Once the gate passes, one `contract-reviewer` session (read-only, workspace root) gets the gate results and `git -C <repo> diff <base>..change/<id>` commands. It runs once per change. `must`/`should` findings become `contract-review-<n>` fix tasks in the repo the finding's path points to.
-- **Config.** `contracts[].allowBreaking` and `contracts[].validate` are optional, additive fields, so the schema version stays 1.
+- **Config.** `contracts[].allowBreaking` and `contracts[].validate` are optional, additive fields, so they needed no schema version of their own (the config is at `schemaVersion` 2 for another reason, ADR-0022).

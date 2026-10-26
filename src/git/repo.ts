@@ -43,11 +43,33 @@ export async function revParse(dir: string, ref: string): Promise<string> {
   return gitOk(["rev-parse", "--verify", `${ref}^{commit}`], { cwd: dir });
 }
 
-/** Local branch if present, else the origin tracking branch. */
-export async function resolveBranchRef(dir: string, branch: string): Promise<string> {
-  for (const ref of [`refs/heads/${branch}`, `refs/remotes/origin/${branch}`]) {
-    if (await refExists(dir, ref)) return ref;
+/**
+ * The newer of the local branch and its origin tracking branch (audit P20): a local branch the
+ * user never pulled must not become a change's base. When they diverged, the local one wins.
+ * `fetch` refreshes the tracking branch first (best effort: offline, the refs as they are).
+ */
+export async function resolveBranchRef(
+  dir: string,
+  branch: string,
+  options: { fetch?: boolean } = {},
+): Promise<string> {
+  if (options.fetch === true) {
+    await git(["fetch", "--quiet", "--no-tags", "origin", branch], {
+      cwd: dir,
+      env: { GIT_TERMINAL_PROMPT: "0" },
+      timeoutMs: 60_000,
+    });
   }
+  const local = `refs/heads/${branch}`;
+  const remote = `refs/remotes/origin/${branch}`;
+  const hasLocal = await refExists(dir, local);
+  const hasRemote = await refExists(dir, remote);
+  if (hasLocal && hasRemote) {
+    const behind = await git(["merge-base", "--is-ancestor", local, remote], { cwd: dir });
+    return behind.code === 0 ? remote : local;
+  }
+  if (hasLocal) return local;
+  if (hasRemote) return remote;
   throw new PreconditionError(`branch ${branch} not found in ${dir}`, [
     `set "defaultBranch" for this repo in factory.config.jsonc, or fetch it`,
   ]);

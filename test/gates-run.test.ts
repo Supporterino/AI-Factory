@@ -84,6 +84,19 @@ describe("runGates (single repo, override commands)", () => {
     expect(bad.results.find((r) => r.type === "testAffected")?.status).toBe("skipped");
   });
 
+  test("gate output is redacted before it reaches prompts and reports (audit S16)", async () => {
+    const report = await run({
+      format: "true",
+      lint: "echo 'push to https://ci:hunter2secret@git.example.com failed' >&2; echo ghp_abcdefghijklmnopqrstuvwxyz0123456789 >&2; exit 1",
+      types: "true",
+      testAffected: "true",
+    });
+    const lint = report.results.find((r) => r.type === "lint")?.output ?? "";
+    expect(lint).toContain("[REDACTED:credentials]");
+    expect(lint).toContain("[REDACTED:github-token]");
+    expect(lint).not.toContain("hunter2secret");
+  });
+
   test("a gate that modifies files fails as not check-only and is undone", async () => {
     const agentWork = readFileSync(join(fx.root, "src/sum.ts"), "utf8");
     const report = await run({

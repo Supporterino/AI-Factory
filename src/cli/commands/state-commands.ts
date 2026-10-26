@@ -120,6 +120,18 @@ function printRun(
       }
     }
   }
+  // Later phases' results (audit G4).
+  const suite = Object.entries(run.fullSuite);
+  if (suite.length > 0)
+    io.out(
+      `  full suite: ${suite.map(([repo, r]) => `${repo} ${r.passed ? "✓" : "✗"}`).join(", ")}`,
+    );
+  for (const [key, r] of Object.entries(run.contractResults))
+    io.out(`  contracts: ${key} ${r.passed ? "✓" : `✗ (${r.summary})`}`);
+  if (run.pointerCommit !== undefined)
+    io.out(
+      `  pointers: ${run.pointerCommit.slice(0, 12)} (provisional${run.pointers.length > 0 ? `; ${run.pointers.join(", ")}` : ""})`,
+    );
   const worktrees = worktreesOf(root, run.id);
   if (worktrees.length > 0) io.out(`  worktrees: ${worktrees.join(", ")}`);
   const usage = summarizeUsage(root, run.id);

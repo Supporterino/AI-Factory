@@ -5,8 +5,9 @@ import { PROFILES, type Profile } from "../profiles/index.ts";
 import { writeJsonAtomic } from "../state/files.ts";
 
 /**
- * Definitions a change runs on (§10): taken when it becomes active, so an `update --force`
- * in the middle does not change them.
+ * Definitions a change runs on (§10): taken at `approve` (again at activation if missing), so
+ * an `update --force` while it waits or runs does not change them (audit P18). Agents are also
+ * fixed by the change's own branch, which `update` never commits to (audit P17).
  * - Agents: copied into `.factory/worktrees/<id>/.opencode/agents/`. opencode prefers the
  *   closest `.opencode/agents` to a session's directory (verified with 2.1.2), so every task
  *   session in the change's worktrees keeps its original prompts and permissions.
@@ -27,9 +28,15 @@ export function snapshotDefinitions(
   id: string,
   config: FactoryConfig,
   factoryVersion: string,
+  /** Approval replaces an older snapshot; activation only fills a missing one. */
+  replace = false,
 ): void {
   const agents = join(root, ".opencode", "agents");
   const target = join(root, ".factory", "worktrees", id, ".opencode", "agents");
+  if (replace) {
+    rmSync(target, { recursive: true, force: true });
+    rmSync(gateFile(root, id), { force: true });
+  }
   if (existsSync(agents) && !existsSync(target)) {
     mkdirSync(target, { recursive: true });
     cpSync(agents, target, { recursive: true });

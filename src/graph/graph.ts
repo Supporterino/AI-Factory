@@ -2,7 +2,7 @@ import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { exec } from "../exec.ts";
 import { appendLog } from "../logs/log.ts";
-import { factoryDir, readJson, writeJsonAtomic } from "../state/files.ts";
+import { factoryDir, readJson, withFileLock, writeJsonAtomic } from "../state/files.ts";
 import { toolBin, toolEnv } from "../tools.ts";
 import { GRAPHIFY } from "../versions.ts";
 
@@ -52,9 +52,20 @@ function readGraph(root: string): GraphDoc | undefined {
  * never refreshes files in $HOME (GRAPHIFY_ENV). A failure is reported, not thrown: the
  * graph is an aid, and agents fall back to grep.
  */
-export async function updateGraph(
+export function updateGraph(
   root: string,
   options: { full?: boolean; changeId?: string } = {},
+): Promise<GraphResult> {
+  // One graphify run per workspace, also across processes (`ai-factory graph` during a run).
+  const limit = 25 * 60_000;
+  return withFileLock(factoryDir(root, "graph.lock"), () => runGraphify(root, options), limit, {
+    staleAfterMs: limit,
+  });
+}
+
+async function runGraphify(
+  root: string,
+  options: { full?: boolean; changeId?: string },
 ): Promise<GraphResult> {
   const full = options.full === true || !existsSync(graphFile(root));
   if (options.full) rmSync(graphDir(root), { recursive: true, force: true });
@@ -93,6 +104,23 @@ export async function updateGraph(
   return { ok: true, meta };
 }
 
+/**
+ * Why the graph must be rebuilt from scratch, if it must: a format this factory cannot read,
+ * or one built by another Graphify release than the installed one (audit G6).
+ */
+export function graphRebuildReason(
+  status: GraphStatus,
+  installedGraphify: string | undefined,
+): string | undefined {
+  if (status.state === "unsupported")
+    return `format ${status.schemaVersion ?? "unknown"} differs from what this factory reads`;
+  if (status.state !== "ok") return undefined;
+  const built = status.meta?.graphifyVersion;
+  if (built !== undefined && installedGraphify !== undefined && built !== installedGraphify)
+    return `built by graphify ${built}, installed is ${installedGraphify}`;
+  return undefined;
+}
+
 export type GraphStatus =
   | { state: "missing" }
   | { state: "unsupported"; schemaVersion: number | undefined }
@@ -105,7 +133,12 @@ export function graphStatus(root: string): GraphStatus {
   const schema = doc?.graph?.schema_version;
   if (schema !== GRAPHIFY.graphSchemaVersion)
     return { state: "unsupported", schemaVersion: schema };
-  const meta = existsSync(metaFile(root)) ? (readJson(metaFile(root)) as GraphMeta) : undefined;
+  let meta: GraphMeta | undefined;
+  try {
+    meta = existsSync(metaFile(root)) ? (readJson(metaFile(root)) as GraphMeta) : undefined;
+  } catch {
+    meta = undefined; // unreadable metadata only loses the age details (audit P15)
+  }
   return {
     state: "ok",
     ...(meta ? { meta } : {}),

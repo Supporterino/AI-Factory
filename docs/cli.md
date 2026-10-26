@@ -43,6 +43,7 @@ How it treats files that already exist:
 - A file you edited is kept; `ai-factory update` merges it.
 - A file you deleted is not recreated.
 - A file the factory never created stops `init` before anything is written. `--force` overwrites it, or you can list it under `unmanaged`.
+- An existing `openspec/config.yaml` (a team already using OpenSpec) is kept: the first config lists it under `unmanaged`. Add the factory's workspace context to it by hand if the architect should see it.
 
 Tool binaries can be overridden with `AI_FACTORY_<TOOL>_BIN`, e.g. `AI_FACTORY_OPENSPEC_BIN`.
 
@@ -58,11 +59,13 @@ Upgrades an installed workspace to the factory version you run, as one local com
   - files you did not edit are replaced;
   - files you edited are merged three-way with the previous template as the base;
   - files you deleted stay deleted (`--restore` recreates them);
-  - paths in `unmanaged` are skipped.
+  - paths in `unmanaged` are skipped;
+  - a modified or deleted vendored Ponytail file stops the update; `--restore` puts the vendored copy back.
 - Reinstalls the git hooks and warns when detection differs from the config.
-- `--tools` regenerates OpenSpec's opencode commands and skills, merges them like other managed files, and rebuilds the graph when Graphify's format changed.
+- `--tools` regenerates OpenSpec's opencode commands and skills, merges them like other managed files, and rebuilds the graph when its format changed or it was built by another Graphify release than the installed one (a plain `update` only warns). The tool version ranges in the lock always follow the factory version: they are its requirements, not a choice.
+- `--dry-run --json` lists the planned paths and actions, not the rendered contents.
 
-It needs a clean AI repo. It refuses while a change is active, queued or paused with tasks; `--force` updates anyway, and those changes keep the agent and gate definitions they were approved with. Every file it may touch is backed up to `.factory/backups/<timestamp>/` first. A merge conflict leaves markers, commits nothing and exits 4: resolve and commit, or run `rollback`. Submodules (apart from hooks), `openspec/specs` and `openspec/changes` are never touched. See [CHANGELOG.md](../CHANGELOG.md) for what each version changes, and [fleet-update.sh](fleet-update.sh) for updating many workspaces.
+It needs a clean AI repo. It refuses while a change is active, queued or paused with tasks; `--force` updates anyway, and those changes keep the agent and gate definitions they were approved with. It never commits onto a `change/<id>` branch, even with `--force`: switch the AI repo to your base branch first (`git switch main`); `resume` switches back, and the change keeps its definitions. Every file it may touch is backed up to `.factory/backups/<timestamp>/` first. A merge conflict leaves markers, commits nothing and exits 4: resolve and commit, or run `rollback`. Submodules (apart from hooks), `openspec/specs` and `openspec/changes` are never touched. See [CHANGELOG.md](../CHANGELOG.md) for what each version changes, and [fleet-update.sh](fleet-update.sh) for updating many workspaces.
 
 ## rollback
 
@@ -88,8 +91,10 @@ A read-only health check. It looks at:
 - **Gates:** the resolved command for every repo and gate type, printed as a table. It flags a missing gate and an executable that is not on `PATH` or in the repo's tool directories (`node_modules/.bin`, `.venv/bin`). For script gates (`npm run lint`), only the runner is checked.
 - **Caches:** the sizes of the dependency caches, worktrees, logs and backups under `.factory/`.
 - **Models:** every configured model must be listed by `opencode models` when it runs with the same curated environment as the pipeline's server. A model whose provider credentials are not exported fails here.
-- **Graph:** missing, wrong format, or built at another commit than `HEAD`.
-- **Changes:** an active-change lock that nothing is driving.
+- **Gates** also warn when a TypeScript repo's `tsconfig.json` does not turn on `strict` (the types gate checks what the project's config enforces).
+- **Graph:** missing, wrong format, built by another Graphify release than the installed one, or built at another commit than `HEAD`.
+- **Changes:** an active-change lock that nothing is driving; a corrupt run file, `active.lock` or `queue.json`.
+- **Environment:** proxy variables (seen applied to local provider traffic), and that Graphify runs without auto-refresh or an LLM backend.
 
 It exits 4 when any check fails. Warnings exit 0.
 
@@ -102,7 +107,7 @@ ai-factory detect [--apply [--no-commit] [--allow-downgrade]] [--check] [--json]
 Re-detects the layout, repos, languages and contracts and prints the differences from the config:
 - `+` marks an addition, `-` a removal, `~` a change.
 - Without a config, it prints what `init` would propose.
-- `--apply` writes the changes with comment-preserving edits. It then regenerates implementer agents, scopes, the OpenSpec context and hooks, and commits (`--no-commit` to skip).
+- `--apply` writes the changes with comment-preserving edits. It then regenerates implementer agents, scopes, the OpenSpec context and hooks, and commits (`--no-commit` to skip). Agents you edited are merged three-way like on `update`, so a new language's standard reaches them; a merge conflict leaves markers, commits nothing and exits 4. A failure before the sync leaves the config unchanged.
 - `--check` exits with 10 when there is drift.
 - `--json` prints `{ root, hasConfig, detection, changes, applied }`.
 
@@ -117,6 +122,8 @@ Runs format, lint, types and tests.
 - Without `--task` it gates every repo that has `change/<id>` checked out, against its default branch. `--full` runs whole-repo gates and the full suite.
 - Gates resolve as `gates.overrides` → the repo's own script (`gates.scripts` names in package.json, Makefile, justfile or Taskfile) → profile defaults. A gate with no command fails; set the override to `"skip"` to opt out explicitly.
 - A gate that modifies files fails as "not check-only", and the worktree is restored.
+- A change with a definitions snapshot (taken at `approve`) is gated with it, like the pipeline does, not with today's config.
+- Gate output is redacted (tokens, credentials, env secrets) before it is printed, stored or sent to an agent.
 - `--json` prints `{ change, passed, reports: [{ repo, mode, base, passed, changed, results: [{ type, status, cwd, command, source, exitCode, durationMs, output }] }] }`. `output` is compacted (no ANSI codes, failures with context, capped at `tokens.gateOutputMaxLines`).
 
 ## repoint
@@ -142,7 +149,9 @@ Shows the active change and its driver, the queue, and each change's details, in
 - the phase
 - the branches
 - the task DAG with states, attempts and the last gate output
+- the full-suite result per repo, the contract gate results and the provisional pointer commit
 - the worktrees
+- corrupt run files, `active.lock` or `queue.json`, with how to recover (other changes still show)
 
 ## retry
 
@@ -202,9 +211,9 @@ Builds or incrementally updates the one workspace graph (`graphify-out/`, gitign
 ## bench
 
 ```
-ai-factory bench ponytail [--runs N] [--yes] [--json]
+ai-factory bench ponytail [--runs N] [--case ID[,ID]] [--levels lite,full,ultra] [--yes] [--json]
 ```
 
-Runs the bench fixture change N times (default 3) with and without the Ponytail add-on on your configured models. Compares tokens, lines changed, first-attempt gate pass rate, retries, scenario test coverage and review findings as medians with min–max. Results go to `docs/bench/ponytail-<date>.md` and `.json`.
+Runs each bench case (`slugify`, a new function; `paginate-fix`, a fix in existing code) N times (default 3) with and without the Ponytail add-on on your configured models. `--levels` compares several Ponytail levels against "without"; `--case` picks cases. Compares tokens, lines changed, first-attempt gate pass rate, retries, scenario test coverage and review findings as medians with min–max. Tokens count every run; the other metrics only runs that finished, and the table shows how many did. Results go to `docs/bench/ponytail-<date>.md` and `.json`, saved after every run (`"complete": false` until the end).
 
 It makes real model calls, so it prints an estimate first and asks for confirmation; `--yes` skips the question.

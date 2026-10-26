@@ -61,6 +61,11 @@ export const RepoConfig = z.strictObject({
 });
 export type RepoConfig = z.infer<typeof RepoConfig>;
 
+/** The repo's languages including its monorepo packages' (standards, test globs, installs). */
+export const repoLanguages = (repo: Pick<RepoConfig, "languages" | "subPaths">): Language[] => [
+  ...new Set([...repo.languages, ...(repo.subPaths ?? []).flatMap((s) => s.languages)]),
+];
+
 const ModelsConfig = z.strictObject({
   orchestrator: ModelId,
   architect: ModelId,

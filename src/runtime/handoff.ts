@@ -13,7 +13,8 @@ export type HandoffParse = { ok: true; handoff: Handoff } | { ok: false; problem
 
 export function extractHandoff(text: string): HandoffParse {
   const blocks = [...text.matchAll(FENCED)].map((m) => m[1] ?? "");
-  const candidate = blocks.at(-1) ?? text.slice(text.lastIndexOf("{"));
+  const brace = text.lastIndexOf("{");
+  const candidate = blocks.at(-1) ?? (brace === -1 ? "" : text.slice(brace));
   if (candidate.trim() === "")
     return { ok: false, problem: "no ```json block found at the end of your reply" };
   let value: unknown;

@@ -4,28 +4,29 @@ Status: approved 2026-10-23. Slices 1–13 done. Inputs: [research/tooling.md](r
 
 ## Modules (`src/`)
 
-| Module                   | Responsibility                                                                                                              |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| `cli/`                   | Command parsing (one file per command), `--json`, exit codes                                                                |
-| `exec.ts`                | The single shell-out wrapper: timeout, captured output, env presets (OpenSpec/Graphify quiet env, agent git env)            |
-| `config/`                | zod schema, JSONC read and comment-preserving edit (`jsonc-parser`), `migrations/NNN-*.ts`                                  |
-| `detect/`                | Layout, languages per repo/sub-path, contract proposals, diff against config                                                |
-| `templates/` + `render/` | Agents, plugin, standards, AGENTS.md block, hooks, OpenSpec config, handoff schema; deterministic rendering                 |
-| `lock/` + `managed/`     | `factory.lock.json`, managed-file hashes, 3-way merge (`git merge-file`), backups, rollback                                 |
-| `git/`                   | Branching (incl. detached HEAD), worktrees, merge queue, commits with `Change-Id`, pointer bumps, `repoint`                 |
-| `openspec/`              | Typed wrappers over `openspec … --json`, `tasks.md` parser + checkbox mirror, approval hash                                 |
-| `dag/` + `scheduler/`    | DAG validation, `touches` overlap serialisation, semaphores, atomic run state, active lock and queue                        |
-| `gates/`                 | Resolution (override → repo script → profile), check-only guard, affected selection, output compaction, installs and caches |
-| `runtime/`               | `AgentRuntime`: `OpencodeRuntime` (private `opencode serve` + `@opencode/client`) and `ScriptedRuntime`; rate limiter       |
-| `pipeline/`              | The phase state machine from intake to close; context packs; handoff validation and repair                                  |
-| `policy/`                | Pure edit-scope rules, shell parser and blocklist (incl. evasions), secret redaction; shared by the plugin and the CLI      |
-| `contracts/`             | OpenAPI / JSON-Schema / proto breaking-change diff + consumer validation                                                    |
-| `graph/`                 | Build, coalesced update worker, query helpers for packs                                                                     |
-| `usage/`                 | Event capture, aggregation, report section, waste detection                                                                 |
-| `addons/ponytail/`       | Fetch, verify, vendor, render, `shortcut:` harvest, bench                                                                   |
-| `doctor/`                | All checks, with the resolved gate table                                                                                    |
+| Module                    | Responsibility                                                                                                               |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `cli/`                    | Command parsing (one file per command), `--json`, exit codes                                                                 |
+| `exec.ts`                 | The single shell-out wrapper: timeout, captured output, env presets (OpenSpec/Graphify quiet env, agent git env)             |
+| `config/`                 | zod schema, JSONC read and comment-preserving edit (`jsonc-parser`), `migrations/NNN-*.ts`                                   |
+| `detect/`                 | Layout, languages per repo/sub-path, contract proposals, diff against config                                                 |
+| `templates/` + `render/`  | Agents, plugin, standards, AGENTS.md block, hooks, OpenSpec config, handoff schema; deterministic rendering                  |
+| `lock/` + `managed/`      | `factory.lock.json`, managed-file hashes, 3-way merge (`git merge-file`), backups, rollback                                  |
+| `git/`                    | Branching (incl. detached HEAD), worktrees, merge queue, commits with `Change-Id`, pointer bumps, `repoint`                  |
+| `openspec/` + `approval/` | Typed wrappers over `openspec … --json`, design checks, approval hash                                                        |
+| `tasks/` + `scheduler/`   | `tasks.md` parser + checkbox mirror, DAG and contract-order validation, `touches` overlap, the scheduler                     |
+| `state/`                  | Atomic run state, file locks, active lock and queue, corrupt-file reporting                                                  |
+| `gates/`                  | Resolution (override → repo script → profile), check-only guard, affected selection, output compaction, installs and caches  |
+| `runtime/`                | `AgentRuntime`: `OpencodeRuntime` (private `opencode serve`, REST via `fetch`, ADR-0019) and `ScriptedRuntime`; rate limiter |
+| `pipeline/`               | The phase state machine from intake to close; context packs; handoff validation and repair                                   |
+| `policy/` + `logs/`       | Pure edit-scope rules, shell parser and blocklist (incl. evasions), secret detection, the Seatbelt sandbox; redaction        |
+| `contracts/`              | OpenAPI / JSON-Schema / proto breaking-change diff + consumer validation                                                     |
+| `graph/`                  | Build, coalesced update worker, query helpers for packs                                                                      |
+| `usage/`                  | Event capture, aggregation, report section, waste detection                                                                  |
+| `addons/` + `bench/`      | Ponytail: verify, vendor, render, `shortcut:` harvest; the A/B bench                                                         |
+| `doctor/`                 | All checks, with the resolved gate table                                                                                     |
 
-The plugin (`templates/opencode/plugins/factory.ts`) imports nothing at runtime except the bundled `policy/` code, rendered into the workspace at init.
+The plugin (`src/plugin/entry.ts`) is bundled with the `policy/` code it uses into `.opencode/plugins/factory.js` (`bun scripts/build-plugin.ts`; a test keeps the committed bundle current) and imports nothing from opencode at runtime.
 
 ## Milestones (vertical slices, each green and committed)
 
@@ -47,12 +48,12 @@ The plugin (`templates/opencode/plugins/factory.ts`) imports nothing at runtime 
 
 ## Risks
 
-| Risk                                               | Mitigation                                                                                                                                                 |
-| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| opencode V2 SDK/plugin churn (2.1.3 shipped today) | Exact minor pin, `doctor` range check, stub-provider contract tests in CI-like `bun test`                                                                  |
-| Plugin-level enforcement unproven end to end       | Every rule is also enforced by the CLI (post-session scope audit of `git diff`, env push block)                                                            |
-| Graph update latency on very large workspaces      | Coalescing (ADR-0007), `status` shows lag                                                                                                                  |
-| OpenSpec format drift (schemas are experimental)   | Built-in `spec-driven` only; our metadata is plain indented lines; tested against 1.10 and 1.14                                                            |
-| Contract diffing across OpenAPI/proto/JSON Schema  | Pure-TS diff for OpenAPI 3 + JSON Schema in v1; proto via `buf breaking` when installed, otherwise `doctor` reports it as missing (never skipped silently) |
-| Real E2E and `bench` cost money                    | Both are opt-in, print an estimate and ask first                                                                                                           |
-| No Rust toolchain on this machine                  | The Rust profile is unit-tested for resolution only; `doctor` reports the missing toolchain                                                                |
+| Risk                                               | Mitigation                                                                                                                            |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| opencode V2 SDK/plugin churn (2.1.3 shipped today) | Exact minor pin, `doctor` range check, stub-provider contract tests in CI-like `bun test`                                             |
+| Plugin-level enforcement unproven end to end       | Every rule is also enforced by the CLI (post-session scope audit of `git diff`, env push block)                                       |
+| Graph update latency on very large workspaces      | Coalescing (ADR-0007), `status` shows lag                                                                                             |
+| OpenSpec format drift (schemas are experimental)   | Built-in `spec-driven` only; our metadata is plain indented lines; tested against 1.10 and 1.14                                       |
+| Contract diffing across OpenAPI/proto/JSON Schema  | Pure-TS diffs for OpenAPI 3, JSON Schema and proto (the field/enum rules of `buf breaking` that matter most); no external tool needed |
+| Real E2E and `bench` cost money                    | Both are opt-in, print an estimate and ask first                                                                                      |
+| No Rust toolchain on this machine                  | The Rust profile is unit-tested for resolution only; `doctor` reports the missing toolchain                                           |

@@ -97,11 +97,11 @@ interface LockOwner {
 
 const STALE_AFTER_MS = 60_000;
 
-function lockIsStale(path: string): boolean {
+function lockIsStale(path: string, staleAfterMs: number): boolean {
   try {
     const owner = readJson(path) as LockOwner;
     if (owner.host === hostname() && !pidAlive(owner.pid)) return true;
-    return Date.now() - owner.at > STALE_AFTER_MS;
+    return Date.now() - owner.at > staleAfterMs;
   } catch {
     // Unreadable (half-written) lock: stale once it is old enough.
     try {
@@ -114,14 +114,16 @@ function lockIsStale(path: string): boolean {
 
 /**
  * Runs `fn` while holding an exclusive lock file (`O_EXCL` create). Waits with backoff;
- * breaks locks whose owner died or that are older than a minute. Locks are only held for a
- * read-modify-write, never across long work.
+ * breaks locks whose owner died or that are older than a minute. Most locks are only held
+ * for a read-modify-write; long work (a graph build) passes a longer `staleAfterMs`.
  */
 export async function withFileLock<T>(
   path: string,
   fn: () => T | Promise<T>,
   timeoutMs = 10_000,
+  options: { staleAfterMs?: number } = {},
 ): Promise<T> {
+  const staleAfterMs = options.staleAfterMs ?? STALE_AFTER_MS;
   mkdirSync(dirname(path), { recursive: true });
   const started = Date.now();
   for (let delay = 5; ; delay = Math.min(delay * 2, 200)) {
@@ -135,7 +137,7 @@ export async function withFileLock<T>(
       break;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      if (lockIsStale(path)) {
+      if (lockIsStale(path, staleAfterMs)) {
         rmSync(path, { force: true });
         continue;
       }

@@ -17,7 +17,10 @@
 - **Preconditions.**
   - `update` refuses while a change is active, queued, or paused with tasks, unless `--force`. It also needs a clean AI repo.
   - It prints the plan, and `--dry-run` stops there.
-- **Snapshots.** `approve` copies `.opencode/agents` into the change's integration worktree. opencode picks the nearest `.opencode/agents` for a session directory (verified on 2.1.2). It also writes the gate configuration and the profile gate tables to `.factory/runs/<id>/snapshot/gates.json`, and gates for that change resolve from it. So after `update --force`, implementer and tester sessions and all gates keep their start definitions. Known limit: architect and reviewer sessions run in the root or repo checkout and use the current agents.
+- **Snapshots.** `approve` (again at activation if missing) copies `.opencode/agents` into the change's integration worktree. opencode picks the nearest `.opencode/agents` for a session directory (verified on 2.1.2). It also writes the gate configuration and the profile gate tables to `.factory/runs/<id>/snapshot/gates.json`, and gates for that change, `ai-factory gate <id>` included, resolve from it (audit P18, G9).
+- **The change branch is never updated (audit P17, G7).** `update` refuses to commit onto a `change/*` branch, even with `--force`: you switch the AI repo to the base branch, update there, and `resume` switches back. So every session of a change, architect and reviewer included, reads its agents from the change's own branch, which still has the definitions it was approved with. (Before, a forced update committed onto `change/<id>`; in the single-repo layout new task worktrees then carried the new agents.)
+- **Vendored files (audit G5).** A modified or deleted Ponytail file is a hash mismatch, never a user edit or deletion: `update` stops, and `update --restore` puts the vendored copy back.
+- **Tool pins and the graph (audit G6).** The lock's tool ranges always follow the factory version (they are its requirements). `--tools` rebuilds the graph when its format changed or another Graphify release built it; a plain `update` only warns, and `doctor` reports it.
 - **Backup and rollback.**
   - Every path the update may write is copied to `.factory/backups/<timestamp>/` first, with a manifest of the files that existed and the ones that will be created. A no-op update deletes its backup.
   - `rollback` restores the newest unrestored backup (including the previous lock and config), deletes created files, marks the backup restored and commits `chore(factory): roll back update to vX`. It works on committed and on uncommitted (conflicted) updates.
@@ -33,4 +36,4 @@
 **Consequences.**
 - User edits to agents and standards survive upgrades, and conflicts are visible as ordinary markers.
 - Every template change needs a CHANGELOG entry. Every config schema change needs a migration, a test and a new install fixture.
-- Architect and reviewer sessions of a change that ran through a forced update may see newer agent text. This is accepted: they do not run gates, and their output is validated against the handoff schema.
+- A forced update while a change runs needs one `git switch` by hand; in exchange no session of that change can see newer agent text.

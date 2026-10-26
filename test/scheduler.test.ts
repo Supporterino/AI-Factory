@@ -315,6 +315,68 @@ describe("Scheduler", () => {
     expect(task("1.2")?.history.map((h) => h.event)).toContain("recovered");
   });
 
+  test("crash recovery merges tasks that already passed their gates without an agent (audit P8)", async () => {
+    seed([{ id: "1.1" }, { id: "1.2" }], (s) => {
+      const [a, b] = s.tasks;
+      if (a && b) {
+        a.status = "merging";
+        a.commit = "c-1.1";
+        b.status = "running";
+      }
+    });
+    const runner = new FakeRunner();
+    expect((await schedule(runner)).status).toBe("complete");
+    expect(runner.log.filter((l) => l.endsWith(" 1.1"))).toEqual(["merge 1.1"]);
+    expect(runner.log).toContain("start 1.2");
+  });
+
+  test("an interrupt during the re-gate spends nothing (audit P7)", async () => {
+    seed([{ id: "1.1" }]);
+    const controller = new AbortController();
+    const runner = new FakeRunner();
+    runner.merge = async (t) => {
+      runner.log.push(`merge ${t.id}`);
+      controller.abort(); // SIGINT kills the gate children: they report a failure
+      return { status: "gates-failed", output: "killed" };
+    };
+    const summary = await new Scheduler({
+      root,
+      id: "add-x",
+      maxAgents: 1,
+      maxRetries: 3,
+      runner,
+      signal: controller.signal,
+    }).run();
+    expect(summary.status).toBe("aborted");
+    expect(task("1.1")).toMatchObject({ status: "pending", failures: 0, gatesPassed: true });
+    // Resumed: straight back to the merge, no new agent attempt.
+    const again = new FakeRunner();
+    expect((await schedule(again)).status).toBe("complete");
+    expect(again.log).toEqual(["merge 1.1"]);
+  });
+
+  test("an interrupt during conflict resolution keeps the branch and the budget (audit P7)", async () => {
+    seed([{ id: "1.1" }]);
+    const controller = new AbortController();
+    const runner = new FakeRunner();
+    runner.merges.set("1.1", [{ status: "conflict", conflicts: ["main.go"] }]);
+    runner.resolveConflict = async () => {
+      controller.abort();
+      return false; // the interrupted session resolved nothing
+    };
+    const summary = await new Scheduler({
+      root,
+      id: "add-x",
+      maxAgents: 1,
+      maxRetries: 3,
+      runner,
+      signal: controller.signal,
+    }).run();
+    expect(summary.status).toBe("aborted");
+    expect(runner.resets).toEqual([]);
+    expect(task("1.1")).toMatchObject({ status: "pending", failures: 0, serial: false });
+  });
+
   test("an abort requested by another process stops dispatch and keeps work resumable", async () => {
     seed(["1.1", "1.2", "1.3", "1.4"].map((id) => ({ id })));
     const runner = new FakeRunner();

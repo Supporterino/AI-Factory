@@ -7,6 +7,7 @@ import { commitPaths } from "../git/commit.ts";
 import { changeBranch, currentBranch } from "../git/repo.ts";
 import { checkDesign } from "../openspec/cli.ts";
 import { now, type RunState, recordTask, TaskState } from "../state/run.ts";
+import { snapshotDefinitions } from "../update/snapshot.ts";
 import type { Pipeline } from "./context.ts";
 import { specDir } from "./design.ts";
 
@@ -24,6 +25,7 @@ export async function approve(p: Pipeline, id: string): Promise<Approval> {
     dir,
     id,
     p.codeRepos().map((r) => r.name),
+    p.config.contracts,
   );
   if (check.issues.length > 0) throw new PreconditionError(`${id} does not validate`, check.issues);
 
@@ -71,6 +73,7 @@ export async function approve(p: Pipeline, id: string): Promise<Approval> {
       return task;
     });
   });
+  snapshotDefinitions(p.root, id, p.config, p.run(id).factoryVersion, true);
   p.out(
     `✓ approved ${id} by ${approver} (spec ${specCommit.slice(0, 12)}, ${check.tasks.length} tasks)`,
   );

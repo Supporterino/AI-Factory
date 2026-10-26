@@ -14,7 +14,7 @@ import { diffDetection, formatChange } from "../detect/diff.ts";
 import { detectWorkspace } from "../detect/workspace.ts";
 import { PreconditionError } from "../errors.ts";
 import { git } from "../exec.ts";
-import { graphStatus } from "../graph/graph.ts";
+import { graphRebuildReason, graphStatus } from "../graph/graph.ts";
 import { LOCK_FILE, type Lock, readLock } from "../lock/lock.ts";
 import type { PlannedChange } from "../managed/sync.ts";
 import { migrateConfigText } from "../migrations/index.ts";
@@ -22,6 +22,7 @@ import type { ManagedFile } from "../render/workspace.ts";
 import { readActive, readQueue } from "../state/active.ts";
 import { factoryDir, writeJsonAtomic } from "../state/files.ts";
 import { scanRuns } from "../state/run.ts";
+import { checkTools } from "../tools.ts";
 import { FACTORY_VERSION } from "../version.ts";
 import { GRAPHIFY } from "../versions.ts";
 import { INSTALL_PATHS, planWorkspace } from "../workspace/sync.ts";
@@ -115,10 +116,14 @@ export async function planUpdate(
       ...drift.map((c) => `  ${formatChange(c)}`),
     );
   }
-  const graph = graphStatus(root);
+  // Rebuilt for the graph on disk, not the lock: a plain update also records the new pins.
+  const [graphify] = await checkTools(["graphify"], root);
+  const rebuildReason = graphRebuildReason(graphStatus(root), graphify?.version);
   const graphRebuild =
     options.tools === true &&
-    (lock.graph.schemaVersion !== GRAPHIFY.graphSchemaVersion || graph.state === "unsupported");
+    (rebuildReason !== undefined || lock.graph.schemaVersion !== GRAPHIFY.graphSchemaVersion);
+  if (rebuildReason !== undefined && options.tools !== true)
+    warnings.push(`graph: ${rebuildReason}; run \`ai-factory update --tools\` to rebuild it`);
   return {
     fromVersion: lock.factoryVersion,
     toVersion: FACTORY_VERSION,

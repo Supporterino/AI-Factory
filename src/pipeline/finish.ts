@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { changeShortcuts } from "../addons/shortcuts.ts";
+import { repoLanguages } from "../config/schema.ts";
 import { PreconditionError } from "../errors.ts";
 import { gitOk } from "../exec.ts";
 import { runGates } from "../gates/run.ts";
@@ -17,8 +18,9 @@ import { type RunState, recordTask, TaskState } from "../state/run.ts";
 import { setTaskChecked } from "../tasks/parse.ts";
 import { dropAgentSnapshot } from "../update/snapshot.ts";
 import { summarizeUsage, usageReport } from "../usage/usage.ts";
+import { fence } from "../util/fence.ts";
 import type { Pipeline } from "./context.ts";
-import { forbidShortcuts, gateDefinitions, packPath, specText } from "./implement.ts";
+import { cappedSpec, forbidShortcuts, gateDefinitions, packPath } from "./implement.ts";
 import { findingPack, findingTaskTitle, reviewPrompt } from "./prompts.ts";
 
 const MAX_SUITE_ROUNDS = 2;
@@ -27,7 +29,7 @@ const touchedRepos = (run: RunState): string[] => [...new Set(run.tasks.map((t) 
 
 function addTask(
   draft: RunState,
-  task: Omit<TaskState, "status" | "failures" | "serial" | "history">,
+  task: Omit<TaskState, "status" | "failures" | "serial" | "history" | "gatesPassed" | "installed">,
 ): void {
   if (draft.tasks.some((t) => t.id === task.id)) return;
   const state = TaskState.parse({ ...task, status: "pending" });
@@ -49,7 +51,7 @@ export async function review(
   const incomplete: string[] = [];
   if (repos.length === 0) return { added: 0, incomplete };
   p.out(`▶ review + tests: ${repos.join(", ")}`);
-  const spec = specText(p, id);
+  const spec = cappedSpec(p, id);
   let added = 0;
 
   await Promise.all(
@@ -70,7 +72,7 @@ export async function review(
             base,
             head: changeBranch(id),
             spec,
-            profiles: profilesFor(repo.languages).map((pr) => pr.title),
+            profiles: profilesFor(repoLanguages(repo)).map((pr) => pr.title),
           }),
         });
         // No valid handoff (crash, timeout, garbage) is no review: the repo stays unreviewed.
@@ -219,7 +221,7 @@ export function writePauseReport(p: Pipeline, id: string, summary: RunSummary): 
       "",
       `Error: ${t.lastError ?? ""}`,
       ...(t.worktree ? [`Worktree (kept): ${t.worktree}`] : []),
-      ...(t.lastGateOutput ? ["", "Last gate output:", "```", t.lastGateOutput, "```"] : []),
+      ...(t.lastGateOutput ? ["", "Last gate output:", fence(t.lastGateOutput)] : []),
       "",
     ]),
     "## Next steps",

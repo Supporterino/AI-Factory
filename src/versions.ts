@@ -18,10 +18,6 @@ export const OPENCODE: VersionRange & { readonly npmCli: string } = {
   npmCli: "@opencode/cli",
 };
 
-/** npm packages the factory itself depends on; kept equal to OPENCODE.tested. */
-export const OPENCODE_CLIENT_PACKAGE = { name: "@opencode/client", version: "2.1.2" } as const;
-export const OPENCODE_PLUGIN_PACKAGE = { name: "@opencode/plugin", version: "2.1.2" } as const;
-
 /** OpenSpec CLI. Behaviour checked on 1.10.0 (installed) and 1.14.3 (latest). */
 export const OPENSPEC: VersionRange & { readonly npm: string } = {
   min: "1.10.0",

@@ -68,6 +68,10 @@ export const TaskState = z.strictObject({
   /** Compacted output of the last failed gate run; fed back on the next attempt. */
   lastGateOutput: z.string().optional(),
   lastError: z.string().optional(),
+  /** The current work passed its gates: a resumed task goes straight to the merge (audit P8). */
+  gatesPassed: z.boolean().default(false),
+  /** Dependencies are installed in the task's worktree; a failed install is retried (P12). */
+  installed: z.boolean().default(false),
   history: z.array(HistoryEntry).default([]),
 });
 export type TaskState = z.infer<typeof TaskState>;
@@ -91,6 +95,8 @@ export const RunState = z.strictObject({
   mergeSeq: z.int().min(0).default(0),
   /** Highest merge sequence a finished graph update covers. */
   graphSeq: z.int().min(0).default(0),
+  /** `withinRepo: "serial"`: the task whose work is in each repo checkout (audit P10). */
+  serialOwner: z.record(z.string(), z.string()).default({}),
   /** Intake result. */
   summary: z.string().default(""),
   likelyRepos: z.array(z.string()).default([]),
@@ -106,13 +112,13 @@ export const RunState = z.strictObject({
   fullSuite: z
     .record(z.string(), z.strictObject({ passed: z.boolean(), output: z.string() }))
     .default({}),
-  /** Provisional pointer bump commit (submodules layout). */
   /** Contract fix rounds used, whether the cross-repo review ran, last gate results. */
   contractRounds: z.int().min(0).default(0),
   contractReviewed: z.boolean().default(false),
   contractResults: z
     .record(z.string(), z.strictObject({ passed: z.boolean(), summary: z.string() }))
     .default({}),
+  /** Provisional pointer bump commit (submodules layout). */
   pointerCommit: z.string().optional(),
   /** Close steps already done, so a resumed close skips them (audit P6). */
   pointersBumped: z.boolean().default(false),

@@ -4,7 +4,7 @@ import { findWorkspaceRoot } from "../../config/load.ts";
 import { CONFIG_FILE } from "../../config/schema.ts";
 import { PreconditionError } from "../../errors.ts";
 import { commitPaths } from "../../git/commit.ts";
-import { ensureClean } from "../../git/repo.ts";
+import { currentBranch, ensureClean } from "../../git/repo.ts";
 import { updateGraph } from "../../graph/graph.ts";
 import { ensureNotNewer } from "../../lock/lock.ts";
 import { renderOpenspecTools } from "../../openspec/cli.ts";
@@ -70,6 +70,18 @@ Upgrades this workspace to the installed factory version, as one local commit
       ]);
     }
     await ensureClean(root, "the AI repo");
+    // A change resolves its agents from its own branch: an update committed there would
+    // change them under the running change (audit P17).
+    const branch = await currentBranch(root);
+    if (branch?.startsWith("change/") && !values["dry-run"]) {
+      throw new PreconditionError(
+        `the AI repo is on ${branch}: an update committed there would change that change's definitions`,
+        [
+          "switch to your base branch first (`git switch main`) and update there;",
+          "`ai-factory resume` switches back, and the change keeps the definitions it started with",
+        ],
+      );
+    }
 
     // `--tools`: OpenSpec's opencode files are regenerated (aside) and merged like the rest.
     const openspecFiles = values.tools ? await renderOpenspecTools(root) : undefined;
@@ -83,7 +95,14 @@ Upgrades this workspace to the installed factory version, as one local commit
       if (values.json)
         io.out(
           JSON.stringify(
-            { dryRun: true, ...plan, config: undefined, configText: undefined },
+            {
+              dryRun: true,
+              ...plan,
+              config: undefined,
+              configText: undefined,
+              // Paths and actions, not every rendered file's content (audit G9).
+              changes: plan.changes.map((c) => ({ path: c.path, action: c.action })),
+            },
             null,
             2,
           ),

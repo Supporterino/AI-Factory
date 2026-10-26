@@ -2,7 +2,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   BENCH_CASES,
+  type BenchResult,
   benchMarkdown,
+  benchVariants,
   runBench,
   SESSIONS_PER_RUN,
   TOKENS_PER_RUN_ESTIMATE,
@@ -13,12 +15,18 @@ import { formatTokens } from "../../usage/usage.ts";
 import { type Command, type Io, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
 
-const HELP = `Usage: ai-factory bench ponytail [--runs N] [--yes] [--json]
+const HELP = `Usage: ai-factory bench ponytail [--runs N] [--case ID] [--levels L,…] [--yes] [--json]
 
-Runs the bench fixture change N times (default 3) with and without the Ponytail add-on on
-your configured models, and writes medians with their spread for tokens, lines changed,
-first-attempt gate pass rate, retries, scenario test coverage and review findings to
-docs/bench/. Real model calls: it prints an estimate and asks before running.`;
+Runs each bench case (${BENCH_CASES.map((c) => c.id).join(", ")}) N times (default 3) with and
+without the Ponytail add-on on your configured models, and writes medians with their spread
+for tokens, lines changed, first-attempt gate pass rate, retries, scenario test coverage and
+review findings to docs/bench/. Results are saved after every run.
+Real model calls: it prints an estimate and asks before running.
+
+  --case ID      Only this case (repeatable as a comma list)
+  --levels L,…   Ponytail levels to compare against "without" (lite, full, ultra; default full)`;
+
+const LEVELS = ["lite", "full", "ultra"] as const;
 
 export function benchCommand(cli: (argv: readonly string[], io: Io) => Promise<number>): Command {
   return {
@@ -31,6 +39,8 @@ export function benchCommand(cli: (argv: readonly string[], io: Io) => Promise<n
         args,
         {
           runs: { type: "string", default: "3" },
+          case: { type: "string" },
+          levels: { type: "string", default: "full" },
           yes: { type: "boolean", default: false },
           json: { type: "boolean", default: false },
         },
@@ -45,10 +55,26 @@ export function benchCommand(cli: (argv: readonly string[], io: Io) => Promise<n
       if (root === undefined) throw new PreconditionError("not inside a git repository");
       const { config } = loadConfig(root);
 
-      const sessions = BENCH_CASES.length * runs * 2 * SESSIONS_PER_RUN;
-      const tokens = BENCH_CASES.length * runs * 2 * TOKENS_PER_RUN_ESTIMATE;
+      const wanted = values.case?.split(",").map((c) => c.trim()) ?? [];
+      const cases =
+        wanted.length === 0 ? BENCH_CASES : BENCH_CASES.filter((c) => wanted.includes(c.id));
+      if (cases.length < wanted.length)
+        throw new UsageError(
+          `bench: unknown case (known: ${BENCH_CASES.map((c) => c.id).join(", ")})`,
+        );
+      const levels = values.levels.split(",").map((l) => l.trim());
+      if (
+        levels.length === 0 ||
+        !levels.every((l): l is (typeof LEVELS)[number] =>
+          (LEVELS as readonly string[]).includes(l),
+        )
+      )
+        throw new UsageError(`bench: --levels takes ${LEVELS.join(", ")}`);
+      const variants = benchVariants(levels as (typeof LEVELS)[number][]);
+
+      const n = cases.length * runs * variants.length;
       io.out(
-        `bench ponytail: ${runs} run(s) × 2 variants × ${BENCH_CASES.length} case(s) ≈ ${sessions} agent sessions, ~${formatTokens(tokens)} tokens on ${config.models.implementer} (implementer), ${config.models.architect} (architect), ${config.models.reviewer} (reviewer). The cost depends on your provider's prices for these models.`,
+        `bench ponytail: ${runs} run(s) × ${variants.length} variants × ${cases.length} case(s) ≈ ${n * SESSIONS_PER_RUN} agent sessions, ~${formatTokens(n * TOKENS_PER_RUN_ESTIMATE)} tokens on ${config.models.implementer} (implementer), ${config.models.architect} (architect), ${config.models.reviewer} (reviewer). The cost depends on your provider's prices for these models.`,
       );
       if (!values.yes) {
         if (io.confirm === undefined)
@@ -58,15 +84,30 @@ export function benchCommand(cli: (argv: readonly string[], io: Io) => Promise<n
           return ExitCode.Ok;
         }
       }
-      const results = await runBench({ runs, config, cli, io });
       const date = new Date().toISOString().slice(0, 10);
       const dir = join(root, "docs", "bench");
       mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, `ponytail-${date}.md`), benchMarkdown(results, config.models, date));
-      writeFileSync(
-        join(dir, `ponytail-${date}.json`),
-        `${JSON.stringify({ date, models: config.models, results }, null, 2)}\n`,
-      );
+      // Saved after every run: an interrupted bench keeps what it paid for (audit G1).
+      const save = (results: readonly BenchResult[], complete: boolean): void => {
+        writeFileSync(
+          join(dir, `ponytail-${date}.json`),
+          `${JSON.stringify({ date, complete, models: config.models, results }, null, 2)}\n`,
+        );
+        writeFileSync(
+          join(dir, `ponytail-${date}.md`),
+          benchMarkdown(results, config.models, date),
+        );
+      };
+      const results = await runBench({
+        runs,
+        config,
+        cli,
+        io,
+        cases,
+        variants,
+        onRun: (partial) => save(partial, false),
+      });
+      save(results, true);
       if (values.json) io.out(JSON.stringify(results, null, 2));
       else io.out(`wrote docs/bench/ponytail-${date}.md`);
       return ExitCode.Ok;

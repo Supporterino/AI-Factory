@@ -14,7 +14,7 @@ import {
   readLock,
   serializeLock,
 } from "../lock/lock.ts";
-import { executeSync, type PlannedChange, planSync } from "../managed/sync.ts";
+import { executeSync, type PlannedChange, planSync, type SyncAction } from "../managed/sync.ts";
 import { OPENSPEC_TOOLS_TEMPLATE } from "../openspec/cli.ts";
 import { type ManagedFile, renderWorkspace } from "../render/workspace.ts";
 import { PONYTAIL } from "../versions.ts";
@@ -82,25 +82,32 @@ export function planWorkspace(
     // Installs before OpenSpec files were managed have them without a lock entry.
     ownEdits: tools.map((f) => f.path),
   });
-  // A modified vendored add-on is a hash mismatch, not a user edit to merge (§12).
-  const tampered = plan
-    .filter((c) => c.path.startsWith(`${PONYTAIL_DIR}/`) && !c.path.endsWith("/PRECEDENCE.md"))
-    .filter((c) => c.action === "keep-user-edit" || c.action === "conflict")
-    .map((c) => c.path);
-  if (tampered.length > 0) {
+  // A modified or deleted vendored add-on file is a hash mismatch, not a user edit or
+  // deletion to respect (§12): refused, or put back with `--restore` (audit G5).
+  const vendored = (c: PlannedChange): boolean =>
+    c.path.startsWith(`${PONYTAIL_DIR}/`) && !c.path.endsWith("/PRECEDENCE.md");
+  const BROKEN: ReadonlySet<SyncAction> = new Set(["keep-user-edit", "conflict", "keep-deleted"]);
+  const tampered = plan.filter((c) => vendored(c) && BROKEN.has(c.action));
+  if (tampered.length > 0 && !options.restore) {
     throw new PreconditionError("Ponytail add-on files were modified (content hash mismatch)", [
-      ...tampered,
+      ...tampered.map((c) => (c.action === "keep-deleted" ? `${c.path} (deleted)` : c.path)),
       "restore them (`ai-factory update --restore`) or set addons.ponytail.enabled to false",
     ]);
   }
-  const conflicts = plan.filter((c) => c.action === "conflict").map((c) => c.path);
+  const repaired = plan.map(
+    (c): PlannedChange =>
+      vendored(c) && BROKEN.has(c.action)
+        ? { ...c, action: c.action === "keep-deleted" ? "create" : "overwrite" }
+        : c,
+  );
+  const conflicts = repaired.filter((c) => c.action === "conflict").map((c) => c.path);
   if (conflicts.length > 0) {
     throw new PreconditionError("files already exist that ai-factory did not create", [
       ...conflicts,
       "move them away, list them under `unmanaged` in factory.config.jsonc, or rerun with --force",
     ]);
   }
-  return plan;
+  return repaired;
 }
 
 /** Renders managed files, writes them and the lock, and (re)installs hooks. */

@@ -8,6 +8,7 @@ import type { GateReport, GateResult } from "../../gates/run.ts";
 import { runGates } from "../../gates/run.ts";
 import { CHANGE_ID, resolveBranchRef } from "../../git/repo.ts";
 import { worktreePath } from "../../git/worktrees.ts";
+import { loadGateSnapshot } from "../../update/snapshot.ts";
 import { Semaphore } from "../../util/semaphore.ts";
 import { type Command, type Io, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
@@ -155,10 +156,16 @@ export const gateCommand: Command = {
       if (jobs.length === 0) throw new PreconditionError(`no repo has change/${id} checked out`);
     }
 
+    // The change's own gate definitions when it has a snapshot (audit G9), like the pipeline.
+    const snapshot = loadGateSnapshot(root, id);
+    const definitions =
+      snapshot === undefined
+        ? { config }
+        : { config: { ...config, gates: snapshot.gates }, gateTables: snapshot.tables };
     // Gates of different repos run concurrently, bounded by parallel.maxGateProcesses.
     const limit = new Semaphore(config.parallel.maxGateProcesses);
     const reports = await Promise.all(
-      jobs.map((job) => limit.run(() => runGates({ root, config, ...job }))),
+      jobs.map((job) => limit.run(() => runGates({ root, ...definitions, ...job }))),
     );
 
     if (values.json) {

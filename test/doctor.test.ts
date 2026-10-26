@@ -77,6 +77,36 @@ describe("doctor", () => {
     expect(find(json, "run broken")).toMatchObject({ status: "fail" });
   });
 
+  test("warns about proxy variables and checks the graphify env (audit C)", async () => {
+    const root = await installed(createSingleRepoFixture, { app: passAll });
+    process.env.HTTPS_PROXY = "http://proxy.example:3128";
+    try {
+      const json = await report(root);
+      expect(find(json, "proxy")).toMatchObject({ status: "warn" });
+      expect(find(json, "graphify env")).toMatchObject({ status: "ok" });
+    } finally {
+      delete process.env.HTTPS_PROXY;
+    }
+    expect(find(await report(root), "proxy")).toBeUndefined();
+  });
+
+  test("warns when tsc runs without strict (audit G8)", async () => {
+    const root = await installed(createSingleRepoFixture, { app: passAll });
+    writeFileSync(
+      join(root, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { noEmit: true } }),
+    );
+    await fixtureGit(root, "commit", "-q", "-am", "chore: loose tsconfig");
+    const json = await report(root);
+    expect(find(json, "app strict")).toMatchObject({ status: "warn" });
+    writeFileSync(
+      join(root, "tsconfig.json"),
+      '{\n  // comments are fine\n  "compilerOptions": { "strict": true }\n}\n',
+    );
+    await fixtureGit(root, "commit", "-q", "-am", "chore: strict");
+    expect(find(await report(root), "app strict")).toBeUndefined();
+  });
+
   test("a healthy install passes, with the resolved gate table", async () => {
     const root = await installed(createSingleRepoFixture, { app: passAll });
     const res = await cli(root, "doctor");

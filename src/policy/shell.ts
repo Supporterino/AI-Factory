@@ -1,5 +1,6 @@
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { isProtectedPath, isSecretPath } from "./paths.ts";
+import { findSecretUnder, globMatchesSecret, mentionedSecret } from "./secrets.ts";
 import {
   type Command,
   type Pipeline,
@@ -30,6 +31,8 @@ export interface ShellContext {
   /** Reads a file for script inspection; undefined when missing or not text. */
   readonly readFile?: (abs: string) => string | undefined;
   readonly exists?: (abs: string) => boolean;
+  /** Lists a directory (glob words and recursive searches are checked for secret files). */
+  readonly readdir?: (abs: string) => readonly string[] | undefined;
   /** For `~` / `$HOME` / `$TMPDIR` resolution. */
   readonly env?: Readonly<Record<string, string | undefined>>;
   /** Resolves symlinks (see realpath.ts); without it, paths are judged lexically. */
@@ -123,12 +126,25 @@ function checkSetEnv(name: string): void {
 }
 const SAFE_WRITE_TARGETS = /^\/dev\/(null|stdout|stderr|tty|fd\/\d+)$/;
 
-/** Literal text checks for code we cannot parse (inline Python/Node, interpreter scripts). */
+/**
+ * Literal text checks for code we cannot parse (inline Python/Node, interpreter scripts).
+ * Adjacent string literals joined with `+` are joined first (`'git pu'+'sh'`, audit S14).
+ */
 function scanText(text: string): string | undefined {
-  if (/\bgit\b[\s"',[\]()]+push\b/.test(text)) return "embedded code runs `git push`";
-  if (/\b(curl|wget)\b[^\n|]*\|\s*(ba|z|da)?sh\b/.test(text))
-    return "embedded code pipes a download into a shell";
+  for (const t of [text, text.replace(/(['"`])\s*\+\s*\1/g, "")]) {
+    if (/\bgit\b[\s"',[\]()]+push\b/.test(t)) return "embedded code runs `git push`";
+    if (/\b(curl|wget)\b[^\n|]*\|\s*(ba|z|da)?sh\b/.test(t))
+      return "embedded code pipes a download into a shell";
+  }
   return undefined;
+}
+
+/** Inline code (`-c`, `-e`, here-docs, stdin) is also checked for secret file names (S11). */
+function scanInline(code: string): string | undefined {
+  const found = scanText(code);
+  if (found !== undefined) return found;
+  const secret = mentionedSecret(code);
+  return secret === undefined ? undefined : `embedded code reads secret file \`${secret}\``;
 }
 
 interface State {
@@ -239,12 +255,198 @@ function optionValues(args: readonly string[], short: string, long: readonly str
   return out;
 }
 
-/** Any argument that names a secret file blocks the command (read or write). */
-function checkSecretArgs(words: readonly string[]): void {
+/**
+ * Any argument that names a secret file blocks the command (read or write): by name, inside a
+ * git object (`HEAD:.env`), or through a glob that matches one (audit S11).
+ */
+function checkSecretArgs(state: State, words: readonly string[]): void {
   for (const w of words) {
     const value = w.startsWith("-") ? (w.includes("=") ? w.slice(w.indexOf("=") + 1) : "") : w;
-    if (value !== "" && isSecretPath(value)) block(`touches secret file \`${value}\``);
+    if (value === "") continue;
+    if (isSecretPath(value)) block(`touches secret file \`${value}\``);
+    const object = value.match(/^[^\s:/]*:([^/].*)$/)?.[1];
+    if (object !== undefined && isSecretPath(object))
+      block(`reads secret file \`${object}\` from git`);
+    if (/[*?[]/.test(value)) {
+      const abs = resolvePath(state, value);
+      const hit = abs === undefined ? undefined : globMatchesSecret(abs, state.ctx.readdir);
+      if (hit !== undefined) block(`the pattern \`${value}\` matches secret file \`${hit}\``);
+    }
   }
+}
+
+/** Recursive searches (`grep -r`, `rg --hidden`) must not run over secret files (S11). */
+function checkRecursiveSearch(state: State, base: string, args: readonly string[]): void {
+  const f = flags(args);
+  const pos = positionals(args);
+  let roots: string[];
+  if (base === "grep" || base === "egrep" || base === "fgrep") {
+    const recursive =
+      f.has("-r") ||
+      f.has("-R") ||
+      f.has("--recursive") ||
+      f.has("--dereference-recursive") ||
+      optionValues(args, "d", ["--directories"]).includes("recurse");
+    if (!recursive) return;
+    const explicit = f.has("-e") || f.has("-f") || f.has("--regexp") || f.has("--file");
+    roots = explicit ? pos : pos.slice(1);
+  } else {
+    // rg and ag skip hidden files unless told otherwise; secret files are mostly hidden.
+    const unrestricted = args
+      .filter((a) => /^-[A-Za-z]+$/.test(a))
+      .reduce((n, a) => n + (a.match(/u/g)?.length ?? 0), 0);
+    const hidden = f.has("--hidden") || f.has("-.") || f.has("--unrestricted") || unrestricted >= 2;
+    if (!hidden) return;
+    roots = pos.slice(1);
+  }
+  const readdir = state.ctx.readdir;
+  if (readdir === undefined) return;
+  for (const root of roots.length > 0 ? roots : ["."]) {
+    const abs = resolvePath(state, root);
+    if (abs === undefined) continue;
+    const found = findSecretUnder(abs, readdir);
+    if (found !== undefined)
+      block(
+        `searches \`${root}\`, which contains secret file \`${found}\`; search specific directories instead`,
+      );
+  }
+}
+
+/** A project script `npm run X` / `pnpm X` / `yarn X` / `bun run X` runs (with pre/post). */
+function checkPackageScript(state: State, tool: string, args: readonly string[]): void {
+  const pos = positionals(args);
+  const sub = pos[0];
+  if (sub === undefined || state.cwd === undefined) return;
+  const text = state.ctx.readFile?.(join(state.cwd, "package.json"));
+  let scripts: Record<string, unknown> = {};
+  try {
+    scripts =
+      (text === undefined
+        ? {}
+        : (JSON.parse(text) as { scripts?: Record<string, unknown> }).scripts) ?? {};
+  } catch {
+    return;
+  }
+  const NPM_RUN = new Set(["run", "run-script", "rum", "urn"]);
+  const NPM_LIFECYCLE: Record<string, string> = {
+    test: "test",
+    t: "test",
+    tst: "test",
+    start: "start",
+    stop: "stop",
+    restart: "restart",
+  };
+  let name: string | undefined;
+  if (tool === "npm") name = NPM_RUN.has(sub) ? pos[1] : NPM_LIFECYCLE[sub];
+  else if (sub === "run") name = pos[1];
+  else if (sub in scripts) name = sub;
+  else if (tool === "bun" && /\.[cm]?[jt]sx?$/.test(sub)) {
+    checkScriptFile(state, sub, "other");
+    return;
+  }
+  if (name === undefined) return;
+  if (tool === "bun" && !(name in scripts) && /\.[cm]?[jt]sx?$/.test(name)) {
+    checkScriptFile(state, name, "other");
+    return;
+  }
+  for (const key of [`pre${name}`, name, `post${name}`]) {
+    const body = scripts[key];
+    if (typeof body === "string") checkScript(state, body);
+  }
+}
+
+interface MakeRule {
+  readonly prereqs: string[];
+  readonly recipe: string[];
+}
+
+function parseMakefile(text: string): {
+  vars: Map<string, string>;
+  rules: Map<string, MakeRule>;
+  first?: string;
+} {
+  const vars = new Map<string, string>();
+  const rules = new Map<string, MakeRule>();
+  let first: string | undefined;
+  let current: MakeRule[] = [];
+  for (const line of text.replace(/\\\n/g, " ").split("\n")) {
+    if (line.startsWith("\t")) {
+      for (const r of current) r.recipe.push(line.slice(1));
+      continue;
+    }
+    if (/^\s*(#|$)/.test(line)) continue;
+    const assign = line.match(
+      /^(?:export\s+|override\s+)?([A-Za-z_][\w.-]*)\s*(?:\?|:|::|\+|!)?=\s*(.*)$/,
+    );
+    if (assign?.[1] !== undefined) {
+      vars.set(assign[1], (assign[2] ?? "").trim());
+      current = [];
+      continue;
+    }
+    const rule = line.match(/^([^:#=\t][^:#=]*?)\s*::?(?!=)\s*([^;#]*)(?:;(.*))?$/);
+    if (rule?.[1] === undefined) {
+      current = [];
+      continue;
+    }
+    const prereqs = (rule[2] ?? "").replace("|", " ").split(/\s+/).filter(Boolean);
+    current = rule[1]
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((t) => {
+        const r = rules.get(t) ?? { prereqs: [], recipe: [] };
+        r.prereqs.push(...prereqs);
+        if (rule[3] !== undefined) r.recipe.push(rule[3]);
+        rules.set(t, r);
+        if (first === undefined && !t.startsWith(".") && !t.includes("%")) first = t;
+        return r;
+      });
+  }
+  return first === undefined ? { vars, rules } : { vars, rules, first };
+}
+
+/** Stands in for make's `$$` while variables are expanded. */
+const DOLLAR = "\uE000";
+
+/** `make [target…]`: the recipes it runs, with simple variables expanded (audit S14). */
+function checkMake(state: State, args: readonly string[]): void {
+  const dir = optionValues(args, "C", ["--directory"]).at(-1);
+  const file = optionValues(args, "f", ["--file", "--makefile"]).at(-1);
+  const targets: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? "";
+    if (["-C", "-f", "-I", "-o", "-W", "--directory", "--file", "--makefile"].includes(a)) i++;
+    else if (!a.startsWith("-") && !a.includes("=")) targets.push(a);
+  }
+  const base = dir === undefined ? state.cwd : resolvePath(state, dir);
+  if (base === undefined) return;
+  const names = file !== undefined ? [file] : ["GNUmakefile", "makefile", "Makefile"];
+  const text = names
+    .map((n) => state.ctx.readFile?.(resolve(base, n)))
+    .find((t) => t !== undefined);
+  if (text === undefined) return;
+  const { vars, rules, first } = parseMakefile(text);
+  const expand = (line: string): string => {
+    let out = line.replaceAll("$$", DOLLAR);
+    for (let k = 0; k < 5; k++)
+      out = out.replace(/\$[({]([A-Za-z_][\w.-]*)[)}]/g, (m, v: string) => vars.get(v) ?? m);
+    return out;
+  };
+  const seen = new Set<string>();
+  const visit = (target: string): void => {
+    if (seen.has(target) || seen.size > 200) return;
+    seen.add(target);
+    const rule = rules.get(target);
+    if (rule === undefined) return;
+    for (const p of rule.prereqs) visit(p);
+    for (const raw of rule.recipe) {
+      const line = expand(raw.replace(/^[\s@+-]+/, ""));
+      if (/\$[({]/.test(line)) {
+        const found = scanText(line);
+        if (found) block(`make ${target}: ${found}`);
+      } else checkScript(state, line.replaceAll(DOLLAR, "$"));
+    }
+  };
+  for (const t of targets.length > 0 ? targets : first === undefined ? [] : [first]) visit(t);
 }
 
 function checkRedirects(state: State, redirects: readonly Redirect[]): void {
@@ -922,7 +1124,7 @@ function checkSimple(
   for (const a of cmd.assigns) checkSetEnv(a.split("=")[0] ?? "");
   const words = unwrap(state, cmd.words, stdin);
   if (words.length === 0) return;
-  checkSecretArgs(words);
+  checkSecretArgs(state, words);
   const [head = "", ...args] = words;
   if (head.includes("$")) block(`runs a command whose name is generated at run time (\`${head}\`)`);
   const base = head.slice(head.lastIndexOf("/") + 1);
@@ -1029,22 +1231,27 @@ function checkSimple(
     if (i !== -1 || joined !== undefined) {
       const code =
         joined !== undefined ? joined.slice(joined.indexOf("=") + 1) : (args[i + 1] ?? "");
-      const found = scanText(code);
+      const found = scanInline(code);
       if (found) block(found);
       return;
     }
     const file = args.find((a) => !a.startsWith("-"));
+    // `bun run x` / `bun x` may name a package.json script rather than a file.
+    if (base === "bun" && file !== undefined) {
+      checkPackageScript(state, "bun", args);
+      return;
+    }
     if (file !== undefined) return checkScriptFile(state, file, "other");
     // `python3 -`, `node -` or no operand: the program comes from stdin.
     if (heredoc !== undefined) {
-      const found = scanText(heredoc);
+      const found = scanInline(heredoc);
       if (found) block(found);
       return;
     }
     if (inputFile !== undefined) return checkScriptFile(state, inputFile, "other");
     if (stdin === null) block(`pipes generated input into ${base}`);
     if (stdin !== undefined) {
-      const found = scanText(stdin);
+      const found = scanInline(stdin);
       if (found) block(found);
     }
     return;
@@ -1217,6 +1424,18 @@ function checkSimple(
       ) {
         return block(`${base} publishing is not allowed`);
       }
+      checkPackageScript(state, base, args);
+      return;
+    case "make":
+    case "gmake":
+      checkMake(state, args);
+      return;
+    case "grep":
+    case "egrep":
+    case "fgrep":
+    case "rg":
+    case "ag":
+      checkRecursiveSearch(state, base, args);
       return;
     case "cargo":
     case "twine":

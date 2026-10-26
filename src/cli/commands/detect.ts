@@ -8,7 +8,12 @@ import { detectWorkspace } from "../../detect/workspace.ts";
 import { PreconditionError } from "../../errors.ts";
 import { ensureNotNewer, readLock } from "../../lock/lock.ts";
 import { FACTORY_VERSION } from "../../version.ts";
-import { commitInstall, dirtyInstallPaths, syncWorkspace } from "../../workspace/sync.ts";
+import {
+  commitInstall,
+  dirtyInstallPaths,
+  planWorkspace,
+  syncWorkspace,
+} from "../../workspace/sync.ts";
 import { type Command, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
 
@@ -69,13 +74,29 @@ export const detectCommand: Command = {
         }
       }
       const next = applyChanges(loaded.text, loaded.config, changes);
+      const nextConfig = parseConfigText(next, CONFIG_FILE);
+      // Plan first: a conflict stops before the config is written (audit G3).
+      if (installed) planWorkspace(root, nextConfig, { merge: true });
       const tmp = `${loaded.file}.tmp`;
       writeFileSync(tmp, next);
       renameSync(tmp, loaded.file);
       applied = true;
-      // Agents, edit scopes, OpenSpec context and hooks follow the config (§10).
+      // Agents, edit scopes, OpenSpec context and hooks follow the config (§10). Agents the
+      // user edited are merged like on `update`, so new standards arrive in them too.
       if (installed) {
-        await syncWorkspace(root, parseConfigText(next, CONFIG_FILE));
+        let result: Awaited<ReturnType<typeof syncWorkspace>>;
+        try {
+          result = await syncWorkspace(root, nextConfig, { merge: true });
+        } catch (err) {
+          writeFileSync(loaded.file, loaded.text);
+          throw err;
+        }
+        if (result.conflicts.length > 0) {
+          io.err("detect merged your edits but these files have conflicts (nothing committed):");
+          for (const f of result.conflicts) io.err(`  ${f}`);
+          io.err("resolve them and commit, or `git checkout -- .` to drop the change");
+          return ExitCode.Precondition;
+        }
         if (!values["no-commit"]) {
           commit = await commitInstall(
             root,

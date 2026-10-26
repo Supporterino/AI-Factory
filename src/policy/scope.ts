@@ -93,6 +93,12 @@ export function checkEdit(
     return { allowed: false, reason: `\`${rel}\` is managed by the factory` };
   if (!IMPLEMENTING_ROLES.has(ctx.role))
     return { allowed: false, reason: `the ${ctx.role} is read-only` };
+  // The spec is the architect's; task progress is the factory's record (audit S15).
+  if (/^openspec(\/|$)/i.test(rel))
+    return {
+      allowed: false,
+      reason: `\`${rel}\` is the change's spec: only the architect writes it, and the factory ticks tasks`,
+    };
   const approved = approval();
   if (approved !== true)
     return { allowed: false, reason: `${approved}; implementation edits are blocked` };
@@ -138,12 +144,22 @@ export function auditChanges(
   });
 }
 
-/** Paths named in an apply_patch payload (`*** Add/Update/Delete File:` and `*** Move to:`). */
-export function patchPaths(patchText: string): string[] {
-  const out: string[] = [];
-  for (const line of patchText.split("\n")) {
-    const m = line.match(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+?)\s*$/);
-    if (m?.[1]) out.push(m[1]);
+/**
+ * Paths named in a patch: apply_patch headers (`*** Add/Update/Delete File:`, `*** Move to:`)
+ * and unified-diff headers (`--- a/x`, `+++ b/x`, `rename to`), CRLF or LF. Undefined when a
+ * non-empty patch names no file: the caller refuses what it cannot judge (audit S17).
+ */
+export function patchPaths(patchText: string): string[] | undefined {
+  const out = new Set<string>();
+  for (const raw of patchText.split(/\r?\n/)) {
+    const line = raw.replace(/\r$/, "");
+    const m =
+      line.match(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+?)\s*$/) ??
+      line.match(/^(?:---|\+\+\+) (?:[ab]\/)?(.+?)(?:\t.*)?\s*$/) ??
+      line.match(/^(?:rename|copy) (?:from|to) (.+?)\s*$/) ??
+      line.match(/^diff --git a\/(.+?) b\/.+$/);
+    if (m?.[1] && m[1] !== "/dev/null") out.add(m[1]);
   }
-  return out;
+  if (out.size === 0 && patchText.trim() !== "") return undefined;
+  return [...out];
 }

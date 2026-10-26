@@ -1,7 +1,8 @@
 import { PreconditionError, TransientError } from "../errors.ts";
 import { checkDesign } from "../openspec/cli.ts";
 import { claimActive, dequeue, readActive, releaseActive } from "../state/active.ts";
-import type { Phase } from "../state/run.ts";
+import { readOrCorrupt } from "../state/files.ts";
+import { loadRun, type Phase } from "../state/run.ts";
 import { verifyApproval } from "./approve.ts";
 import { ChangeAborted, type Pipeline } from "./context.ts";
 import { contractPhase } from "./contracts.ts";
@@ -48,6 +49,18 @@ async function stopAborted(p: Pipeline, id: string): Promise<DriveOutcome> {
   if (readActive(p.root)?.changeId === id) await releaseActive(p.root, id);
   return { id, phase: "aborted", detail: "aborted; branches and worktrees are kept" };
 }
+
+/** The next queued change that still waits; entries for changes that moved on are dropped. */
+async function nextQueued(p: Pipeline): Promise<string | undefined> {
+  for (;;) {
+    const next = await dequeue(p.root);
+    if (next === undefined) return undefined;
+    const run = readOrCorrupt(() => loadRun(p.root, next)).value;
+    if (run !== undefined && WAITING.has(run.phase)) return next;
+  }
+}
+
+const WAITING: ReadonlySet<Phase> = new Set(["queued", "awaiting-approval", "paused"]);
 
 /** Drives one change as far as it can go; continues with the next queued change on close. */
 export async function drive(p: Pipeline, firstId: string): Promise<DriveOutcome> {
@@ -128,6 +141,7 @@ async function step(p: Pipeline, id: string): Promise<Step> {
           specDir(p, run.draft),
           id,
           p.codeRepos().map((r) => r.name),
+          p.config.contracts,
         );
         await setPhase(p, id, issues.length === 0 ? "awaiting-approval" : "design");
       } else {
@@ -194,7 +208,7 @@ async function step(p: Pipeline, id: string): Promise<Step> {
     }
     case "closing": {
       await close(p, id);
-      const next = await dequeue(p.root);
+      const next = await nextQueued(p);
       if (next === undefined) return stop({ id, phase: "done" });
       p.out(`▶ starting queued change ${next}`);
       return go(next);

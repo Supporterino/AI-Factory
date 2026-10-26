@@ -33,6 +33,33 @@ export interface SandboxPolicy {
   /** Paths inside `readOnly` that are writable again (git's index and objects, caches). */
   readonly writableInside?: readonly string[];
   readonly home?: string;
+  /**
+   * Agent shells: secret files in the workspace (`.env`, keys, `.netrc`) are unreadable, so
+   * globs, recursive greps and scripts cannot reach them either (audit S11). Gates keep reading
+   * them: test runners such as Vite load `.env` on their own.
+   */
+  readonly denySecretReads?: boolean;
+}
+
+const regexPath = (p: string): string => realPathOf(p).replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+
+/** Seatbelt regexes for secret files under the workspace, and the example files re-allowed. */
+function secretReadRules(workspace: string): string[] {
+  const ws = regexPath(workspace);
+  const under = `^${ws}/(.*/)?`;
+  const secret = [
+    "\\.env(\\.[^/]*)?",
+    "\\.netrc",
+    "\\.git-credentials",
+    "\\.pypirc",
+    "id_(rsa|dsa|ecdsa|ed25519)[^/]*",
+    "[^/]*kubeconfig[^/]*",
+    "[^/]*\\.tfstate(\\.backup)?",
+  ];
+  return [
+    `(deny file-read-data ${secret.map((s) => `(regex #"${under}${s}$")`).join(" ")})`,
+    `(allow file-read-data (regex #"${under}\\.env\\.(example|sample|template|dist|defaults)$"))`,
+  ];
 }
 
 /** User files that would run code later or hand out identity if an agent rewrote them. */
@@ -115,6 +142,7 @@ export function seatbeltProfile(policy: SandboxPolicy): string {
     lines.push(`(deny file-read* ${HOME_READ_DENY.map((p) => subpath(join(home, p))).join(" ")})`);
   }
   lines.push(`(deny file-write* ${SYSTEM_WRITE_DENY.map(subpath).join(" ")})`);
+  if (policy.denySecretReads === true) lines.push(...secretReadRules(policy.workspace));
   // Pushing needs credentials or ssh: no credential helpers, no ssh connections.
   lines.push('(deny process-exec (regex #"/git-credential-[^/]*$"))');
   lines.push('(deny network-outbound (remote tcp "*:22"))');

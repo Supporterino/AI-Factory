@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bundlePlugin, PLUGIN_OUT } from "../scripts/build-plugin.ts";
 import { approvalFile, specHash } from "../src/approval/approval.ts";
-import { pruneLogs } from "../src/logs/log.ts";
+import { appendLog, pruneLogs } from "../src/logs/log.ts";
 import { redact, secretEnvValues } from "../src/logs/redact.ts";
 import { auditChanges, type SessionContext } from "../src/policy/scope.ts";
 import { sessionContextFile } from "../src/policy/session-files.ts";
@@ -302,6 +302,68 @@ describe("plugin guards", () => {
   });
 });
 
+describe("second audit batch (S11, S17, S19)", () => {
+  test("the grep tool refuses a search over secret files (S11)", async () => {
+    writeFileSync(join(wt, ".env"), "TOKEN=x\n");
+    try {
+      expect(
+        await call("impl", "implementer-app", "grep", { pattern: "TOKEN", path: "." }),
+      ).toContain("secret file `.env`");
+      expect(await call("impl", "implementer-app", "grep", { pattern: "TOKEN" })).toContain(
+        "secret file `.env`",
+      );
+      expect(
+        await call("impl", "implementer-app", "grep", { pattern: "TOKEN", path: "src" }),
+      ).toBeUndefined();
+      expect(await call("impl", "implementer-app", "glob", { pattern: ".e*" })).toContain(
+        "secret file",
+      );
+      expect(await call("impl", "implementer-app", "shell", { command: "cat .e*" })).toContain(
+        "secret file",
+      );
+    } finally {
+      rmSync(join(wt, ".env"));
+    }
+  });
+
+  test("patches the plugin cannot read are refused (S17)", async () => {
+    approve();
+    const unified = "--- a/AGENTS.md\n+++ b/AGENTS.md\n@@ -1 +1 @@\n-x\n+y\n";
+    expect(await call("impl", "implementer-app", "apply_patch", { patchText: unified })).toContain(
+      "managed by the factory",
+    );
+    const crlf =
+      "*** Begin Patch\r\n*** Update File: AGENTS.md\r\n@@\r\n-x\r\n+y\r\n*** End Patch\r\n";
+    expect(await call("impl", "implementer-app", "apply_patch", { patchText: crlf })).toContain(
+      "managed by the factory",
+    );
+    expect(
+      await call("impl", "implementer-app", "apply_patch", { patchText: "rewrite everything" }),
+    ).toContain("cannot tell which files");
+    const ok = "*** Begin Patch\n*** Update File: src/sum.ts\n@@\n-x\n+y\n*** End Patch\n";
+    expect(await call("impl", "implementer-app", "apply_patch", { patchText: ok })).toBeUndefined();
+  });
+
+  test("edit and patch contents are not logged (S19)", async () => {
+    approve();
+    const marker = "UNIQUE-CONTENT-MARKER-7f3a";
+    await call("impl", "implementer-app", "edit", {
+      filePath: "src/sum.ts",
+      oldString: `${marker}-old`,
+      newString: `${marker}-new`,
+    });
+    await call("impl", "implementer-app", "apply_patch", {
+      patchText: `*** Begin Patch\n*** Update File: src/sum.ts\n@@\n-x\n+${marker}\n*** End Patch\n`,
+    });
+    const dir = join(ws, ".factory", "logs", ID);
+    const text = readdirSync(dir)
+      .map((f) => readFileSync(join(dir, f), "utf8"))
+      .join("\n");
+    expect(text).toContain("src/sum.ts");
+    expect(text).not.toContain(marker);
+  });
+});
+
 describe("post-session audit", () => {
   test("flags changed files outside the session's scope", () => {
     const ctx: SessionContext = {
@@ -347,6 +409,52 @@ describe("redaction and log pruning", () => {
         "keep abc and /usr/bin",
       ].join("\n"),
     );
+  });
+
+  test("redacts auth headers, user credentials and URL tokens (S16)", () => {
+    expect(redact('curl -H "Authorization: Bearer abcdef1234567890xyz" https://x')).toBe(
+      'curl -H "Authorization: Bearer [REDACTED:auth]" https://x',
+    );
+    expect(redact("Authorization: Basic dXNlcjpwYXNzd29yZA==")).toBe(
+      "Authorization: Basic [REDACTED:auth]",
+    );
+    expect(redact("curl -u admin:hunter22 https://x")).toBe(
+      "curl -u admin:[REDACTED:credentials] https://x",
+    );
+    expect(redact("curl --user=admin:hunter22 https://x")).toBe(
+      "curl --user=admin:[REDACTED:credentials] https://x",
+    );
+    expect(redact("git clone https://x-access-token:abc123def456@github.com/o/r")).toBe(
+      "git clone https://[REDACTED:credentials]@github.com/o/r",
+    );
+    expect(redact("git clone https://abcdef0123456789abcdef0123456789@github.com/o/r")).toBe(
+      "git clone https://[REDACTED:credentials]@github.com/o/r",
+    );
+    expect(redact("ssh://git@github.com/o/r and git@github.com:o/r")).toBe(
+      "ssh://git@github.com/o/r and git@github.com:o/r",
+    );
+  });
+
+  test("log values are redacted before JSON escaping, and always (S16)", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-factory-logs-"));
+    try {
+      const env = { MY_TOKEN: 'quote"and\\backslash-secret' };
+      appendLog(root, "c", { kind: "x", value: `has ${env.MY_TOKEN} inside` }, { env });
+      appendLog(
+        root,
+        "c",
+        { kind: "y", value: "ghp_abcdefghijklmnopqrstuvwxyz0123456789" },
+        { redact: false },
+      );
+      const text = readdirSync(join(root, ".factory/logs/c"))
+        .map((f) => readFileSync(join(root, ".factory/logs/c", f), "utf8"))
+        .join("");
+      expect(text).not.toContain("backslash-secret");
+      expect(text).toContain("[REDACTED:env]");
+      expect(text).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123456789");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("prunes logs older than the retention", () => {

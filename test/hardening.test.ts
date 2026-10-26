@@ -8,18 +8,38 @@ import { checkShell, type ShellContext } from "../src/policy/shell.ts";
  * lands and its id joins FIXED; from then on they must be blocked.
  */
 const FIXED = new Set<string>(["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S10", "S12"]);
+/** Fixed with the second audit batch; their probes run as plain tests. */
+const LATER: ReadonlySet<string> = new Set(["S11", "S14"]);
 
 const WT = "/ws/.factory/worktrees/add-x/app/1.1";
 const FILES: Record<string, string> = {
   [`${WT}/s.sh`]: "git push origin HEAD\n",
   [`${WT}/f`]: "x\n",
+  [`${WT}/.env`]: "TOKEN=x\n",
+  [`${WT}/.env.example`]: "TOKEN=\n",
+  [`${WT}/src/a.ts`]: "export {};\n",
+  [`${WT}/package.json`]: JSON.stringify({
+    scripts: { lint: "biome check .", sneaky: "git push", presneaky2: "git push", sneaky2: "true" },
+  }),
+  [`${WT}/Makefile`]: "GO ?= go\n\ntest:\n\t$(GO) test ./...\n\nsneaky:\n\t@git push origin HEAD\n",
+  "/Users/dev/.aws/credentials": "secret\n",
+  "/Users/dev/.kube/prod.yaml": "token\n",
 };
+/** Directory entries derived from FILES. */
+function readdir(abs: string): string[] | undefined {
+  const prefix = `${abs.replace(/\/$/, "")}/`;
+  const names = Object.keys(FILES)
+    .filter((f) => f.startsWith(prefix))
+    .map((f) => f.slice(prefix.length).split("/")[0] ?? "");
+  return names.length > 0 ? [...new Set(names)] : undefined;
+}
 const ctx: ShellContext = {
   cwd: WT,
   root: WT,
   env: { HOME: "/Users/dev", TMPDIR: "/var/folders/xy/T" },
   readFile: (abs) => FILES[abs],
-  exists: (abs) => abs in FILES,
+  exists: (abs) => abs in FILES || readdir(abs) !== undefined,
+  readdir,
 };
 
 const PROBES: Readonly<Record<string, readonly string[]>> = {
@@ -125,6 +145,37 @@ const PROBES: Readonly<Record<string, readonly string[]>> = {
   S7: ["cat .ENV", "echo x >> .GIT/config", "cp f AGENTS.MD", "rm -rf .OPENCODE"],
   // S10: agents commit and so dodge the worktree audit.
   S10: ["git commit -m x", "git commit -am x"],
+  // S11: secret files read through globs, git objects, recursive searches and inline code.
+  S11: [
+    "cat .e*",
+    "cat ~/.aws/cred*",
+    "cat .en?",
+    "head -1 ./.env",
+    "git show HEAD:.env",
+    "git cat-file -p HEAD:.env",
+    "grep -r TOKEN .",
+    "grep -R TOKEN",
+    "grep --recursive TOKEN .",
+    "rg --hidden TOKEN",
+    "rg -uu TOKEN",
+    "python3 -c \"print(open('.env').read())\"",
+    "node -e \"console.log(require('fs').readFileSync('.env','utf8'))\"",
+    "cat ~/.kube/prod.yaml",
+  ],
+  // S14: commands hidden in other languages and in project scripts.
+  S14: [
+    "python3 -c \"import os; os.system('git pu'+'sh')\"",
+    "node -e \"require('child_process').execSync('git pu' + 'sh')\"",
+    "npm run sneaky",
+    "npm run-script sneaky",
+    "pnpm sneaky",
+    "pnpm run sneaky",
+    "yarn sneaky",
+    "bun run sneaky",
+    "npm run sneaky2",
+    "make sneaky",
+    "make -C . sneaky",
+  ],
   // S12: git config writes read as reads.
   S12: [
     "git config --unset core.hooksPath",
@@ -136,7 +187,7 @@ const PROBES: Readonly<Record<string, readonly string[]>> = {
 for (const [id, commands] of Object.entries(PROBES)) {
   describe(`${id} probes are blocked`, () => {
     for (const cmd of commands) {
-      (FIXED.has(id) ? test : test.failing)(cmd, () => {
+      (FIXED.has(id) || LATER.has(id) ? test : test.failing)(cmd, () => {
         expect(checkShell(cmd, ctx).allowed).toBe(false);
       });
     }
@@ -183,6 +234,17 @@ describe("S7 case-variant edits are blocked", () => {
   }
 });
 
+describe("S15: implementers never edit the change's spec", () => {
+  for (const path of ["openspec/changes/add-x/tasks.md", "OpenSpec/changes/add-x/proposal.md"]) {
+    test(path, () => {
+      expect(checkEdit(EDIT_CTX, path, () => true).allowed).toBe(false);
+      expect(
+        checkEdit({ ...EDIT_CTX, role: "tester", testGlobs: ["**"] }, path, () => true).allowed,
+      ).toBe(false);
+    });
+  }
+});
+
 describe("everyday commands stay allowed", () => {
   test.each([
     "git status",
@@ -216,6 +278,14 @@ describe("everyday commands stay allowed", () => {
     "go test ./...",
     "cargo test",
     "npm run lint",
+    "npm test",
+    "make test",
+    "cat .env.example",
+    "cat src/*",
+    "grep -r TOKEN src",
+    "rg TOKEN",
+    "git show HEAD:src/a.ts",
+    "python3 -c \"print('git', 'status')\"",
   ])("%s", (cmd) => {
     expect(checkShell(cmd, ctx)).toEqual({ allowed: true });
   });

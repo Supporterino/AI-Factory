@@ -80,6 +80,34 @@ describe("agent templates", () => {
   );
 });
 
+describe("sub-path languages (audit G9)", () => {
+  test("a monorepo package's language brings its standard to the implementer and AGENTS.md", () => {
+    const mono = FactoryConfig.parse({
+      ...config,
+      repos: [
+        { name: "ai", path: ".", role: "orchestration", languages: [] },
+        {
+          name: "app",
+          path: "repos/app",
+          languages: ["go"],
+          subPaths: [{ path: "web", languages: ["typescript"] }],
+        },
+      ],
+    });
+    const files = renderWorkspace(mono);
+    const implementer = files.find((f) => f.path === ".opencode/agents/implementer-app.md");
+    for (const lang of ["typescript", "go"] as const)
+      expect(implementer?.content).toContain(
+        renderStandard(PROFILES[lang], { comments: false }).slice(0, 200),
+      );
+    expect(files.find((f) => f.path === "AGENTS.md")?.content).toContain(
+      "| app | `repos/app` | code | go, typescript |",
+    );
+    const context = files.find((f) => f.content.includes("Active language standards"));
+    expect(context?.content).toContain(`${PROFILES.typescript.title}:`);
+  });
+});
+
 describe("renderWorkspace", () => {
   const files = renderWorkspace(config);
   const byPath = new Map(files.map((f) => [f.path, f]));

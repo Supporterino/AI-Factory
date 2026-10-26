@@ -81,6 +81,34 @@ describe.skipIf(!onMac)("Seatbelt profile (macOS)", () => {
     expect(run(`${join(ws, "..", "git-credential-probe")}`).code).not.toBe(0);
   });
 
+  test("agent shells cannot read workspace secrets; example files stay readable (audit S11)", () => {
+    writeFileSync(join(wt, ".env"), "TOKEN=x\n");
+    writeFileSync(join(wt, ".env.example"), "TOKEN=\n");
+    const strict = seatbeltProfile({
+      workspace: ws,
+      writable: [wt],
+      readOnly: protectedInWorktree(wt),
+      home,
+      denySecretReads: true,
+    });
+    const sh = (p: string, command: string) =>
+      spawnSync(
+        sandboxArgv(p, ["/bin/sh", "-c", command])[0] ?? "",
+        sandboxArgv(p, ["/bin/sh", "-c", command]).slice(1),
+        {
+          cwd: wt,
+          encoding: "utf8",
+        },
+      );
+    expect(sh(strict, "cat .env").status).not.toBe(0);
+    expect(sh(strict, "grep -r TOKEN . 2>/dev/null").stdout).not.toContain("TOKEN=x");
+    expect(sh(strict, "python3 -c \"print(open('.env').read())\"").status).not.toBe(0);
+    expect(sh(strict, "cat .env.example").stdout).toBe("TOKEN=\n");
+    expect(sh(strict, "ls -a").stdout).toContain(".env");
+    // Gates keep reading them (test runners load .env themselves).
+    expect(sh(profile, "cat .env").stdout).toBe("TOKEN=x\n");
+  });
+
   test("sandboxCommand quotes a shell command line safely", () => {
     const line = sandboxCommand(profile, "/bin/sh", 'echo "it\'s" > q.txt && cat q.txt');
     const res = spawnSync("/bin/sh", ["-c", line], { cwd: wt, encoding: "utf8" });

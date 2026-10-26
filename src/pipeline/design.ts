@@ -9,7 +9,7 @@ import { decisionValues } from "../runtime/handoff.ts";
 import { readActive } from "../state/active.ts";
 import { loadRun, newRun, saveRun } from "../state/run.ts";
 import { recordUsage } from "../usage/usage.ts";
-import type { Pipeline } from "./context.ts";
+import { ChangeAborted, type Pipeline } from "./context.ts";
 import { designPrompt, designRepairPrompt, explorePrompt, intakePrompt } from "./prompts.ts";
 
 /** Directory holding the change's AI-repo checkout: a draft worktree or the workspace root. */
@@ -135,7 +135,8 @@ export async function design(p: Pipeline, id: string): Promise<{ ok: boolean; is
   }
   p.out(`▶ explore: ${repos.map((r) => r.name).join(", ")}`);
   const explorations: Record<string, string> = {};
-  await Promise.all(
+  // Explorers are context, not a gate: one that fails is noted, the others still count (P20).
+  const settled = await Promise.allSettled(
     repos.map((repo) =>
       p.agents.run(async () => {
         const res = await p.call({
@@ -154,6 +155,17 @@ export async function design(p: Pipeline, id: string): Promise<{ ok: boolean; is
       }),
     ),
   );
+  const failures = settled.flatMap((s) => (s.status === "rejected" ? [s.reason as unknown] : []));
+  const aborted = failures.find((e) => e instanceof ChangeAborted);
+  if (aborted !== undefined) throw aborted;
+  // Every explorer down means the runtime is: the architect would fail the same way.
+  if (failures.length === repos.length && failures[0] !== undefined) throw failures[0];
+  settled.forEach((s, i) => {
+    const name = repos[i]?.name;
+    if (s.status === "rejected" && name !== undefined)
+      explorations[name] =
+        `(explorer failed: ${s.reason instanceof Error ? s.reason.message : String(s.reason)})`;
+  });
 
   p.out(`▶ design: openspec/changes/${id}`);
   await newChange(p.root, dir, id);
@@ -176,12 +188,12 @@ export async function design(p: Pipeline, id: string): Promise<{ ok: boolean; is
     }),
     retry: async (_handoff, attempt) => {
       if (attempt > p.config.gates.maxRetries) return undefined;
-      const { issues } = await checkDesign(p.root, dir, id, names);
+      const { issues } = await checkDesign(p.root, dir, id, names, p.config.contracts);
       return issues.length === 0 ? undefined : designRepairPrompt(issues);
     },
   });
 
-  const { issues } = await checkDesign(p.root, dir, id, names);
+  const { issues } = await checkDesign(p.root, dir, id, names, p.config.contracts);
   await p.update(id, (d) => {
     if (result.handoff) d.handoffs.design = result.handoff;
     if (issues.length === 0) {

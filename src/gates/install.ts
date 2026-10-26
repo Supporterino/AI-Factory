@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { RepoConfig } from "../config/schema.ts";
+import { type RepoConfig, repoLanguages } from "../config/schema.ts";
 import { exec } from "../exec.ts";
 import { profilesFor } from "../profiles/index.ts";
 import { agentProcessEnv } from "../runtime/credentials.ts";
@@ -57,7 +57,7 @@ export async function installDeps(
   const env = { ...agentProcessEnv(), ...cacheEnv(root, repo.name), ...QUIET_ENV };
   const steps: InstallStep[] = [];
   const done = new Set<string>();
-  for (const profile of profilesFor(repo.languages)) {
+  for (const profile of profilesFor(repoLanguages(repo))) {
     for (const dir of installDirs(profile, files)) {
       const step = profile.install.find((s) => existsSync(join(worktree, dir, s.lockfile)));
       const key = `${dir}\0${step?.command ?? profile.id}`;

@@ -13,7 +13,21 @@ import { redact, secretEnvValues } from "./redact.ts";
 /**
  * Tool-call and gate logs: `.factory/logs/<change>/<YYYY-MM-DD>.jsonl`, one JSON object per
  * line, redacted before it touches the disk, pruned after `logs.retentionDays`.
+ *
+ * Every string value is redacted before JSON escaping (an escaped quote would hide a secret
+ * from the patterns). Credentials are always redacted; `logs.redact: false` only keeps the
+ * generic `key=value` heuristic out, for debugging false positives (audit S16).
  */
+
+function redactValue(value: unknown, env: readonly string[], heuristic: boolean): unknown {
+  if (typeof value === "string") return redact(value, env, { heuristic });
+  if (Array.isArray(value)) return value.map((v) => redactValue(v, env, heuristic));
+  if (typeof value === "object" && value !== null)
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, redactValue(v, env, heuristic)]),
+    );
+  return value;
+}
 
 export interface LogEntry {
   readonly kind: string;
@@ -31,8 +45,11 @@ export function appendLog(
   const dir = logDir(root, changeId);
   mkdirSync(dir, { recursive: true });
   const at = new Date();
-  let line = JSON.stringify({ at: at.toISOString(), ...entry });
-  if (options.redact ?? true) line = redact(line, secretEnvValues(options.env ?? process.env));
+  const env = secretEnvValues(options.env ?? process.env);
+  const line = JSON.stringify({
+    at: at.toISOString(),
+    ...(redactValue(entry, env, options.redact ?? true) as LogEntry),
+  });
   appendFileSync(join(dir, `${at.toISOString().slice(0, 10)}.jsonl`), `${line}\n`);
 }
 

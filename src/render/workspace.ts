@@ -24,6 +24,7 @@ import {
   modelFor,
   type RepoConfig,
   type Role,
+  repoLanguages,
 } from "../config/schema.ts";
 import { handoffJsonSchema } from "../handoff/schema.ts";
 import { type AgentRole, agentRules } from "../policy/permissions.ts";
@@ -172,8 +173,9 @@ function workspaceTestGlobs(config: FactoryConfig): string[] {
 
 function renderImplementer(config: FactoryConfig, repo: RepoConfig): ManagedFile {
   // Source comments help people, not the model: keep them out of the system prompt.
-  const standards = profilesFor(repo.languages).map((p) => renderStandard(p, { comments: false }));
-  const langs = repo.languages.length > 0 ? repo.languages.join(", ") : "none detected";
+  const languages = repoLanguages(repo);
+  const standards = profilesFor(languages).map((p) => renderStandard(p, { comments: false }));
+  const langs = languages.length > 0 ? languages.join(", ") : "none detected";
   const addon = ponytailSection(config, "implementer");
   return {
     path: `.opencode/agents/implementer-${repo.name}.md`,
@@ -201,7 +203,7 @@ function renderAgentsMd(config: FactoryConfig): string {
   const markers = BLOCK_MARKERS["AGENTS.md"];
   if (markers === undefined) throw new Error("missing AGENTS.md markers");
   const repos = config.repos
-    .map((r) => `| ${r.name} | \`${r.path}\` | ${r.role} | ${r.languages.join(", ") || "–"} |`)
+    .map((r) => `| ${r.name} | \`${r.path}\` | ${r.role} | ${repoLanguages(r).join(", ") || "–"} |`)
     .join("\n");
   return `${markers.start}
 ## ai-factory
@@ -238,12 +240,12 @@ function renderOpencodeConfig(): string {
 function renderOpenspecConfig(config: FactoryConfig): string {
   const codeRepos = config.repos.filter((r) => r.role === "code");
   const active = LANGUAGES.filter((l) =>
-    codeRepos.some((r) => profilesFor(r.languages).some((p) => p.id === l)),
+    codeRepos.some((r) => profilesFor(repoLanguages(r)).some((p) => p.id === l)),
   );
   const context = [
     `Workspace layout: ${config.layout}. Code repos (task \`repo\` values):`,
     ...codeRepos.map(
-      (r) => `- ${r.name} (${r.path}): ${r.languages.join(", ") || "no languages detected"}`,
+      (r) => `- ${r.name} (${r.path}): ${repoLanguages(r).join(", ") || "no languages detected"}`,
     ),
     "",
     config.contracts.length > 0 ? "Contracts:" : "Contracts: none configured.",

@@ -10,6 +10,7 @@ import {
   recordUsage,
   summarizeUsage,
   totalTokens,
+  usageReport,
 } from "../src/usage/usage.ts";
 import { factoryScript, type ScriptedTask } from "./fixtures/factory-script.ts";
 import { ScriptedRuntime, USAGE_PER_TURN } from "./fixtures/scripted-runtime.ts";
@@ -84,6 +85,11 @@ describe("usage ledger", () => {
     expect(s.retryOverhead.input).toBe(300);
     expect(s.top.map((t) => t.step)).toEqual(["design", "1.1"]);
     expect(s.wastedReads).toBe(2);
+    // The report lists every task and step, not only the top consumers (audit G4).
+    const report = usageReport(s).join("\n");
+    expect(report).toContain("| Task or step | Tokens | Share | Cost |");
+    expect(report).toMatch(/\| 1\.1 \| [^|]+ \| \d+% \|/);
+    expect(report).toMatch(/\| design \| [^|]+ \| \d+% \|/);
   });
 
   test("formats token counts", () => {

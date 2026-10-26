@@ -27,6 +27,13 @@ All notable changes per release. `ai-factory update` applies them to an installe
 
 ### Security
 
+- **Second hardening batch (S11, S14–S17, S19).**
+  - Secret files can no longer be read through globs, `git show <rev>:.env`, recursive `grep -r`/`rg --hidden`, inline code or the grep/glob tools; on macOS agent shells cannot read workspace secrets at all (gates still can). The two secret lists agree and cover `~/.kube/*.yaml`.
+  - `npm run`/`pnpm`/`yarn`/`bun run` scripts and `make` recipes are checked like the commands they run; concatenated strings in other languages are joined before scanning.
+  - Implementers and testers cannot edit `openspec/`. Patches the plugin cannot read are refused.
+  - Redaction covers auth headers, bearer tokens, `-u user:pass` and URL tokens, runs before JSON escaping, applies to gate output, and `logs.redact: false` no longer turns off credential redaction.
+  - Untrusted text is fenced so it cannot close its fence; edit and patch contents are not logged.
+
 - **Shell-policy and git hardening.** Fixes all enforcement bypasses from the 2026-10-26 audit (S1–S10, S12):
   - shell keywords and `cd` are parsed and tracked;
   - xargs, interpreter, awk/sed and runner evasions are closed;
@@ -58,13 +65,27 @@ All notable changes per release. `ai-factory update` applies them to an installe
 - **Reviews.** A reviewer or contract reviewer that returns no result pauses the change instead of counting as a clean review (P13).
 - **Close.** Closing records each step, so a resume after a crash finishes the close instead of failing (P6).
 - **Concurrent drivers.** Every phase after approval takes the driver lock, so two `resume`s cannot run a review or close twice; `approve` re-checks the phase under the run lock (P14).
-- **Corrupt state files.** A corrupt run file, `active.lock` or `queue.json` gives a clear error with a fix; `status` and `doctor` list it instead of crashing (P15).
+- **Corrupt state files.** A corrupt run file, `active.lock` or `queue.json` gives a clear error with a fix; `status` and `doctor` list it instead of crashing (P15). A corrupt usage ledger is set aside and a new one started; unreadable graph metadata is ignored.
+- **Budget.** Ctrl-C during a merge or a conflict resolution spends nothing and keeps the branch (P7). After a crash, tasks that already passed their gates go straight to the merge (P8). A provider that stays rate-limited, and a failed dependency install, pause the change instead of spending budget; installs are retried, also in kept worktrees (P12, P16).
+- **Serial mode.** Work a failed task left in the shared checkout is stashed under its name, not reverted and charged to the next task (P10).
+- **Queue.** A queued change resumed by hand leaves the queue, so it is not started a second time and the next change still auto-starts (P11).
+- **Snapshots.** Agent and gate definitions are fixed at `approve`, not at activation (P18). `update` never commits onto a `change/*` branch, even with `--force`, so a running change keeps its agents in every session (P17, G7). `gate <id>` uses the change's snapshot (G9).
+- **Smaller gaps (P20).** Context packs and the spec in review/test prompts are capped at a whole line; one failing explorer no longer sinks the design; graph updates take a workspace lock; a submodule branches from the newer of its local and fetched base branch.
+- **`init`** keeps an existing `openspec/config.yaml` and lists it as unmanaged (G2). **`detect --apply`** merges edited implementer agents and never leaves a half-applied config (G3).
+- **`update --restore`** repairs tampered or deleted vendored Ponytail files (G5). `--tools` also rebuilds a graph built by another Graphify release; a plain `update` warns about it (G6). `--dry-run --json` lists paths, not file contents (G9).
+- **Helm** types gate fails when `helm template` fails (G8). Monorepo packages' languages bring their standards and test globs (G9). Design validation requires consumer tasks to depend on contract changes, and rejects invalid `touches` globs (G9).
+- **Handoffs.** A reply without any JSON is reported as a missing block, not a parse error.
 
 - The architect and tester agents get edit permissions for their own paths (change and context folders, test globs). Before, opencode's permission layer denied their writes.
 - Closing a change removes its agent snapshot and empty worktree folders, and `status` no longer lists the snapshot as a worktree.
 - Full-suite gate results are written to the change's log.
 
 ### Changed
+
+- `bench ponytail` has two cases (a new function and a fix in existing code), `--case` and `--levels` options, medians of quality metrics over finished runs only, and saves results after every run (G1). It has still not been run on real models.
+- `status` shows full-suite results, contract results and provisional pointers; reports list usage per task and step (G4).
+- `doctor` warns about a non-strict `tsconfig.json`, a graph built by another Graphify release, and proxy variables, and checks Graphify's safety env.
+- ADR-0028 records the default models, time limits and rate-limit parameters.
 
 - Implementer agents: a rule for merge-conflict tasks (change only the conflicted files, keep both intents).
 - `AGENTS.md` block: query the workspace graph before reading files.

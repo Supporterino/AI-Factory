@@ -1,5 +1,6 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { setJsonc } from "../../config/jsonc.ts";
 import { findWorkspaceRoot, loadConfig, parseConfigText } from "../../config/load.ts";
 import { renderInitialConfig } from "../../config/render.ts";
 import { CONFIG_FILE } from "../../config/schema.ts";
@@ -19,6 +20,9 @@ import {
   syncWorkspace,
 } from "../../workspace/sync.ts";
 import { type Command, parseCommandArgs } from "../command.ts";
+
+const OPENSPEC_CONFIG = "openspec/config.yaml";
+
 import { ExitCode } from "../exit-codes.ts";
 
 const HELP = `Usage: ai-factory init [--force] [--allow-downgrade] [--no-commit] [--no-graph] [--json]
@@ -96,7 +100,18 @@ export const initCommand: Command = {
     const configPath = join(root, CONFIG_FILE);
     const newConfig = !existsSync(configPath);
     const detection = newConfig ? await detectWorkspace(root) : undefined;
-    const configText = detection !== undefined ? renderInitialConfig(detection) : undefined;
+    // A team that already uses OpenSpec keeps its config.yaml: the first config lists it as
+    // unmanaged, since that hint cannot be followed before a config exists (audit G2).
+    const keepOpenspec =
+      newConfig &&
+      !values.force &&
+      existsSync(join(root, OPENSPEC_CONFIG)) &&
+      readLock(root) === undefined;
+    const rendered = detection !== undefined ? renderInitialConfig(detection) : undefined;
+    const configText =
+      rendered !== undefined && keepOpenspec
+        ? setJsonc(rendered, ["unmanaged"], [OPENSPEC_CONFIG])
+        : rendered;
     const config =
       configText !== undefined ? parseConfigText(configText, CONFIG_FILE) : loadConfig(root).config;
 
@@ -141,6 +156,10 @@ export const initCommand: Command = {
     io.out(`ai-factory ${FACTORY_VERSION} in ${root}`);
     io.out(`tools: ${tools.map((t) => `${t.tool} ${t.ok ? t.version : "?"}`).join(", ")}`);
     for (const note of detection?.notes ?? []) io.out(`note: ${note}`);
+    if (keepOpenspec)
+      io.out(
+        `kept your ${OPENSPEC_CONFIG} (listed under "unmanaged"); add the factory's workspace context to it by hand if you want the architect to see it`,
+      );
     if (newConfig) io.out(`wrote ${CONFIG_FILE} (review "models" and "contracts")`);
     for (const c of changed) io.out(`${REPORTED[c.action]}: ${c.path}`);
     if (changed.length === 0) io.out("managed files: up to date");

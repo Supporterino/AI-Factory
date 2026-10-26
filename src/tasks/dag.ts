@@ -1,3 +1,4 @@
+import { globsOverlap, matchGlob } from "./glob.ts";
 import type { ParsedTask } from "./parse.ts";
 
 /** A task as the scheduler sees it: metadata required. */
@@ -12,6 +13,22 @@ export interface DagTask {
 export interface DagIssue {
   readonly task?: string;
   readonly message: string;
+}
+
+/** Unbalanced `[` / `{`: the glob would match nothing, or everything (audit G9). */
+function globSyntaxError(glob: string): string | undefined {
+  let bracket = false;
+  let braces = 0;
+  for (const c of glob) {
+    if (c === "[" && !bracket) bracket = true;
+    else if (c === "]" && bracket) bracket = false;
+    else if (c === "{" && !bracket) braces++;
+    else if (c === "}" && !bracket) braces--;
+    if (braces < 0) return "unbalanced }";
+  }
+  if (bracket) return "unclosed [";
+  if (braces > 0) return "unclosed {";
+  return undefined;
 }
 
 /**
@@ -51,6 +68,12 @@ export function validateDag(
       if (glob.startsWith("/") || glob.split("/").includes("..")) {
         issues.push({ task: t.id, message: `touches glob "${glob}" must stay inside the repo` });
       }
+      const syntax = globSyntaxError(glob);
+      if (syntax !== undefined)
+        issues.push({
+          task: t.id,
+          message: `touches glob "${glob}" is not a valid glob (${syntax})`,
+        });
     }
     if (
       issues.length === before &&
@@ -95,6 +118,56 @@ export function findCycle(
 }
 
 /** Every task that depends on `id`, directly or transitively. */
+export interface ContractRef {
+  readonly provider: string;
+  readonly path: string;
+  readonly consumers: readonly string[];
+}
+
+/**
+ * Contract changes come first (§7): a consumer repo's task must depend, directly or not, on
+ * every task that changes a contract it consumes. Enforced here, not only asked for in the
+ * architect's prompt (audit G9).
+ */
+export function contractOrderIssues(
+  tasks: readonly DagTask[],
+  contracts: readonly ContractRef[],
+): DagIssue[] {
+  const issues: DagIssue[] = [];
+  const ancestors = (id: string): Set<string> => {
+    const out = new Set<string>();
+    const queue = [id];
+    while (queue.length > 0) {
+      const next = queue.shift();
+      const current = tasks.find((t) => t.id === next);
+      for (const d of current?.deps ?? [])
+        if (!out.has(d)) {
+          out.add(d);
+          queue.push(d);
+        }
+    }
+    return out;
+  };
+  for (const c of contracts) {
+    const changing = tasks.filter(
+      (t) =>
+        t.repo === c.provider &&
+        t.touches.some((g) => globsOverlap(g, c.path) || matchGlob(g, c.path)),
+    );
+    if (changing.length === 0) continue;
+    for (const t of tasks.filter((x) => c.consumers.includes(x.repo))) {
+      const before = ancestors(t.id);
+      const missing = changing.filter((x) => !before.has(x.id)).map((x) => x.id);
+      if (missing.length > 0)
+        issues.push({
+          task: t.id,
+          message: `consumes ${c.provider}:${c.path}, so it must depend on ${missing.join(", ")} (contract changes come first)`,
+        });
+    }
+  }
+  return issues;
+}
+
 export function dependentsOf(
   tasks: readonly { id: string; deps: readonly string[] }[],
   id: string,

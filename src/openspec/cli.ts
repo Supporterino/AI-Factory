@@ -12,7 +12,7 @@ import { join, relative, sep } from "node:path";
 import { ExecError } from "../errors.ts";
 import { exec } from "../exec.ts";
 import type { ManagedFile } from "../render/workspace.ts";
-import { type DagTask, validateDag } from "../tasks/dag.ts";
+import { type ContractRef, contractOrderIssues, type DagTask, validateDag } from "../tasks/dag.ts";
 import { parseTasks } from "../tasks/parse.ts";
 import { toolBin, toolEnv } from "../tools.ts";
 
@@ -96,6 +96,7 @@ export async function checkDesign(
   dir: string,
   id: string,
   codeRepos: readonly string[],
+  contracts: readonly ContractRef[] = [],
 ): Promise<DesignCheck> {
   const issues = [...checkProposal(dir, id), ...(await validateChange(root, dir, id))];
   const tasksFile = join(changePath(dir, id), "tasks.md");
@@ -104,8 +105,11 @@ export async function checkDesign(
   issues.push(...parsed.issues.map((i) => `tasks.md:${i.line}: ${i.message}`));
   if (parsed.tasks.length === 0) issues.push("tasks.md has no tasks");
   const dag = validateDag(parsed.tasks, codeRepos);
+  const order = dag.issues.length === 0 ? contractOrderIssues(dag.tasks, contracts) : [];
   issues.push(
-    ...dag.issues.map((i) => `tasks.md: ${i.task ? `task ${i.task}: ` : ""}${i.message}`),
+    ...[...dag.issues, ...order].map(
+      (i) => `tasks.md: ${i.task ? `task ${i.task}: ` : ""}${i.message}`,
+    ),
   );
   return { issues, tasks: dag.tasks };
 }

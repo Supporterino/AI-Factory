@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { checkApprovalHash } from "../approval/approval.ts";
-import type { FactoryConfig } from "../config/schema.ts";
+import { type FactoryConfig, repoLanguages } from "../config/schema.ts";
 import { PreconditionError } from "../errors.ts";
 import { git, gitOk } from "../exec.ts";
 import { changedFiles } from "../gates/affected.ts";
@@ -36,9 +36,11 @@ import {
   Scheduler,
   type TaskRunner,
 } from "../scheduler/scheduler.ts";
-import { claimActive, enqueue } from "../state/active.ts";
+import { claimActive, enqueue, removeFromQueue } from "../state/active.ts";
 import { loadRun, type TaskState } from "../state/run.ts";
 import { type GateSnapshot, loadGateSnapshot, snapshotDefinitions } from "../update/snapshot.ts";
+import { capText } from "../util/cap.ts";
+import { fence } from "../util/fence.ts";
 import { verifyApproval } from "./approve.ts";
 import type { Pipeline } from "./context.ts";
 import { conflictPrompt, packsPrompt, taskPrompt, testerPrompt } from "./prompts.ts";
@@ -56,10 +58,6 @@ export function gateDefinitions(
   if (snapshot === undefined) return { config: p.config };
   return { config: { ...p.config, gates: snapshot.gates }, gateTables: snapshot.tables };
 }
-
-/** Character budget per token, the tokenizer approximation used for packs (§11). */
-export const CHARS_PER_TOKEN = 4;
-export const estimateTokens = (text: string): number => Math.ceil(text.length / CHARS_PER_TOKEN);
 
 export const packPath = (root: string, id: string, task: string): string =>
   join(root, ".factory", "context", id, `${task}.md`);
@@ -85,6 +83,8 @@ export async function activate(p: Pipeline, id: string): Promise<Activation> {
     return { status: "queued" };
   }
   if (claim.status === "running") return { status: "running", pid: claim.holder.pid };
+  // Active now, also when resumed by hand while queued: it must not be started again (P11).
+  await removeFromQueue(p.root, id);
 
   const run = p.run(id);
   const branch = changeBranch(id);
@@ -149,9 +149,21 @@ ${specText(p, id)}`;
 }
 
 function capPack(text: string, maxTokens: number): string {
-  if (estimateTokens(text) <= maxTokens) return text;
-  const keep = maxTokens * CHARS_PER_TOKEN - 80;
-  return `${text.slice(0, keep)}\n\n(context pack truncated to ${maxTokens} tokens; query the graph for the rest)`;
+  return capText(
+    text,
+    maxTokens,
+    `(context pack truncated to ${maxTokens} tokens; query the graph for the rest)`,
+  );
+}
+
+/** The change's spec for review and test prompts, capped like a pack (audit P20). */
+export function cappedSpec(p: Pipeline, id: string): string {
+  const cap = p.config.tokens.contextPackMaxTokens;
+  return capText(
+    specText(p, id),
+    cap,
+    `(spec truncated to ${cap} tokens; read openspec/changes/${id}/specs/ for the rest)`,
+  );
 }
 
 /**
@@ -242,6 +254,27 @@ export class PipelineTaskRunner implements TaskRunner {
     return { dir: wt.path, created: wt.created };
   }
 
+  /**
+   * Serial mode shares the repo checkout: work left by another task (one that failed or was
+   * interrupted) is stashed with its name before this task starts, so this task's audit does
+   * not revert it, charge it, and lose the evidence (audit P10).
+   */
+  async #claimCheckout(task: TaskState, dir: string): Promise<void> {
+    const owner = this.p.run(this.id).serialOwner[task.repo];
+    if (owner !== undefined && owner !== task.id) {
+      const dirty = (await gitOk(["status", "--porcelain"], { cwd: dir })) !== "";
+      if (dirty) {
+        const message = `ai-factory ${this.id} ${owner}: work left by the task`;
+        await gitOk(["stash", "push", "-q", "--include-untracked", "-m", message], { cwd: dir });
+        appendLog(this.p.root, this.id, { kind: "stashed", task: owner, note: message });
+        this.p.out(`  ! ${owner} left work in ${task.repo}; kept as \`git stash\`: ${message}`);
+      }
+    }
+    await this.p.update(this.id, (d) => {
+      d.serialOwner[task.repo] = task.id;
+    });
+  }
+
   async #base(dir: string): Promise<string> {
     return gitOk(["merge-base", "HEAD", changeBranch(this.id)], { cwd: dir });
   }
@@ -278,7 +311,7 @@ export class PipelineTaskRunner implements TaskRunner {
         workspace: this.p.root,
         repo: repo.name,
         task: task.id,
-        testGlobs: profilesFor(repo.languages).flatMap((pr) => [...pr.testGlobs]),
+        testGlobs: profilesFor(repoLanguages(repo)).flatMap((pr) => [...pr.testGlobs]),
       };
     }
     return {
@@ -335,15 +368,22 @@ export class PipelineTaskRunner implements TaskRunner {
       ...task.deps.map((d) => run.tasks.find((t) => t.id === d)?.mergeSeq ?? 0),
     );
     await this.graph.waitFor(needed);
-    const { dir, created } = await this.#workdir(task);
-    if (created) {
+    const { dir } = await this.#workdir(task);
+    if (this.#serial) await this.#claimCheckout(task, dir);
+    else if (!task.installed) {
+      // Until it succeeds, also in a kept worktree. A failure (registry down) is not the
+      // task's: no budget is spent, and repeats pause the change (audit P12).
       const steps = await installDeps(this.p.root, dir, this.p.repo(task.repo));
       const failed = steps.find((s) => s.status === "failed");
       if (failed)
         return {
-          status: "blocked",
+          status: "transient",
           reason: `dependency install failed in ${failed.dir}: ${failed.detail ?? ""}`.trim(),
         };
+      await this.p.update(this.id, (d) => {
+        const t = d.tasks.find((x) => x.id === task.id);
+        if (t) t.installed = true;
+      });
     }
     const pack = existsSync(packPath(this.p.root, this.id, task.id))
       ? readFileSync(packPath(this.p.root, this.id, task.id), "utf8")
@@ -353,7 +393,7 @@ export class PipelineTaskRunner implements TaskRunner {
     const prompt = isTest
       ? testerPrompt({
           task,
-          spec: specText(this.p, this.id),
+          spec: cappedSpec(this.p, this.id),
           testGlobs: this.#context(task, dir).testGlobs ?? [],
           gates,
         })
@@ -377,7 +417,7 @@ export class PipelineTaskRunner implements TaskRunner {
       attempt: ctx.attempt,
       prompt:
         isTest && ctx.feedback
-          ? `${prompt}\n\nPrevious attempt failed:\n\`\`\`\n${ctx.feedback}\n\`\`\``
+          ? `${prompt}\n\nPrevious attempt failed:\n${fence(ctx.feedback)}`
           : prompt,
     });
     if (res.handoff) {
@@ -437,6 +477,9 @@ export class PipelineTaskRunner implements TaskRunner {
     const repo = this.p.repo(task.repo);
     const repoDir = this.p.repoDir(repo);
     if (this.#serial) {
+      await this.p.update(this.id, (d) => {
+        if (d.serialOwner[task.repo] === task.id) delete d.serialOwner[task.repo];
+      });
       return { status: "merged", commit: await gitOk(["rev-parse", "HEAD"], { cwd: repoDir }) };
     }
     const branch = taskBranch(this.id, task.id);

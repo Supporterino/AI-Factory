@@ -15,11 +15,14 @@
   - A conflict while serial fails the task.
 - **Failure isolation.** A failed task cancels only its transitive dependents. Independent tasks finish, then the change pauses (`phase: paused`, with a reason). `retry` resets one failed task's budget, un-cancels everything and re-cancels the dependents of any task still failed.
 - **Graph updates** (`afterMerge`) run one at a time, in merge order, and every merge increments `mergeSeq` (for ADR-0007 coverage).
-- **Crash and resume.** On start, `running` tasks go back to `pending` and reuse their kept worktree with a fresh session. `merging` tasks also go back to `pending` (the merge is idempotent).
+- **Crash and resume.** On start, `running` tasks go back to `pending` and reuse their kept worktree with a fresh session. `merging` tasks go back to `pending` with `gatesPassed` set: they resume at the merge, without a new agent attempt (audit P8).
+- **Interrupts are not failures (audit P7).** Ctrl-C during a merge kills the re-gate; the task goes back to `pending` with nothing spent. An interrupted conflict resolution refunds its budget and keeps the branch (no serial requeue).
+- **Infrastructure failures (audit P5, P12, P16).** An agent server that is down, a provider still rate-limited after its waits (ADR-0028), and a failed dependency install are `transient`: the task goes back to `pending`, nothing is spent, and three in a row pause the change with the reason. An install is retried until it succeeds (`installed` per task), also in a kept worktree.
+- **Serial mode (audit P10).** With `withinRepo: "serial"` tasks share the repo checkout. Work another task left there (failed or interrupted) is stashed under its name before the next task starts, so the next task's audit neither reverts nor is charged for it.
 - **Active change.**
   - `.factory/active.lock` names the change that owns the workspace from implementation start until close or abort, paused or not.
   - Its `pid` is the current driver: `null` when nobody drives it, and replaceable when the process is dead (stale-lock recovery).
-  - A second change gets `busy` and waits in `.factory/queue.json` in approval order.
+  - A second change gets `busy` and waits in `.factory/queue.json` in approval order. A queued change that becomes active (also by a manual `resume`) leaves the queue; closing skips queue entries whose change has moved on (audit P11).
   - Every phase after approval (implementing, reviewing, contracts, full suite, closing) claims the driver on entry, so a second `resume` is refused while a live process drives the change (audit P14).
 - **Corrupt state.** A run file, `active.lock` or `queue.json` that is not valid JSON or fails its schema raises a precondition error naming the file and how to recover, never an internal error. `status` and `doctor` list corrupt files next to the readable state, and `update` treats a corrupt run as in progress (audit P15).
 - **Abort.**

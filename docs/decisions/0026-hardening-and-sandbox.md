@@ -54,6 +54,14 @@ Every one of them passed through the shell parser, because a parser can only jud
   - Gates also run sandboxed. Installs are not sandboxed, so registry credentials keep working.
   - A task that changes a script or target its gates run (named in `gates.scripts`, in package.json, a Makefile, justfile or Taskfile) fails its attempt until it reverts the change.
 
+**Second batch (audit S11, S14–S17, S19).**
+- **Secret reads (S11).** Globs are expanded against the directory and refused when one matches a secret file; `git show HEAD:.env`-style object paths, recursive `grep -r` and `rg --hidden` over a tree with secrets, and secret file names in inline code (`-c`, `-e`, here-docs, stdin) are refused. The plugin's grep and glob tools get the same check. On macOS, agent shells also cannot read workspace secrets (`.env` but not `.env.example`, keys, `.netrc`, kubeconfigs, tfstate): Seatbelt read denies. Gates keep reading them, because test runners such as Vite load `.env` themselves. The parser's and opencode's secret lists are checked against each other by a test; `~/.kube/*.yaml` and `~/.config/gh/hosts.yml` were added.
+- **Project scripts (S14).** `npm run X`, `pnpm X`, `yarn X`, `bun run X` (with `pre`/`post` scripts) and `make [targets]` (recipes and prerequisites, simple variables expanded) are checked like the commands they run. Text scans of other languages join `'a' + 'b'` literals first.
+- **The spec (S15).** Implementers and testers never edit `openspec/`, whatever their `touches`.
+- **Patches (S17).** CRLF and unified-diff patches are read; a non-empty patch that names no file is refused.
+- **Redaction (S16).** Every string in a log entry is redacted before JSON escaping. Authorization headers, bearer tokens, `-u user:pass` and URL credentials (any scheme, and bare tokens as the user) are covered. Gate output is redacted before it reaches run state, prompts and reports. `logs.redact: false` only turns off the generic `key=value` heuristic; tokens, credentials and env secrets are always redacted.
+- **Fences and logs (S19).** Untrusted text in prompts and reports is fenced with more backticks than it contains. Edit and patch contents are logged as their length (patch logs keep the file names).
+
 **Consequences.**
 - **Verified:**
   - The probes are tests (`test/hardening.test.ts`); 4 of them were already blocked and stay pinned.

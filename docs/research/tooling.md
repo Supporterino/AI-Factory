@@ -67,7 +67,7 @@ Raw notes with more detail are in [`notes/`](notes/). Pinned versions live in [`
 - `opencode run [--standalone] [--server <url>] [-s <id>] [-c] [--fork] [-m p/m] [--agent a] [--format json] [-f file] [--title] [--thinking] [--auto]`. Exit codes: 0 ok, 1 error, 130 SIGINT [X].
 - JSON events: `step_start`, `text`, `reasoning`, `tool_use`, `step_finish` (`part.tokens`, `part.cost`), `error`.
 - `opencode serve [--hostname] [--port] [--cors] [--stdio]` requires `OPENCODE_PASSWORD` (HTTP Basic, user `opencode`); without it, requests get 401 [X].
-- SDK: **`@opencode/client`** (V2; `@opencode-ai/sdk` is V1). Calls:
+- SDK: **`@opencode/client`** (V2; `@opencode-ai/sdk` is V1). (Superseded: the factory calls the REST API directly, ADR-0019.) Calls:
   - `session.create({location:{directory}, agent, model, permissions, parentID})`
   - `session.prompt({sessionID, text, files})`
   - `session.switchAgent`
@@ -218,7 +218,7 @@ Sources: repo at tag `v5.3.2` (commit `16352ac229eb08a9598dcae48fe9f2b342567d86`
    - a random `OPENCODE_PASSWORD`
    - `OPENCODE_DB=.factory/opencode/opencode.db`, so it never touches or resumes the user's sessions
    - `AI_FACTORY_AGENT=1` and the push-block git env
-2. It talks to the server through `@opencode/client` (pinned to the opencode version): one `session.create` per task, with `location.directory` set to the task worktree, `agent = implementer-<repo>`, and session-level `permissions` holding the dynamic scope rules.
+2. It talks to the server through `@opencode/client` (superseded by direct REST calls, ADR-0019) (pinned to the opencode version): one `session.create` per task, with `location.directory` set to the task worktree, `agent = implementer-<repo>`, and session-level `permissions` holding the dynamic scope rules.
 3. It monitors `event.subscribe()` for idle/error/usage, applies a per-session wall-clock timeout, and uses `session.interrupt` for `abort`.
 4. The scheduler semaphore (`maxAgents`) bounds concurrent sessions, and `maxGateProcesses` bounds gate child processes. A rate limiter per provider wraps prompt sends.
 5. On a CLI crash, the server dies with the CLI's process group. `resume` restarts the server and re-dispatches in-flight tasks to fresh sessions in their kept worktrees.

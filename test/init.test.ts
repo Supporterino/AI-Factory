@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ExitCode } from "../src/cli/exit-codes.ts";
 import { parseConfigText } from "../src/config/load.ts";
 import { PRE_PUSH_HOOK } from "../src/git/hooks.ts";
 import { LOCK_FILE, readLock } from "../src/lock/lock.ts";
+import { PROFILES, renderStandard } from "../src/profiles/index.ts";
 import { FACTORY_VERSION } from "../src/version.ts";
 import {
   bareRepo,
@@ -84,6 +85,17 @@ describe("init: AI repo with submodules", () => {
       expect(read(hooks, "pre-push")).toBe(PRE_PUSH_HOOK);
       if (repo !== ".") expect(await gitOut(join(fx.root, repo), "status", "--porcelain")).toBe("");
     }
+  });
+
+  test("an uninitialised submodule is reported, not fatal (audit T)", async () => {
+    await fixtureGit(fx.root, "submodule", "deinit", "-q", "-f", "repos/deploy");
+    const run = await cli(fx.root, "init");
+    expect(run.err).toBe("");
+    expect(run.code).toBe(ExitCode.Ok);
+    expect(run.out).toContain("note: submodule repos/deploy is not initialised");
+    expect(run.out).toContain("hook deploy: skipped (not a checked-out git repository)");
+    const config = parseConfigText(read(fx.root, "factory.config.jsonc"), "f");
+    expect(config.repos.map((r) => r.name)).toContain("deploy");
   });
 
   test("is idempotent: a second run changes nothing", async () => {
@@ -282,6 +294,41 @@ describe("init: single repo", () => {
     const forced = await cli(fx.root, "init", "--force");
     expect(forced.code).toBe(ExitCode.Ok);
     expect(forced.out).toContain("overwritten (--force): .graphifyignore");
+  });
+
+  test("keeps a team's existing openspec/config.yaml and marks it unmanaged (audit G2)", async () => {
+    const team = "schema: spec-driven\ncontext: |\n  Our team's OpenSpec context.\n";
+    mkdirSync(join(fx.root, "openspec"), { recursive: true });
+    writeFileSync(join(fx.root, "openspec/config.yaml"), team);
+    await commitAll(fx.root, "chore: openspec config");
+    const run = await cli(fx.root, "init");
+    expect(run.err).toBe("");
+    expect(run.code).toBe(ExitCode.Ok);
+    expect(run.out).toContain("kept your openspec/config.yaml");
+    expect(read(fx.root, "openspec/config.yaml")).toBe(team);
+    const config = parseConfigText(read(fx.root, "factory.config.jsonc"), "f");
+    expect(config.unmanaged).toContain("openspec/config.yaml");
+    // A second run leaves it alone too.
+    expect((await cli(fx.root, "init")).code).toBe(ExitCode.Ok);
+    expect(read(fx.root, "openspec/config.yaml")).toBe(team);
+  });
+
+  test("detect --apply merges a language change into an edited implementer (audit G3)", async () => {
+    expect((await cli(fx.root, "init", "--no-graph")).code).toBe(ExitCode.Ok);
+    const agent = join(fx.root, ".opencode/agents/implementer-app.md");
+    writeFileSync(
+      agent,
+      `${read(fx.root, ".opencode/agents/implementer-app.md")}\nTeam rule: keep functions small.\n`,
+    );
+    writeFileSync(join(fx.root, "go.mod"), "module example.com/app\n\ngo 1.22\n");
+    writeFileSync(join(fx.root, "main.go"), "package main\n\nfunc main() {}\n");
+    await commitAll(fx.root, "chore: team rule and a Go tool");
+    const applied = await cli(fx.root, "detect", "--apply");
+    expect(applied.code).toBe(ExitCode.Ok);
+    const text = read(fx.root, ".opencode/agents/implementer-app.md");
+    expect(text).toContain("Team rule: keep functions small.");
+    expect(text).toContain(renderStandard(PROFILES.go, { comments: false }).slice(0, 200));
+    expect(await gitOut(fx.root, "status", "--porcelain")).toBe("");
   });
 
   test("refuses when files it commits have uncommitted changes", async () => {

@@ -3,6 +3,7 @@ import { newShortcuts } from "../addons/shortcuts.ts";
 import type { FactoryConfig, GateType, RepoConfig } from "../config/schema.ts";
 import { exec } from "../exec.ts";
 import { dependentFiles } from "../graph/graph.ts";
+import { redactProcess } from "../logs/redact.ts";
 import { checkoutPolicy, sandboxArgv, sandboxEnabled, seatbeltProfile } from "../policy/sandbox.ts";
 import { agentProcessEnv } from "../runtime/credentials.ts";
 import { changedFiles } from "./affected.ts";
@@ -117,7 +118,8 @@ async function runOne(input: RunGatesInput, gate: ResolvedGate): Promise<GateRes
   return {
     ...base,
     status: res.code === 0 ? "pass" : "fail",
-    output: res.code === 0 ? "" : compactOutput(raw, max),
+    // Gate output reaches prompts, run state and reports: redacted like the logs (audit S16).
+    output: res.code === 0 ? "" : redactProcess(compactOutput(raw, max)),
   };
 }
 

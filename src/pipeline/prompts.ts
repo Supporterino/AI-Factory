@@ -1,6 +1,7 @@
 import type { ContractConfig, RepoConfig } from "../config/schema.ts";
 import type { Finding } from "../handoff/schema.ts";
 import type { TaskState } from "../state/run.ts";
+import { fence } from "../util/fence.ts";
 
 /**
  * Task messages sent to agents. They carry only task-specific content; role rules, standards
@@ -90,7 +91,7 @@ export function taskPrompt(input: {
 }): string {
   const { task } = input;
   const retry = input.feedback
-    ? `\n\nThis is attempt ${task.failures + 1}. The previous attempt failed with (compacted):\n\`\`\`\n${input.feedback}\n\`\`\`\nFix exactly what this reports. Your earlier changes are still in the worktree.`
+    ? `\n\nThis is attempt ${task.failures + 1}. The previous attempt failed with (compacted):\n${fence(input.feedback)}\nFix exactly what this reports. Your earlier changes are still in the worktree.`
     : "";
   return `Task ${task.id}: ${task.title}
 Repo: ${task.repo}. You may change only files matching: ${task.touches.join(", ")}.

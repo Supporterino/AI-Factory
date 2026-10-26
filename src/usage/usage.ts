@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { addUsage, type Usage, ZERO_USAGE } from "../runtime/types.ts";
 import { factoryDir, readJson, withFileLock, writeJsonAtomic } from "../state/files.ts";
@@ -30,14 +30,28 @@ export interface UsageLedger {
 
 const usageFile = (root: string, id: string): string => factoryDir(root, "usage", `${id}.json`);
 
+function readLedger(file: string): UsageLedger | undefined {
+  try {
+    const ledger = readJson(file) as UsageLedger;
+    return Array.isArray(ledger?.entries) ? ledger : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The change's ledger; a corrupt one reads as empty, since usage never stops a run (P15). */
 export function loadUsage(root: string, id: string): UsageLedger {
   const file = usageFile(root, id);
-  if (!existsSync(file)) return { version: 1, changeId: id, entries: [] };
-  return readJson(file) as UsageLedger;
+  const empty: UsageLedger = { version: 1, changeId: id, entries: [] };
+  if (!existsSync(file)) return empty;
+  return readLedger(file) ?? empty;
 }
 
 export function recordUsage(root: string, id: string, entry: UsageEntry): Promise<void> {
   return withFileLock(`${usageFile(root, id)}.lock`, () => {
+    const file = usageFile(root, id);
+    // A corrupt ledger is kept aside for inspection and a new one started.
+    if (existsSync(file) && readLedger(file) === undefined) renameSync(file, `${file}.corrupt`);
     const ledger = loadUsage(root, id);
     writeJsonAtomic(usageFile(root, id), { ...ledger, entries: [...ledger.entries, entry] });
   });
@@ -138,6 +152,16 @@ export function usageReport(summary: UsageSummary): string[] {
       .map(
         ([agent, u]) =>
           `| ${agent} | ${formatTokens(totalTokens(u))} | ${share(u)} | ${formatCost(u.cost)} |`,
+      ),
+    "",
+    // Per task and step (§14), largest first.
+    "| Task or step | Tokens | Share | Cost |",
+    "|---|---|---|---|",
+    ...Object.entries(summary.byStep)
+      .sort((a, b) => totalTokens(b[1]) - totalTokens(a[1]))
+      .map(
+        ([step, u]) =>
+          `| ${step} | ${formatTokens(totalTokens(u))} | ${share(u)} | ${formatCost(u.cost)} |`,
       ),
     "",
     `Top consumers: ${summary.top.map((t) => `${t.step} (${formatTokens(t.tokens)})`).join(", ") || "none"}.`,

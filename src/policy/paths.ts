@@ -38,11 +38,12 @@ const SECRET_BASENAMES: readonly RegExp[] = [
 ];
 
 const SECRET_SEGMENTS: readonly RegExp[] = [
-  /(^|\/)\.kube\/config$/i,
+  /(^|\/)\.kube\/(config|[^/]+\.ya?ml)$/i,
   /(^|\/)\.aws\/(credentials|config)$/i,
   /(^|\/)\.config\/gcloud(\/|$)/i,
   /(^|\/)\.azure(\/|$)/i,
   /(^|\/)\.docker\/config\.json$/i,
+  /(^|\/)\.config\/gh\/hosts\.ya?ml$/i,
   /(^|\/)\.ssh(\/|$)/i,
 ];
 

@@ -93,6 +93,18 @@ describe("change branches", () => {
     expect((await branchSubmodule(fx.root, repo("frontend"), "add-x")).base).toBe(release);
   });
 
+  test("a stale local branch does not win over a newer origin branch (audit P20)", async () => {
+    const human = join(fx.base, "human-backend");
+    await fixtureGit(fx.base, "clone", "-q", join(fx.base, "remotes/backend.git"), human);
+    writeFileSync(join(human, "NEWER"), "1\n");
+    await fixtureGit(human, "add", "NEWER");
+    await fixtureGit(human, "commit", "-q", "-m", "chore: newer upstream");
+    await fixtureGit(human, "push", "-q", "origin", "HEAD:main");
+    const upstream = await gitOut(human, "rev-parse", "HEAD");
+    // The submodule's local main is behind and was never fetched: branching fetches first.
+    expect((await branchSubmodule(fx.root, repo("backend"), "add-x")).base).toBe(upstream);
+  });
+
   test("dirty or uninitialised submodules are refused", async () => {
     writeFileSync(join(fx.root, "repos/backend/wip.go"), "package main\n");
     await expect(branchSubmodule(fx.root, repo("backend"), "add-x")).rejects.toThrow(

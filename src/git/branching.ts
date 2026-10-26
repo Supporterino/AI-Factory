@@ -92,7 +92,7 @@ export async function branchSubmodule(
   await ensureClean(dir, `submodule ${repo.path}`);
   const branch = changeBranch(id);
   const from = (await trackedBranch(root, repo.path)) ?? repo.defaultBranch ?? "main";
-  const start = await resolveBranchRef(dir, from);
+  const start = await resolveBranchRef(dir, from, { fetch: true });
   const { created } = await switchToChangeBranch(dir, branch, start);
   // On resume the branch has moved on; its base is still where it left the start branch.
   const base = await gitOk(["merge-base", branch, start], { cwd: dir });

@@ -119,6 +119,12 @@ describe(`update from a ${SNAPSHOT.version} install`, () => {
     expect(dry.out).toContain(`update ${SNAPSHOT.version} → ${FACTORY_VERSION}`);
     expect(dry.out).toContain("config migrations: 001-graph-exclude-defaults");
     expect(dry.out).toContain("merge with your edits: .opencode/agents/implementer-app.md");
+    // JSON lists what changes, not every file's whole content (audit G9).
+    const json = await cli(root, "update", "--dry-run", "--json");
+    const plan = JSON.parse(json.out) as { changes: { path: string; action: string }[] };
+    expect(plan.changes.some((c) => c.path === ".opencode/agents/implementer-app.md")).toBe(true);
+    expect(json.out).not.toContain("# Role: implementer");
+    expect(json.out.length).toBeLessThan(20_000);
     expect(await gitOut(root, "rev-parse", "HEAD")).toBe(head);
     expect(await gitOut(root, "status", "--porcelain")).toBe("");
 
@@ -180,6 +186,29 @@ describe(`update from a ${SNAPSHOT.version} install`, () => {
     expect((await cli(root, "rollback")).out).toContain("nothing to commit");
     expect(await trackedContents()).toEqual(before);
     expect(await gitOut(root, "status", "--porcelain")).toBe("");
+  });
+
+  test("warns when detection differs from the config, without applying it (audit T)", async () => {
+    writeFileSync(join(root, "go.mod"), "module example.com/app\n\ngo 1.22\n");
+    writeFileSync(join(root, "main.go"), "package main\n\nfunc main() {}\n");
+    await commit("chore: a Go tool");
+    const dry = await cli(root, "update", "--dry-run");
+    expect(dry.code).toBe(ExitCode.Ok);
+    expect(dry.out).toContain(
+      "detection differs from the config (not applied; see `ai-factory detect`)",
+    );
+    expect(dry.out).toContain("go");
+  });
+
+  test("never commits onto a change branch, even forced (audit P17)", async () => {
+    await claimActive(root, "add-x");
+    await gitOut(root, "switch", "-q", "-c", "change/add-x");
+    const refused = await cli(root, "update", "--force");
+    expect(refused.code).toBe(ExitCode.Precondition);
+    expect(refused.err).toContain("the AI repo is on change/add-x");
+    expect(refused.err).toContain("git switch");
+    expect((await cli(root, "update", "--force", "--dry-run")).code).toBe(ExitCode.Ok);
+    expect(await gitOut(root, "log", "-1", "--format=%s")).not.toContain("chore(factory): update");
   });
 
   test("refuses while a change is in progress unless forced; --restore and --tools", async () => {

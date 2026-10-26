@@ -1,8 +1,8 @@
 // ai-factory opencode plugin — generated from src/plugin/entry.ts; do not edit.
 // @bun
 // src/plugin/entry.ts
-import { existsSync as existsSync4, readFileSync as readFileSync3, statSync as statSync3 } from "fs";
-import { isAbsolute as isAbsolute4, join as join7, relative as relative3, resolve as resolve5 } from "path";
+import { existsSync as existsSync4, readdirSync as readdirSync3, readFileSync as readFileSync3, statSync as statSync3 } from "fs";
+import { isAbsolute as isAbsolute4, join as join8, relative as relative3, resolve as resolve5 } from "path";
 
 // src/approval/approval.ts
 import { createHash } from "crypto";
@@ -103,7 +103,17 @@ var PATTERNS = [
   [/\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}\b/g, MARK("api-key")],
   [/\bAIza[0-9A-Za-z_-]{35}\b/g, MARK("google-key")],
   [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, MARK("jwt")],
-  [/(https?:\/\/)[^/\s:@]+:[^/\s@]+@/g, `$1${MARK("credentials")}@`],
+  [/\b([a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+:[^/\s@]+@/gi, `$1${MARK("credentials")}@`],
+  [/\b(https?:\/\/)[A-Za-z0-9_-]{20,}@/g, `$1${MARK("credentials")}@`],
+  [
+    /\b(authorization["']?\s*[:=]\s*["']?(?:bearer|basic|token|digest|bot)?\s*)([^\s"',;]{6,})/gi,
+    `$1${MARK("auth")}`
+  ],
+  [/\b(bearer\s+)([A-Za-z0-9._~+/=-]{12,})/gi, `$1${MARK("auth")}`],
+  [
+    /((?:^|\s)(?:-u\s*|--user[=\s]|--proxy-user[=\s])["']?[^\s:"']+:)([^\s"']+)/g,
+    `$1${MARK("credentials")}`
+  ],
   [
     /\b((?:[A-Za-z0-9_]*_)?(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)["']?\s*[:=]\s*["']?)([^\s"',;]{6,})/gi,
     `$1${MARK("secret")}`
@@ -113,24 +123,36 @@ var SECRET_ENV_NAME = /(TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVAT
 function secretEnvValues(env) {
   return Object.entries(env).filter(([name, value]) => SECRET_ENV_NAME.test(name) && value !== undefined && value.length >= 8).map(([, value]) => value).sort((a, b) => b.length - a.length);
 }
-function redact(text, envValues = []) {
+function redact(text, envValues = [], options = {}) {
   let out = text;
   for (const value of envValues)
     out = out.split(value).join(MARK("env"));
-  for (const [re, replacement] of PATTERNS)
+  const patterns = options.heuristic === false ? PATTERNS.slice(0, -1) : PATTERNS;
+  for (const [re, replacement] of patterns)
     out = out.replace(re, replacement);
   return out;
 }
 
 // src/logs/log.ts
+function redactValue(value, env, heuristic) {
+  if (typeof value === "string")
+    return redact(value, env, { heuristic });
+  if (Array.isArray(value))
+    return value.map((v) => redactValue(v, env, heuristic));
+  if (typeof value === "object" && value !== null)
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactValue(v, env, heuristic)]));
+  return value;
+}
 var logDir = (root, changeId) => join2(root, ".factory", "logs", changeId);
 function appendLog(root, changeId, entry, options = {}) {
   const dir = logDir(root, changeId);
   mkdirSync(dir, { recursive: true });
   const at = new Date;
-  let line = JSON.stringify({ at: at.toISOString(), ...entry });
-  if (options.redact ?? true)
-    line = redact(line, secretEnvValues(options.env ?? process.env));
+  const env = secretEnvValues(options.env ?? process.env);
+  const line = JSON.stringify({
+    at: at.toISOString(),
+    ...redactValue(entry, env, options.redact ?? true)
+  });
   appendFileSync(join2(dir, `${at.toISOString().slice(0, 10)}.jsonl`), `${line}
 `);
 }
@@ -166,11 +188,12 @@ var SECRET_BASENAMES = [
   /\.tfstate(\.backup)?$/i
 ];
 var SECRET_SEGMENTS = [
-  /(^|\/)\.kube\/config$/i,
+  /(^|\/)\.kube\/(config|[^/]+\.ya?ml)$/i,
   /(^|\/)\.aws\/(credentials|config)$/i,
   /(^|\/)\.config\/gcloud(\/|$)/i,
   /(^|\/)\.azure(\/|$)/i,
   /(^|\/)\.docker\/config\.json$/i,
+  /(^|\/)\.config\/gh\/hosts\.ya?ml$/i,
   /(^|\/)\.ssh(\/|$)/i
 ];
 function isSecretPath(path) {
@@ -213,6 +236,24 @@ function realPathOf(abs, depth = 0) {
 import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
 import { isAbsolute, join as join4, resolve as resolve2 } from "path";
 var SANDBOX_EXEC = "/usr/bin/sandbox-exec";
+var regexPath = (p) => realPathOf(p).replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+function secretReadRules(workspace) {
+  const ws = regexPath(workspace);
+  const under = `^${ws}/(.*/)?`;
+  const secret = [
+    "\\.env(\\.[^/]*)?",
+    "\\.netrc",
+    "\\.git-credentials",
+    "\\.pypirc",
+    "id_(rsa|dsa|ecdsa|ed25519)[^/]*",
+    "[^/]*kubeconfig[^/]*",
+    "[^/]*\\.tfstate(\\.backup)?"
+  ];
+  return [
+    `(deny file-read-data ${secret.map((s) => `(regex #"${under}${s}$")`).join(" ")})`,
+    `(allow file-read-data (regex #"${under}\\.env\\.(example|sample|template|dist|defaults)$"))`
+  ];
+}
 var HOME_WRITE_DENY = [
   ".zshrc",
   ".zshenv",
@@ -282,6 +323,8 @@ function seatbeltProfile(policy) {
     lines.push(`(deny file-read* ${HOME_READ_DENY.map((p) => subpath(join4(home, p))).join(" ")})`);
   }
   lines.push(`(deny file-write* ${SYSTEM_WRITE_DENY.map(subpath).join(" ")})`);
+  if (policy.denySecretReads === true)
+    lines.push(...secretReadRules(policy.workspace));
   lines.push('(deny process-exec (regex #"/git-credential-[^/]*$"))');
   lines.push('(deny network-outbound (remote tcp "*:22"))');
   return lines.join(`
@@ -430,6 +473,11 @@ function checkEdit(ctx, path, approval) {
     return { allowed: false, reason: `\`${rel}\` is managed by the factory` };
   if (!IMPLEMENTING_ROLES.has(ctx.role))
     return { allowed: false, reason: `the ${ctx.role} is read-only` };
+  if (/^openspec(\/|$)/i.test(rel))
+    return {
+      allowed: false,
+      reason: `\`${rel}\` is the change's spec: only the architect writes it, and the factory ticks tasks`
+    };
   const approved = approval();
   if (approved !== true)
     return { allowed: false, reason: `${approved}; implementation edits are blocked` };
@@ -451,22 +499,139 @@ function checkEdit(ctx, path, approval) {
   return { allowed: true, rel };
 }
 function patchPaths(patchText) {
-  const out = [];
-  for (const line of patchText.split(`
-`)) {
-    const m = line.match(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+?)\s*$/);
-    if (m?.[1])
-      out.push(m[1]);
+  const out = new Set;
+  for (const raw of patchText.split(/\r?\n/)) {
+    const line = raw.replace(/\r$/, "");
+    const m = line.match(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+?)\s*$/) ?? line.match(/^(?:---|\+\+\+) (?:[ab]\/)?(.+?)(?:\t.*)?\s*$/) ?? line.match(/^(?:rename|copy) (?:from|to) (.+?)\s*$/) ?? line.match(/^diff --git a\/(.+?) b\/.+$/);
+    if (m?.[1] && m[1] !== "/dev/null")
+      out.add(m[1]);
   }
-  return out;
+  if (out.size === 0 && patchText.trim() !== "")
+    return;
+  return [...out];
+}
+
+// src/policy/secrets.ts
+import { join as join5 } from "path";
+var GLOB = /[*?[]/;
+function segmentRegExp(segment) {
+  let body = "";
+  for (let i = 0;i < segment.length; i++) {
+    const c = segment[i] ?? "";
+    if (c === "*")
+      body += "[^/]*";
+    else if (c === "?")
+      body += "[^/]";
+    else if (c === "[") {
+      const end = segment.indexOf("]", i + 2);
+      if (end === -1)
+        body += "\\[";
+      else {
+        const set = segment.slice(i + 1, end).replace(/^!/, "^");
+        body += `[${set.replace(/\\/g, "\\\\")}]`;
+        i = end;
+      }
+    } else
+      body += c.replace(/[.+^${}()|\\]/g, "\\$&");
+  }
+  const dotless = !segment.startsWith(".");
+  return new RegExp(`^${dotless ? "(?!\\.)" : ""}${body}$`, "i");
+}
+var SECRET_SAMPLES = [
+  ".env",
+  ".env.local",
+  ".env.production",
+  ".netrc",
+  ".npmrc",
+  ".pypirc",
+  ".git-credentials",
+  ".aws/credentials",
+  ".aws/config",
+  ".kube/config",
+  ".docker/config.json",
+  ".ssh/id_rsa",
+  ".ssh/id_ed25519"
+];
+function globMatchesSecret(pattern, readdir) {
+  if (!GLOB.test(pattern))
+    return;
+  const segments = pattern.split("/");
+  const first = segments.findIndex((s) => GLOB.test(s));
+  if (readdir !== undefined) {
+    let paths = [segments.slice(0, first).join("/") || "/"];
+    let seen = 0;
+    for (const segment of segments.slice(first)) {
+      const re = GLOB.test(segment) ? segmentRegExp(segment) : undefined;
+      const next = [];
+      for (const dir of paths) {
+        if (re === undefined) {
+          next.push(join5(dir, segment));
+          continue;
+        }
+        for (const name of readdir(dir) ?? []) {
+          if (++seen > 5000)
+            return;
+          if (re.test(name))
+            next.push(join5(dir, name));
+        }
+      }
+      paths = next;
+    }
+    return paths.find((p) => isSecretPath(p));
+  }
+  const tail = segments.slice(first).filter((s) => s !== "");
+  for (const sample of SECRET_SAMPLES) {
+    const parts = sample.split("/");
+    if (parts.length < tail.length)
+      continue;
+    const end = parts.slice(parts.length - tail.length);
+    if (tail.every((seg, k) => segmentRegExp(seg).test(end[k] ?? "")))
+      return sample;
+  }
+  return;
+}
+var SKIP = new Set([
+  ".git",
+  "node_modules",
+  "vendor",
+  "target",
+  "dist",
+  "build",
+  ".venv",
+  "venv"
+]);
+function findSecretUnder(dir, readdir, maxEntries = 20000) {
+  let seen = 0;
+  const walk = (abs, rel, depth) => {
+    if (depth > 10)
+      return;
+    for (const name of readdir(abs) ?? []) {
+      if (++seen > maxEntries)
+        return;
+      const childRel = rel === "" ? name : `${rel}/${name}`;
+      if (isSecretPath(childRel))
+        return childRel;
+      if (SKIP.has(name))
+        continue;
+      const found = walk(join5(abs, name), childRel, depth + 1);
+      if (found !== undefined)
+        return found;
+    }
+    return;
+  };
+  return walk(dir, "", 0);
+}
+var MENTION = /(?:^|[\s'"`/(=,])((?:\.env(?!\.(?:example|sample|template|dist|defaults)\b)(?:\.[\w-]+)*|id_(?:rsa|dsa|ecdsa|ed25519)|\.netrc|\.git-credentials|\.aws\/credentials|\.kube\/config|kubeconfig|\.ssh\/[\w.-]+))(?=$|[\s'"`),;])/;
+function mentionedSecret(code) {
+  return code.match(MENTION)?.[1];
 }
 
 // src/policy/session-files.ts
-import { join as join5 } from "path";
-var sessionContextFile = (workspace, sessionId) => join5(workspace, ".factory", "sessions", `${sessionId}.json`);
+import { join as join6 } from "path";
+var sessionContextFile = (workspace, sessionId) => join6(workspace, ".factory", "sessions", `${sessionId}.json`);
 
 // src/policy/shell.ts
-import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute3, join as join6, normalize as normalize2, relative as relative2, resolve as resolve4 } from "path";
+import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute3, join as join7, normalize as normalize2, relative as relative2, resolve as resolve4 } from "path";
 
 // src/policy/shell-parse.ts
 class ShellParseError extends Error {
@@ -918,11 +1083,20 @@ function checkSetEnv(name) {
 }
 var SAFE_WRITE_TARGETS = /^\/dev\/(null|stdout|stderr|tty|fd\/\d+)$/;
 function scanText(text) {
-  if (/\bgit\b[\s"',[\]()]+push\b/.test(text))
-    return "embedded code runs `git push`";
-  if (/\b(curl|wget)\b[^\n|]*\|\s*(ba|z|da)?sh\b/.test(text))
-    return "embedded code pipes a download into a shell";
+  for (const t of [text, text.replace(/(['"`])\s*\+\s*\1/g, "")]) {
+    if (/\bgit\b[\s"',[\]()]+push\b/.test(t))
+      return "embedded code runs `git push`";
+    if (/\b(curl|wget)\b[^\n|]*\|\s*(ba|z|da)?sh\b/.test(t))
+      return "embedded code pipes a download into a shell";
+  }
   return;
+}
+function scanInline(code) {
+  const found = scanText(code);
+  if (found !== undefined)
+    return found;
+  const secret = mentionedSecret(code);
+  return secret === undefined ? undefined : `embedded code reads secret file \`${secret}\``;
 }
 function home(state) {
   return state.ctx.env?.HOME;
@@ -1021,12 +1195,184 @@ function optionValues(args, short, long) {
   }
   return out;
 }
-function checkSecretArgs(words) {
+function checkSecretArgs(state, words) {
   for (const w of words) {
     const value = w.startsWith("-") ? w.includes("=") ? w.slice(w.indexOf("=") + 1) : "" : w;
-    if (value !== "" && isSecretPath(value))
+    if (value === "")
+      continue;
+    if (isSecretPath(value))
       block(`touches secret file \`${value}\``);
+    const object = value.match(/^[^\s:/]*:([^/].*)$/)?.[1];
+    if (object !== undefined && isSecretPath(object))
+      block(`reads secret file \`${object}\` from git`);
+    if (/[*?[]/.test(value)) {
+      const abs = resolvePath(state, value);
+      const hit = abs === undefined ? undefined : globMatchesSecret(abs, state.ctx.readdir);
+      if (hit !== undefined)
+        block(`the pattern \`${value}\` matches secret file \`${hit}\``);
+    }
   }
+}
+function checkRecursiveSearch(state, base, args) {
+  const f = flags(args);
+  const pos = positionals(args);
+  let roots;
+  if (base === "grep" || base === "egrep" || base === "fgrep") {
+    const recursive = f.has("-r") || f.has("-R") || f.has("--recursive") || f.has("--dereference-recursive") || optionValues(args, "d", ["--directories"]).includes("recurse");
+    if (!recursive)
+      return;
+    const explicit = f.has("-e") || f.has("-f") || f.has("--regexp") || f.has("--file");
+    roots = explicit ? pos : pos.slice(1);
+  } else {
+    const unrestricted = args.filter((a) => /^-[A-Za-z]+$/.test(a)).reduce((n, a) => n + (a.match(/u/g)?.length ?? 0), 0);
+    const hidden = f.has("--hidden") || f.has("-.") || f.has("--unrestricted") || unrestricted >= 2;
+    if (!hidden)
+      return;
+    roots = pos.slice(1);
+  }
+  const readdir = state.ctx.readdir;
+  if (readdir === undefined)
+    return;
+  for (const root of roots.length > 0 ? roots : ["."]) {
+    const abs = resolvePath(state, root);
+    if (abs === undefined)
+      continue;
+    const found = findSecretUnder(abs, readdir);
+    if (found !== undefined)
+      block(`searches \`${root}\`, which contains secret file \`${found}\`; search specific directories instead`);
+  }
+}
+function checkPackageScript(state, tool, args) {
+  const pos = positionals(args);
+  const sub = pos[0];
+  if (sub === undefined || state.cwd === undefined)
+    return;
+  const text = state.ctx.readFile?.(join7(state.cwd, "package.json"));
+  let scripts = {};
+  try {
+    scripts = (text === undefined ? {} : JSON.parse(text).scripts) ?? {};
+  } catch {
+    return;
+  }
+  const NPM_RUN = new Set(["run", "run-script", "rum", "urn"]);
+  const NPM_LIFECYCLE = {
+    test: "test",
+    t: "test",
+    tst: "test",
+    start: "start",
+    stop: "stop",
+    restart: "restart"
+  };
+  let name;
+  if (tool === "npm")
+    name = NPM_RUN.has(sub) ? pos[1] : NPM_LIFECYCLE[sub];
+  else if (sub === "run")
+    name = pos[1];
+  else if (sub in scripts)
+    name = sub;
+  else if (tool === "bun" && /\.[cm]?[jt]sx?$/.test(sub)) {
+    checkScriptFile(state, sub, "other");
+    return;
+  }
+  if (name === undefined)
+    return;
+  if (tool === "bun" && !(name in scripts) && /\.[cm]?[jt]sx?$/.test(name)) {
+    checkScriptFile(state, name, "other");
+    return;
+  }
+  for (const key of [`pre${name}`, name, `post${name}`]) {
+    const body = scripts[key];
+    if (typeof body === "string")
+      checkScript(state, body);
+  }
+}
+function parseMakefile(text) {
+  const vars = new Map;
+  const rules = new Map;
+  let first;
+  let current = [];
+  for (const line of text.replace(/\\\n/g, " ").split(`
+`)) {
+    if (line.startsWith("\t")) {
+      for (const r of current)
+        r.recipe.push(line.slice(1));
+      continue;
+    }
+    if (/^\s*(#|$)/.test(line))
+      continue;
+    const assign = line.match(/^(?:export\s+|override\s+)?([A-Za-z_][\w.-]*)\s*(?:\?|:|::|\+|!)?=\s*(.*)$/);
+    if (assign?.[1] !== undefined) {
+      vars.set(assign[1], (assign[2] ?? "").trim());
+      current = [];
+      continue;
+    }
+    const rule = line.match(/^([^:#=\t][^:#=]*?)\s*::?(?!=)\s*([^;#]*)(?:;(.*))?$/);
+    if (rule?.[1] === undefined) {
+      current = [];
+      continue;
+    }
+    const prereqs = (rule[2] ?? "").replace("|", " ").split(/\s+/).filter(Boolean);
+    current = rule[1].split(/\s+/).filter(Boolean).map((t) => {
+      const r = rules.get(t) ?? { prereqs: [], recipe: [] };
+      r.prereqs.push(...prereqs);
+      if (rule[3] !== undefined)
+        r.recipe.push(rule[3]);
+      rules.set(t, r);
+      if (first === undefined && !t.startsWith(".") && !t.includes("%"))
+        first = t;
+      return r;
+    });
+  }
+  return first === undefined ? { vars, rules } : { vars, rules, first };
+}
+var DOLLAR = "\uE000";
+function checkMake(state, args) {
+  const dir = optionValues(args, "C", ["--directory"]).at(-1);
+  const file = optionValues(args, "f", ["--file", "--makefile"]).at(-1);
+  const targets = [];
+  for (let i = 0;i < args.length; i++) {
+    const a = args[i] ?? "";
+    if (["-C", "-f", "-I", "-o", "-W", "--directory", "--file", "--makefile"].includes(a))
+      i++;
+    else if (!a.startsWith("-") && !a.includes("="))
+      targets.push(a);
+  }
+  const base = dir === undefined ? state.cwd : resolvePath(state, dir);
+  if (base === undefined)
+    return;
+  const names = file !== undefined ? [file] : ["GNUmakefile", "makefile", "Makefile"];
+  const text = names.map((n) => state.ctx.readFile?.(resolve4(base, n))).find((t) => t !== undefined);
+  if (text === undefined)
+    return;
+  const { vars, rules, first } = parseMakefile(text);
+  const expand = (line) => {
+    let out = line.replaceAll("$$", DOLLAR);
+    for (let k = 0;k < 5; k++)
+      out = out.replace(/\$[({]([A-Za-z_][\w.-]*)[)}]/g, (m, v) => vars.get(v) ?? m);
+    return out;
+  };
+  const seen = new Set;
+  const visit = (target) => {
+    if (seen.has(target) || seen.size > 200)
+      return;
+    seen.add(target);
+    const rule = rules.get(target);
+    if (rule === undefined)
+      return;
+    for (const p of rule.prereqs)
+      visit(p);
+    for (const raw of rule.recipe) {
+      const line = expand(raw.replace(/^[\s@+-]+/, ""));
+      if (/\$[({]/.test(line)) {
+        const found = scanText(line);
+        if (found)
+          block(`make ${target}: ${found}`);
+      } else
+        checkScript(state, line.replaceAll(DOLLAR, "$"));
+    }
+  };
+  for (const t of targets.length > 0 ? targets : first === undefined ? [] : [first])
+    visit(t);
 }
 function checkRedirects(state, redirects) {
   for (const r of redirects) {
@@ -1351,7 +1697,7 @@ function checkRm(state, args) {
     const abs = resolvePath(state, t);
     if (abs === undefined)
       return block(`rm \`${t}\` depends on an unknown variable or directory`);
-    const where = locate(state, join6(real(state, dirname2(abs)), basename2(abs)));
+    const where = locate(state, join7(real(state, dirname2(abs)), basename2(abs)));
     if (where.rel === undefined) {
       if (!where.temp)
         block(`rm \`${t}\` is outside the session directory`);
@@ -1367,9 +1713,9 @@ function checkLn(state, args) {
   const symbolic = flags(args).has("-s") || flags(args).has("--symbolic");
   const dir = optionValues(args, "t", ["--target-directory"])[0];
   const p = positionals(args).filter((x) => x !== dir);
-  const pairs = dir !== undefined ? p.map((t) => ({ target: t, link: join6(dir, basename2(t)) })) : p.length === 1 ? [{ target: p[0] ?? "", link: basename2(p[0] ?? "") }] : p.slice(0, -1).map((t) => ({
+  const pairs = dir !== undefined ? p.map((t) => ({ target: t, link: join7(dir, basename2(t)) })) : p.length === 1 ? [{ target: p[0] ?? "", link: basename2(p[0] ?? "") }] : p.slice(0, -1).map((t) => ({
     target: t,
-    link: p.length > 2 ? join6(p.at(-1) ?? "", basename2(t)) : p.at(-1) ?? ""
+    link: p.length > 2 ? join7(p.at(-1) ?? "", basename2(t)) : p.at(-1) ?? ""
   }));
   for (const { target, link } of pairs) {
     checkWrite(state, link, "ln creates");
@@ -1653,7 +1999,7 @@ function checkSimple(state, cmd, stdin) {
   const words = unwrap(state, cmd.words, stdin);
   if (words.length === 0)
     return;
-  checkSecretArgs(words);
+  checkSecretArgs(state, words);
   const [head = "", ...args] = words;
   if (head.includes("$"))
     block(`runs a command whose name is generated at run time (\`${head}\`)`);
@@ -1763,16 +2109,20 @@ function checkSimple(state, cmd, stdin) {
     const joined = args.find((a) => inline.some((f) => f.startsWith("--") && a.startsWith(`${f}=`)));
     if (i !== -1 || joined !== undefined) {
       const code = joined !== undefined ? joined.slice(joined.indexOf("=") + 1) : args[i + 1] ?? "";
-      const found = scanText(code);
+      const found = scanInline(code);
       if (found)
         block(found);
       return;
     }
     const file = args.find((a) => !a.startsWith("-"));
+    if (base === "bun" && file !== undefined) {
+      checkPackageScript(state, "bun", args);
+      return;
+    }
     if (file !== undefined)
       return checkScriptFile(state, file, "other");
     if (heredoc !== undefined) {
-      const found = scanText(heredoc);
+      const found = scanInline(heredoc);
       if (found)
         block(found);
       return;
@@ -1782,7 +2132,7 @@ function checkSimple(state, cmd, stdin) {
     if (stdin === null)
       block(`pipes generated input into ${base}`);
     if (stdin !== undefined) {
-      const found = scanText(stdin);
+      const found = scanInline(stdin);
       if (found)
         block(found);
     }
@@ -1946,6 +2296,18 @@ function checkSimple(state, cmd, stdin) {
       if (args.some((a) => a === "publish" || a === "login" || a === "adduser" || a === "unpublish" || a === "deprecate")) {
         return block(`${base} publishing is not allowed`);
       }
+      checkPackageScript(state, base, args);
+      return;
+    case "make":
+    case "gmake":
+      checkMake(state, args);
+      return;
+    case "grep":
+    case "egrep":
+    case "fgrep":
+    case "rg":
+    case "ag":
+      checkRecursiveSearch(state, base, args);
       return;
     case "cargo":
     case "twine":
@@ -2121,7 +2483,7 @@ function checkEditReal(ctx, path, approved) {
   const rel = relative3(realDir, realAbs);
   if (rel === "" || rel.startsWith("..") || isAbsolute4(rel))
     throw new Refused(`\`${path}\` resolves outside your directory through a symlink`);
-  const real2 = checkEdit(ctx, join7(ctx.directory, rel), approved);
+  const real2 = checkEdit(ctx, join8(ctx.directory, rel), approved);
   if (!real2.allowed)
     throw new Refused(`${real2.reason} (through a symlink at \`${path}\`)`);
 }
@@ -2156,6 +2518,7 @@ function guard(workspace, event) {
         env: process.env,
         readFile: readText,
         exists: (abs) => existsSync4(abs),
+        readdir: listDir,
         realpath: realPathOf,
         workspace: ctx.workspace
       });
@@ -2171,7 +2534,10 @@ function guard(workspace, event) {
     }
     case "patch":
     case "apply_patch": {
-      for (const path of patchPaths(field(input, "patchText", "patch") ?? ""))
+      const paths = patchPaths(field(input, "patchText", "patch") ?? "");
+      if (paths === undefined)
+        throw new Refused("cannot tell which files this patch changes; use the edit tool");
+      for (const path of paths)
         checkEditReal(ctx, path, approved);
       return { ctx };
     }
@@ -2179,7 +2545,7 @@ function guard(workspace, event) {
       const path = field(input, "path", "filePath") ?? "";
       if (isSecretReal(ctx.directory, path))
         throw new Refused(`\`${path}\` is a secret file`);
-      const abs = isAbsolute4(path) ? path : join7(ctx.directory, path);
+      const abs = isAbsolute4(path) ? path : join8(ctx.directory, path);
       try {
         const st = statSync3(abs);
         const stamp = `${st.mtimeMs}:${st.size}`;
@@ -2194,23 +2560,55 @@ function guard(workspace, event) {
     }
     case "glob":
     case "grep": {
-      const path = field(input, "path", "pattern");
+      const path = field(input, "path");
       if (path !== undefined && isSecretReal(ctx.directory, path))
         throw new Refused(`\`${path}\` is a secret file`);
+      const root = path === undefined ? ctx.directory : resolve5(ctx.directory, path);
+      if (event.tool === "glob") {
+        const pattern = field(input, "pattern") ?? "";
+        const hit = globMatchesSecret(isAbsolute4(pattern) ? pattern : join8(root, pattern), listDir);
+        if (hit !== undefined)
+          throw new Refused(`\`${pattern}\` matches secret file \`${hit}\``);
+        return { ctx };
+      }
+      const secret = findSecretUnder(root, listDir);
+      if (secret !== undefined)
+        throw new Refused(`the search covers secret file \`${secret}\`; search specific directories instead`);
       return { ctx };
     }
     default:
       return { ctx };
   }
 }
-var summarize = (input) => {
+var CONTENT_FIELDS = new Set([
+  "content",
+  "oldString",
+  "newString",
+  "patchText",
+  "patch",
+  "edits"
+]);
+var summarize = (input, tool) => {
   if (typeof input !== "object" || input === null)
     return input;
   const out = {};
   for (const [k, v] of Object.entries(input)) {
-    out[k] = typeof v === "string" && v.length > 2000 ? `${v.slice(0, 2000)}\u2026 (${v.length} chars)` : k === "content" ? `(${String(v).length} chars)` : v;
+    const text = typeof v === "string" ? v : JSON.stringify(v ?? null);
+    out[k] = CONTENT_FIELDS.has(k) ? `(${text.length} chars)` : typeof v === "string" && v.length > 2000 ? `${v.slice(0, 2000)}\u2026 (${v.length} chars)` : v;
+  }
+  if (tool === "apply_patch" || tool === "patch") {
+    const paths = patchPaths(String(input.patchText ?? ""));
+    if (paths !== undefined)
+      out.files = paths;
   }
   return out;
+};
+var listDir = (abs) => {
+  try {
+    return readdirSync3(abs);
+  } catch {
+    return;
+  }
 };
 var approvedShells = new Map;
 function approveShell(command, ctx) {
@@ -2218,13 +2616,13 @@ function approveShell(command, ctx) {
 }
 function sandboxPolicy(workspace, ctx) {
   if (ctx.role === "implementer" || ctx.role === "tester")
-    return checkoutPolicy(workspace, ctx.directory);
+    return { ...checkoutPolicy(workspace, ctx.directory), denySecretReads: true };
   const home2 = process.env.HOME;
   const writable = ctx.role === "architect" ? [
-    join7(ctx.directory, "openspec", "changes", ctx.changeId),
-    join7(workspace, ".factory", "context", ctx.changeId)
+    join8(ctx.directory, "openspec", "changes", ctx.changeId),
+    join8(workspace, ".factory", "context", ctx.changeId)
   ] : [];
-  return { workspace, writable, ...home2 === undefined ? {} : { home: home2 } };
+  return { workspace, writable, denySecretReads: true, ...home2 === undefined ? {} : { home: home2 } };
 }
 function onShellCreate(workspace, event) {
   const queue = approvedShells.get(event.command);
@@ -2262,7 +2660,7 @@ var entry_default = {
           session: event.sessionID,
           agent: event.agent,
           tool: event.tool,
-          input: summarize(event.input),
+          input: summarize(event.input, event.tool),
           ...note === undefined ? {} : { note }
         });
       } catch (err) {
@@ -2272,7 +2670,7 @@ var entry_default = {
           session: event.sessionID,
           agent: event.agent,
           tool: event.tool,
-          input: summarize(event.input),
+          input: summarize(event.input, event.tool),
           reason
         });
         throw err instanceof Refused ? err : new Refused(reason);

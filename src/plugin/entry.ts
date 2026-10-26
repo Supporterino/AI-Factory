@@ -10,7 +10,7 @@
  * context file per session. Without the variable (a human's own opencode) the plugin does
  * nothing; a factory agent without a context file is refused everything.
  */
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { checkApprovalHash } from "../approval/approval.ts";
 import { appendLog } from "../logs/log.ts";
@@ -28,6 +28,7 @@ import {
   patchPaths,
   type SessionContext,
 } from "../policy/scope.ts";
+import { findSecretUnder, globMatchesSecret } from "../policy/secrets.ts";
 import { sessionContextFile } from "../policy/session-files.ts";
 import { checkShell } from "../policy/shell.ts";
 
@@ -173,6 +174,7 @@ function guard(workspace: string, event: ToolEvent): { ctx: SessionContext; note
         env: process.env,
         readFile: readText,
         exists: (abs) => existsSync(abs),
+        readdir: listDir,
         realpath: realPathOf,
         workspace: ctx.workspace,
       });
@@ -187,8 +189,10 @@ function guard(workspace: string, event: ToolEvent): { ctx: SessionContext; note
     }
     case "patch":
     case "apply_patch": {
-      for (const path of patchPaths(field(input, "patchText", "patch") ?? ""))
-        checkEditReal(ctx, path, approved);
+      const paths = patchPaths(field(input, "patchText", "patch") ?? "");
+      if (paths === undefined)
+        throw new Refused("cannot tell which files this patch changes; use the edit tool");
+      for (const path of paths) checkEditReal(ctx, path, approved);
       return { ctx };
     }
     case "read": {
@@ -209,9 +213,23 @@ function guard(workspace: string, event: ToolEvent): { ctx: SessionContext; note
     }
     case "glob":
     case "grep": {
-      const path = field(input, "path", "pattern");
+      const path = field(input, "path");
       if (path !== undefined && isSecretReal(ctx.directory, path))
         throw new Refused(`\`${path}\` is a secret file`);
+      const root = path === undefined ? ctx.directory : resolve(ctx.directory, path);
+      if (event.tool === "glob") {
+        // The glob's matches are paths, not contents, but they name what to read next.
+        const pattern = field(input, "pattern") ?? "";
+        const hit = globMatchesSecret(isAbsolute(pattern) ? pattern : join(root, pattern), listDir);
+        if (hit !== undefined) throw new Refused(`\`${pattern}\` matches secret file \`${hit}\``);
+        return { ctx };
+      }
+      // grep reads every file under its path, hidden ones included (audit S11).
+      const secret = findSecretUnder(root, listDir);
+      if (secret !== undefined)
+        throw new Refused(
+          `the search covers secret file \`${secret}\`; search specific directories instead`,
+        );
       return { ctx };
     }
     default:
@@ -219,19 +237,42 @@ function guard(workspace: string, event: ToolEvent): { ctx: SessionContext; note
   }
 }
 
-const summarize = (input: unknown): unknown => {
+/** Fields that carry file contents: logged as their length only (audit S19). */
+const CONTENT_FIELDS = new Set([
+  "content",
+  "oldString",
+  "newString",
+  "patchText",
+  "patch",
+  "edits",
+]);
+
+const summarize = (input: unknown, tool?: string): unknown => {
   if (typeof input !== "object" || input === null) return input;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
     // Keep commands and paths; never log file contents.
-    out[k] =
-      typeof v === "string" && v.length > 2000
+    const text = typeof v === "string" ? v : JSON.stringify(v ?? null);
+    out[k] = CONTENT_FIELDS.has(k)
+      ? `(${text.length} chars)`
+      : typeof v === "string" && v.length > 2000
         ? `${v.slice(0, 2000)}… (${v.length} chars)`
-        : k === "content"
-          ? `(${String(v).length} chars)`
-          : v;
+        : v;
+  }
+  // A patch's files are worth keeping; its contents are not.
+  if (tool === "apply_patch" || tool === "patch") {
+    const paths = patchPaths(String((input as Record<string, unknown>).patchText ?? ""));
+    if (paths !== undefined) out.files = paths;
   }
   return out;
+};
+
+const listDir = (abs: string): string[] | undefined => {
+  try {
+    return readdirSync(abs);
+  } catch {
+    return undefined;
+  }
 };
 
 /** Shell commands the guard allowed, waiting for opencode to spawn them (FIFO per text). */
@@ -244,7 +285,7 @@ function approveShell(command: string, ctx: SessionContext): void {
 /** What a session's programs may write: its worktree, or for the architect its two folders. */
 function sandboxPolicy(workspace: string, ctx: SessionContext): SandboxPolicy {
   if (ctx.role === "implementer" || ctx.role === "tester")
-    return checkoutPolicy(workspace, ctx.directory);
+    return { ...checkoutPolicy(workspace, ctx.directory), denySecretReads: true };
   const home = process.env.HOME;
   const writable =
     ctx.role === "architect"
@@ -253,7 +294,7 @@ function sandboxPolicy(workspace: string, ctx: SessionContext): SandboxPolicy {
           join(workspace, ".factory", "context", ctx.changeId),
         ]
       : [];
-  return { workspace, writable, ...(home === undefined ? {} : { home }) };
+  return { workspace, writable, denySecretReads: true, ...(home === undefined ? {} : { home }) };
 }
 
 /**
@@ -304,7 +345,7 @@ export default {
           session: event.sessionID,
           agent: event.agent,
           tool: event.tool,
-          input: summarize(event.input),
+          input: summarize(event.input, event.tool),
           ...(note === undefined ? {} : { note }),
         });
       } catch (err) {
@@ -319,7 +360,7 @@ export default {
             session: event.sessionID,
             agent: event.agent,
             tool: event.tool,
-            input: summarize(event.input),
+            input: summarize(event.input, event.tool),
             reason,
           },
         );

@@ -26,7 +26,10 @@ export type AttemptResult =
   /** The agent cannot finish within its scope; a human must look. Not retried. */
   | { status: "blocked"; reason: string }
   | { status: "error"; reason: string }
-  /** Infrastructure failed (agent server down): retried without spending the budget. */
+  /**
+   * Infrastructure failed (agent server down, rate-limited too long, dependency install):
+   * retried without spending the budget; the change pauses after repeats.
+   */
   | { status: "transient"; reason: string };
 
 /** Consecutive infrastructure failures after which the change pauses instead of looping. */
@@ -183,12 +186,22 @@ export class Scheduler {
     return true;
   }
 
+  /** Back to pending after an interrupt; the task resumes where it stopped. */
+  async #interrupted(id: string): Promise<void> {
+    await this.#mutateTask(id, (t) => {
+      t.status = "pending";
+      recordTask(t, "interrupted");
+    });
+  }
+
   /** Drops the task's work and queues it to run alone in its repo from the latest tip. */
   async #requeueSerially(id: string, reason: string): Promise<void> {
     await this.#opts.runner.reset(this.#task(id));
     await this.#mutateTask(id, (t) => {
       t.status = "pending";
       t.serial = true;
+      t.gatesPassed = false;
+      t.installed = false;
       delete t.worktree;
       delete t.branch;
       recordTask(t, "requeued serially", reason);
@@ -210,8 +223,9 @@ export class Scheduler {
     const runner = this.#opts.runner;
     const signal = this.#abort.signal;
     for (;;) {
-      // Implementation attempts until the task passes its gates.
-      let passed = false;
+      // Implementation attempts until the task passes its gates (a resumed task that already
+      // passed goes straight to the merge, audit P8).
+      let passed = this.#task(id).gatesPassed;
       while (!passed) {
         if (this.#aborted()) return;
         const result = await this.#agents.run(async () => {
@@ -219,6 +233,7 @@ export class Scheduler {
           if (this.#abortRequested()) return undefined;
           const task = await this.#mutateTask(id, (t) => {
             t.status = "running";
+            t.gatesPassed = false;
             recordTask(t, "attempt", `attempt ${t.failures + 1}`);
           });
           try {
@@ -230,23 +245,17 @@ export class Scheduler {
           } catch (err) {
             const reason = err instanceof Error ? err.message : String(err);
             return err instanceof TransientError
-              ? ({ status: "transient", reason } as const)
+              ? ({ status: "transient", reason: `the agent runtime failed (${reason})` } as const)
               : ({ status: "error", reason } as const);
           }
         });
-        if (result === undefined || this.#aborted()) {
-          await this.#mutateTask(id, (t) => {
-            t.status = "pending";
-            recordTask(t, "interrupted");
-          });
-          return;
-        }
+        if (result === undefined || this.#aborted()) return this.#interrupted(id);
         if (result.status === "transient") {
           // Not the task's fault: back to pending, budget untouched; stop after repeats.
           this.#transient++;
           await this.#mutateTask(id, (t) => {
             t.status = "pending";
-            recordTask(t, "agent runtime failed", result.reason);
+            recordTask(t, "infrastructure failed", result.reason);
           });
           if (this.#transient >= MAX_TRANSIENT) {
             this.#halted ??= result.reason;
@@ -260,6 +269,7 @@ export class Scheduler {
           this.#transient = 0;
           await this.#mutateTask(id, (t) => {
             if (result.commit) t.commit = result.commit;
+            t.gatesPassed = true;
             delete t.lastGateOutput;
             recordTask(t, "gates passed", result.commit);
           });
@@ -302,7 +312,13 @@ export class Scheduler {
           }
           return;
         }
+        // An interrupt kills the re-gate or the rebase: nothing is spent, the work stays
+        // (audit P7). The resumed task merges again.
+        if (this.#aborted()) return this.#interrupted(id);
         if (merge.status === "gates-failed") {
+          await this.#mutateTask(id, (t) => {
+            t.gatesPassed = false;
+          });
           if (!(await this.#spend(id, "gates failed after rebase", merge.output))) return;
           break; // back to implementation attempts in the rebased worktree
         }
@@ -325,6 +341,13 @@ export class Scheduler {
         const resolved = await this.#agents.run(() =>
           runner.resolveConflict(this.#task(id), merge.conflicts, signal).catch(() => false),
         );
+        if (this.#aborted()) {
+          // The interrupted resolution is not the task's failure: refund it, keep the branch.
+          await this.#mutateTask(id, (t) => {
+            t.failures = Math.max(0, t.failures - 1);
+          });
+          return this.#interrupted(id);
+        }
         if (!resolved) {
           await this.#requeueSerially(id, "conflict resolution failed");
           return;
@@ -364,8 +387,9 @@ export class Scheduler {
           recordTask(t, "recovered", "was running when the previous run stopped");
         }
         if (t.status === "merging") {
-          // The merge is idempotent; re-entering through an attempt would redo the work.
+          // Its gates passed; the merge is idempotent, so it resumes there (audit P8).
           t.status = "pending";
+          t.gatesPassed = true;
           recordTask(t, "recovered", "was merging when the previous run stopped");
         }
       }
@@ -411,7 +435,7 @@ export class Scheduler {
         draft.phase = "paused";
         draft.pausedReason =
           this.#halted !== undefined
-            ? `the agent runtime failed ${MAX_TRANSIENT} times in a row (${this.#halted}); fix it and resume`
+            ? `${this.#halted}, ${MAX_TRANSIENT} times in a row; fix it and resume (no retry budget was spent)`
             : `failed: ${summary.failed.join(", ") || "none"}; cancelled: ${summary.cancelled.join(", ") || "none"}`;
       });
     }
