@@ -1,4 +1,4 @@
-import { PreconditionError } from "../errors.ts";
+import { PreconditionError, TransientError } from "../errors.ts";
 import { checkDesign } from "../openspec/cli.ts";
 import { claimActive, dequeue, readActive, releaseActive } from "../state/active.ts";
 import type { Phase } from "../state/run.ts";
@@ -66,6 +66,12 @@ export async function drive(p: Pipeline, firstId: string): Promise<DriveOutcome>
       id = next.id;
     } catch (err) {
       if (err instanceof ChangeAborted) return stopAborted(p, err.changeId);
+      if (err instanceof TransientError) {
+        // Outside the scheduler (design, review, contracts): pause, nothing is spent.
+        const reason = `the agent runtime failed (${err.message}); fix it and resume`;
+        await setPhase(p, id, "paused", reason);
+        return { id, phase: "paused", detail: reason };
+      }
       throw err;
     }
   }

@@ -41,3 +41,14 @@ export class ExecError extends FactoryError {
     this.result = result;
   }
 }
+
+/**
+ * Infrastructure trouble (the agent server crashed or is unreachable): retried without
+ * spending a task's budget, and the change pauses if it keeps happening (audit P5).
+ */
+export class TransientError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TransientError";
+  }
+}

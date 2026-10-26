@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { TransientError } from "../src/errors.ts";
 import {
   type AttemptContext,
   type AttemptResult,
@@ -176,6 +177,28 @@ describe("Scheduler", () => {
     expect((await schedule(runner)).status).toBe("complete");
     expect(runner.feedback["1.1"]).toEqual([undefined, "lint: e1", "lint: e2", "lint: e3"]);
     expect(task("1.1")).toMatchObject({ status: "merged", failures: 3 });
+  });
+
+  test("an agent-server crash does not spend the retry budget (audit P5)", async () => {
+    seed([{ id: "1.1" }, { id: "1.2" }]);
+    const runner = new FakeRunner();
+    let crashes = 2;
+    runner.onAttempt = (t) => {
+      if (t.id === "1.1" && crashes-- > 0) throw new TransientError("opencode server exited");
+    };
+    expect((await schedule(runner)).status).toBe("complete");
+    expect(task("1.1")).toMatchObject({ status: "merged", failures: 0 });
+  });
+
+  test("a server that keeps failing pauses the change instead of failing tasks", async () => {
+    seed([{ id: "1.1" }]);
+    const runner = new FakeRunner();
+    runner.onAttempt = () => {
+      throw new TransientError("opencode serve did not start");
+    };
+    expect((await schedule(runner)).status).toBe("paused");
+    expect(task("1.1")).toMatchObject({ status: "pending", failures: 0 });
+    expect(loadRun(root, "add-x")?.pausedReason).toContain("agent runtime failed");
   });
 
   test("an exhausted budget fails the task, cancels only its dependents and pauses", async () => {

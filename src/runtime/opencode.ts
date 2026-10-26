@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import type { FactoryConfig } from "../config/schema.ts";
+import { TransientError } from "../errors.ts";
 import { agentGitEnv } from "../git/hooks.ts";
 import { appendLog } from "../logs/log.ts";
 import { sandboxEnabled } from "../policy/sandbox.ts";
@@ -150,7 +151,7 @@ export class OpencodeRuntime implements AgentRuntime {
   #proc?: ChildProcess;
   #base = "";
   #auth = "";
-  readonly #events = new AbortController();
+  #events = new AbortController();
   readonly #loaded = new Set<string>();
 
   constructor(opts: OpencodeRuntimeOptions) {
@@ -163,15 +164,24 @@ export class OpencodeRuntime implements AgentRuntime {
     body?: unknown,
     signal?: AbortSignal,
   ): Promise<{ status: number; data: T }> {
-    const res = await fetch(this.#base + path, {
-      method,
-      headers: {
-        authorization: this.#auth,
-        ...(body === undefined ? {} : { "content-type": "application/json" }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      ...(signal ? { signal } : {}),
-    });
+    let res: Response;
+    try {
+      res = await fetch(this.#base + path, {
+        method,
+        headers: {
+          authorization: this.#auth,
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(signal ? { signal } : {}),
+      });
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      // Connection refused or reset: the server is gone, which is not the agent's fault.
+      throw new TransientError(
+        `opencode server unreachable${this.#alive() ? "" : " (it exited)"}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     const text = await res.text();
     let json: unknown = text;
     try {
@@ -187,8 +197,25 @@ export class OpencodeRuntime implements AgentRuntime {
     return { status: res.status, data };
   }
 
+  #alive(): boolean {
+    return (
+      this.#proc !== undefined && this.#proc.exitCode === null && this.#proc.signalCode === null
+    );
+  }
+
+  /** The server's pid while it runs (tests use it to simulate a crash). */
+  get serverPid(): number | undefined {
+    return this.#alive() ? this.#proc?.pid : undefined;
+  }
+
+  /** Starts the server, or starts a new one if the previous one died (audit P5). */
   async start(): Promise<void> {
-    if (this.#proc) return;
+    if (this.#alive()) return;
+    if (this.#proc !== undefined) {
+      this.#events.abort();
+      this.#events = new AbortController();
+      this.#loaded.clear();
+    }
     const password = randomBytes(18).toString("base64url");
     const port = await freePort();
     mkdirSync(join(this.#opts.root, ".factory", "opencode"), { recursive: true });
@@ -210,13 +237,14 @@ export class OpencodeRuntime implements AgentRuntime {
     const deadline = Date.now() + (this.#opts.startTimeoutMs ?? 30_000);
     for (;;) {
       if (this.#proc.exitCode !== null)
-        throw new Error(`opencode serve exited (${this.#proc.exitCode}): ${stderr}`);
+        throw new TransientError(`opencode serve exited (${this.#proc.exitCode}): ${stderr}`);
       try {
         if ((await this.#api("GET", "/api/plugin")).status === 200) break;
       } catch {
         // Not listening yet.
       }
-      if (Date.now() > deadline) throw new Error(`opencode serve did not start: ${stderr}`);
+      if (Date.now() > deadline)
+        throw new TransientError(`opencode serve did not start: ${stderr}`);
       await new Promise((r) => setTimeout(r, 200));
     }
     void this.#watchEvents();
@@ -377,7 +405,8 @@ export class OpencodeRuntime implements AgentRuntime {
     let messages: ServerMessage[];
     try {
       messages = await this.#awaitTurn(id, marker, stop);
-    } catch {
+    } catch (err) {
+      if (err instanceof TransientError) throw err; // the server died mid-turn
       interrupted = true;
       await this.#api("POST", `/api/session/${id}/interrupt`);
       await this.#api("POST", `/api/experimental/session/${id}/wait`);

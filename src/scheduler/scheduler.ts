@@ -1,3 +1,4 @@
+import { TransientError } from "../errors.ts";
 import { MergeQueue } from "../git/merge-queue.ts";
 import { loadRun, type RunState, recordTask, type TaskState, updateRun } from "../state/run.ts";
 import { dependentsOf } from "../tasks/dag.ts";
@@ -24,7 +25,12 @@ export type AttemptResult =
   | { status: "gate-failed"; output: string }
   /** The agent cannot finish within its scope; a human must look. Not retried. */
   | { status: "blocked"; reason: string }
-  | { status: "error"; reason: string };
+  | { status: "error"; reason: string }
+  /** Infrastructure failed (agent server down): retried without spending the budget. */
+  | { status: "transient"; reason: string };
+
+/** Consecutive infrastructure failures after which the change pauses instead of looping. */
+const MAX_TRANSIENT = 3;
 
 export type MergeResult =
   | { status: "merged"; commit: string }
@@ -98,6 +104,9 @@ export class Scheduler {
   readonly #inFlight = new Map<string, Promise<void>>();
   #state!: RunState;
   #wake: () => void = () => {};
+  /** Consecutive infrastructure failures, and the reason once dispatch stopped for them. */
+  #transient = 0;
+  #halted: string | undefined;
 
   constructor(opts: SchedulerOptions) {
     this.#opts = opts;
@@ -219,10 +228,10 @@ export class Scheduler {
               ...(task.lastGateOutput === undefined ? {} : { feedback: task.lastGateOutput }),
             });
           } catch (err) {
-            return {
-              status: "error",
-              reason: err instanceof Error ? err.message : String(err),
-            } as const;
+            const reason = err instanceof Error ? err.message : String(err);
+            return err instanceof TransientError
+              ? ({ status: "transient", reason } as const)
+              : ({ status: "error", reason } as const);
           }
         });
         if (result === undefined || this.#aborted()) {
@@ -232,8 +241,23 @@ export class Scheduler {
           });
           return;
         }
+        if (result.status === "transient") {
+          // Not the task's fault: back to pending, budget untouched; stop after repeats.
+          this.#transient++;
+          await this.#mutateTask(id, (t) => {
+            t.status = "pending";
+            recordTask(t, "agent runtime failed", result.reason);
+          });
+          if (this.#transient >= MAX_TRANSIENT) {
+            this.#halted ??= result.reason;
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 1000));
+          continue;
+        }
         if (result.status === "passed") {
           passed = true;
+          this.#transient = 0;
           await this.#mutateTask(id, (t) => {
             if (result.commit) t.commit = result.commit;
             delete t.lastGateOutput;
@@ -310,6 +334,7 @@ export class Scheduler {
   }
 
   #dispatch(): void {
+    if (this.#halted !== undefined) return;
     for (const task of this.#state.tasks) {
       if (this.#aborted()) return;
       if (!this.#canStart(task)) continue;
@@ -384,7 +409,10 @@ export class Scheduler {
     if (summary.status === "paused") {
       await this.#update((draft) => {
         draft.phase = "paused";
-        draft.pausedReason = `failed: ${summary.failed.join(", ") || "none"}; cancelled: ${summary.cancelled.join(", ") || "none"}`;
+        draft.pausedReason =
+          this.#halted !== undefined
+            ? `the agent runtime failed ${MAX_TRANSIENT} times in a row (${this.#halted}); fix it and resume`
+            : `failed: ${summary.failed.join(", ") || "none"}; cancelled: ${summary.cancelled.join(", ") || "none"}`;
       });
     }
     return summary;

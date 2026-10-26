@@ -117,4 +117,27 @@ describe.skipIf(!enabled)("OpencodeRuntime against real opencode", () => {
     // The model came from the session create call, not the agent frontmatter default.
     expect(JSON.stringify(stub.requests.at(-1))).toContain("claude-stub");
   }, 120_000);
+  test("a crashed server is restarted for the next session (audit P5)", async () => {
+    const pid = runtime.serverPid;
+    expect(pid).toBeDefined();
+    process.kill(pid ?? 0, "SIGKILL");
+    await Bun.sleep(500);
+    expect(runtime.serverPid).toBeUndefined();
+    const session = await runtime.open({
+      agent: "implementer-app",
+      model: "stub/claude-stub",
+      title: "after crash",
+      context: {
+        changeId: "add-x",
+        role: "implementer",
+        directory: fx.root,
+        workspace: fx.root,
+        repo: "app",
+        task: "1.1",
+        touches: ["src/**"],
+      },
+    });
+    expect((await session.prompt("Task 1.1: probe again")).outcome).toBe("succeeded");
+    expect(runtime.serverPid).not.toBe(pid);
+  }, 120_000);
 });
