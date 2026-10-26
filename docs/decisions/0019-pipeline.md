@@ -12,7 +12,9 @@
   - The approval file always lives in the workspace root.
 - **Intake id.** The orchestrator's `change-id` is used when it matches the OpenSpec rule. Otherwise a slug of the request is used. Duplicates get `-2`, `-3`, ….
 - **Design repair.** After the architect, the CLI runs `openspec validate --strict`, the proposal check (gap G7), the `tasks.md` parser and DAG validation. Problems go back to the same architect session, up to `gates.maxRetries` rounds; after that the change pauses in design.
-- **Approval.** Commits `docs(spec): <id>` (or reuses the last commit of the change folder) and records `{approver, specCommit, hash}`. Before implementation starts, the CLI re-checks the hash **and** that the spec commit is an ancestor of `change/<id>`.
+- **Approval.** Commits `docs(spec): <id>` (or reuses the last commit of the change folder) and records `{approver, specCommit, hash}`.
+  - `approve` checks the phase again under the run lock, so a concurrent `approve` or `resume` cannot reset loaded tasks (audit P14).
+  - On activation **and** on entering every later phase (implementing, reviewing, contracts, full suite, closing), the CLI re-checks the hash and that the spec commit is an ancestor of `change/<id>` (audit P9). Once implementation has started the change cannot be approved again: the error shows how to restore the approved spec, or to abort. Closing skips the check once the archive has moved the spec.
 - **Context packs.** One architect session writes all missing packs after approval. A missing pack gets a deterministic fallback (task, metadata, spec text), and any pack is truncated to `contextPackMaxTokens` (estimated at 4 characters per token).
 - **Attempts.** Each attempt is a fresh session. Earlier work stays in the worktree, and the full compacted gate output is the feedback, with a note on top when it repeats the previous attempt's. Diff-only feedback left fresh sessions without the error text (audit P1).
   - After the session, the CLI audits the worktree diff against the scope. Out-of-scope files are reverted and the attempt counts as a failure.
@@ -22,6 +24,7 @@
   - Once all tasks merged, each touched repo gets one reviewer pass and one tester task, both once per change.
   - `must` and `should` findings become `fix-<repo>-<n>` tasks (touches `**`; the finding is their context pack). `nice` findings go to the report only.
   - The tester task is `test-<repo>`.
+  - A reviewer or contract reviewer that returns no handoff (crash, timeout, prose) is not a clean review: the change pauses and the repo is reviewed again on `resume` (audit P13).
 - **Full suite.** Failures become `suite-<repo>-<round>` fix tasks, seeded with the gate output. After two rounds the change pauses.
 - **Close.** In order:
   1. Mirror the task checkboxes into `tasks.md`.
@@ -30,5 +33,5 @@
   4. Write the report to `.factory/reports/<id>.md`.
   5. Release the lock and start the next queued change in the same process.
 
-  Nothing is pushed.
+  Steps 2 and 3 are recorded in the run state when done (`pointersBumped`, `archivedAs`, `archiveCommit`), and the report is built from those records. A close resumed after a crash skips what is recorded; an archive that `openspec` moved but the CLI did not commit yet is detected and committed (audit P6). Nothing is pushed.
 - **Interrupts.** SIGINT/SIGTERM abort the pipeline signal: the scheduler stops dispatching, sessions are interrupted, state stays resumable. The runtime is always closed and the driver released. Exit codes: 6 = paused or aborted, 4 = a precondition (e.g. the spec changed after approval).

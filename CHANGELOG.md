@@ -54,6 +54,11 @@ All notable changes per release. `ai-factory update` applies them to an installe
 - **Merges.** A task whose conflict was resolved while another task merged now catches up instead of failing (P4).
 - **Server crashes.** A crashed opencode server is restarted. Server failures never spend retry budget, and the change pauses after three in a row (P5).
 - **OpenSpec files.** OpenSpec's opencode commands and skills are managed files: `init` and `update --tools` no longer overwrite your edits (P19).
+- **Approval.** A spec edited after approval is caught on entry to every later phase, not only at activation; the error shows how to restore the approved spec (P9).
+- **Reviews.** A reviewer or contract reviewer that returns no result pauses the change instead of counting as a clean review (P13).
+- **Close.** Closing records each step, so a resume after a crash finishes the close instead of failing (P6).
+- **Concurrent drivers.** Every phase after approval takes the driver lock, so two `resume`s cannot run a review or close twice; `approve` re-checks the phase under the run lock (P14).
+- **Corrupt state files.** A corrupt run file, `active.lock` or `queue.json` gives a clear error with a fix; `status` and `doctor` list it instead of crashing (P15).
 
 - The architect and tester agents get edit permissions for their own paths (change and context folders, test globs). Before, opencode's permission layer denied their writes.
 - Closing a change removes its agent snapshot and empty worktree folders, and `status` no longer lists the snapshot as a worktree.

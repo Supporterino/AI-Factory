@@ -20,6 +20,8 @@
   - `.factory/active.lock` names the change that owns the workspace from implementation start until close or abort, paused or not.
   - Its `pid` is the current driver: `null` when nobody drives it, and replaceable when the process is dead (stale-lock recovery).
   - A second change gets `busy` and waits in `.factory/queue.json` in approval order.
+  - Every phase after approval (implementing, reviewing, contracts, full suite, closing) claims the driver on entry, so a second `resume` is refused while a live process drives the change (audit P14).
+- **Corrupt state.** A run file, `active.lock` or `queue.json` that is not valid JSON or fails its schema raises a precondition error naming the file and how to recover, never an internal error. `status` and `doctor` list corrupt files next to the readable state, and `update` treats a corrupt run as in progress (audit P15).
 - **Abort.**
   - Sets `abortRequested` and `phase: aborted` and removes the change from the queue. Branches and worktrees stay.
   - The driver notices it in **every** phase: before each step, before each agent call, and within a second during one (running sessions are interrupted). It never overwrites `aborted`, leaves unfinished tasks `pending`, and frees the workspace when it stops (audit P2).
