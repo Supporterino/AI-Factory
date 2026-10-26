@@ -18,6 +18,13 @@ All notable changes per release. `ai-factory update` applies them to an installe
 - `ai-factory doctor`: checks tool versions and lock drift, the install, submodules, clean trees, hooks, the resolved gate table with toolchain lookup, cache sizes, model availability, graph freshness and stale locks.
 - `README.md`, `ARCHITECTURE.md`, and E2E transcripts per layout in `docs/e2e/`, recorded with real opencode and a scripted model (`scripts/e2e-transcript.ts`).
 
+### Distribution
+
+- The npm package is now `@supporterino/ai-factory`. The unscoped `ai-factory` on npm is an unrelated project. Run it with `npx @supporterino/ai-factory@0.2.0 init`; the command is still `ai-factory`.
+- MIT LICENSE added.
+- `prepack` builds the bundle, and the package ships only the bundle, docs and licences.
+- `init`, `update` and `detect --apply` refuse to downgrade a workspace a newer version installed (`--allow-downgrade` to override).
+
 ### Security
 
 - **Shell-policy and git hardening.** Fixes all enforcement bypasses from the 2026-10-26 audit (S1–S10, S12):

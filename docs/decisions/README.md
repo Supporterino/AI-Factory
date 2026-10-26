@@ -30,3 +30,4 @@ Short ADRs for every choice the build prompt did not lock. Format: Context / Dec
 | [0024](0024-tauri-profile.md)                   | Tauri v2 profile                                                    |
 | [0025](0025-grounded-standards.md)              | Standards are grounded in primary sources                           |
 | [0026](0026-hardening-and-sandbox.md)           | Enforcement hardening and the OS sandbox                            |
+| [0027](0027-distribution.md)                    | Distribution: package name, licence, build, no downgrades           |
