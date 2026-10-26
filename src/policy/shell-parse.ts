@@ -283,6 +283,9 @@ class Lexer {
 }
 
 const SKIP_WORDS = new Set([
+  "if",
+  "while",
+  "until",
   "then",
   "else",
   "elif",
@@ -383,6 +386,18 @@ class Parser {
         continue;
       }
       substitutions.push(...tok.subs);
+      if (words.length === 0 && tok.value === "function") {
+        // `function name [()] { …; }`: the name is not a command; the body is parsed next.
+        if (this.peek()?.t === "word") this.i++;
+        continue;
+      }
+      if (words.length === 0 && tok.value === "coproc") {
+        // `coproc cmd` or `coproc NAME { …; }`: skip the optional name before a brace group.
+        const next = this.tokens[this.i];
+        const after = this.tokens[this.i + 1];
+        if (next?.t === "word" && after?.t === "word" && after.value === "{") this.i++;
+        continue;
+      }
       if (words.length === 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tok.value)) assigns.push(tok.value);
       else if (words.length === 0 && SKIP_WORDS.has(tok.value)) continue;
       else words.push(tok.value);

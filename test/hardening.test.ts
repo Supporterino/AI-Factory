@@ -7,7 +7,7 @@ import { checkShell, type ShellContext } from "../src/policy/shell.ts";
  * enforcement layers when it was found. A finding's probes run as `test.failing` until its fix
  * lands and its id joins FIXED; from then on they must be blocked.
  */
-const FIXED = new Set<string>([]);
+const FIXED = new Set<string>(["S2", "S4"]);
 
 const WT = "/ws/.factory/worktrees/add-x/app/1.1";
 const FILES: Record<string, string> = {
@@ -91,6 +91,7 @@ const PROBES: Readonly<Record<string, readonly string[]>> = {
     "osascript -e 'do shell script \"git push\"'",
     "at now <<< 'git push'",
     "crontab f",
+    "awk -i inplace '{print}' ../x",
   ],
   // S5: git fetch refspecs delete or force branches.
   S5: [
@@ -119,7 +120,6 @@ const PROBES: Readonly<Record<string, readonly string[]>> = {
     "git format-patch -o .. HEAD~1",
     "git rm AGENTS.md",
     "git mv f .opencode/x",
-    "awk -i inplace '{print}' ../x",
   ],
   // S7: case variants on case-insensitive filesystems.
   S7: ["cat .ENV", "echo x >> .GIT/config", "cp f AGENTS.MD", "rm -rf .OPENCODE"],

@@ -42,7 +42,55 @@ function block(reason: string): never {
   throw new Blocked(reason);
 }
 
-const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "ash", "busybox"]);
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "ash"]);
+/** Commands xargs may run with arguments it reads from unknown input: they only read. */
+const XARGS_SAFE = new Set([
+  "grep",
+  "egrep",
+  "fgrep",
+  "rg",
+  "cat",
+  "head",
+  "tail",
+  "wc",
+  "ls",
+  "stat",
+  "file",
+  "echo",
+  "printf",
+  "basename",
+  "dirname",
+  "realpath",
+  "readlink",
+  "sort",
+  "uniq",
+  "md5sum",
+  "sha1sum",
+  "sha256sum",
+  "shasum",
+  "du",
+  "test",
+  "[",
+  "true",
+]);
+/** Run, schedule or script arbitrary commands in ways the parser cannot follow. */
+const COMMAND_RUNNERS = new Set([
+  "parallel",
+  "xjobs",
+  "osascript",
+  "at",
+  "batch",
+  "crontab",
+  "launchctl",
+  "systemd-run",
+  "expect",
+  "tmux",
+  "screen",
+  "ed",
+  "ex",
+]);
+const EDITORS = new Set(["vim", "vi", "nvim", "view", "gvim", "emacs"]);
+const AWKS = new Set(["awk", "gawk", "mawk", "nawk"]);
 const INTERPRETERS: Readonly<Record<string, readonly string[]>> = {
   python: ["-c"],
   python3: ["-c"],
@@ -428,7 +476,71 @@ function checkScriptFile(state: State, word: string, interpreter: "shell" | "oth
   }
 }
 
-function unwrap(state: State, words: string[]): string[] {
+/**
+ * `xargs` appends what it reads to the command. Literal input (`echo … |`) is appended and
+ * checked like any argument; unknown input may only feed read-only commands.
+ */
+function xargs(state: State, rest: readonly string[], stdin: string | undefined | null): string[] {
+  let i = 0;
+  let replace: string | undefined;
+  let argFile = false;
+  while (i < rest.length && (rest[i] ?? "").startsWith("-")) {
+    const a = rest[i] ?? "";
+    if (a === "--") {
+      i += 1;
+      break;
+    }
+    if (a === "-I" || a === "--replace") {
+      replace = rest[i + 1] ?? "{}";
+      i += 2;
+    } else if (a.startsWith("-I")) {
+      replace = a.slice(2);
+      i += 1;
+    } else if (a.startsWith("--replace=")) {
+      replace = a.slice("--replace=".length);
+      i += 1;
+    } else if (/^-i/.test(a)) {
+      replace = a.length > 2 ? a.slice(2) : "{}";
+      i += 1;
+    } else if (a === "-a" || a === "--arg-file" || a.startsWith("--arg-file=")) {
+      argFile = true;
+      i += a.includes("=") ? 1 : 2;
+    } else {
+      i +=
+        /^-[dEnLPs]$/.test(a) ||
+        /^--(delimiter|eof|max-args|max-lines|max-procs|max-chars)$/.test(a)
+          ? 2
+          : 1;
+    }
+  }
+  const cmd = rest.slice(i).length > 0 ? rest.slice(i) : ["echo"];
+  const base = (cmd[0] ?? "").slice((cmd[0] ?? "").lastIndexOf("/") + 1);
+  if (typeof stdin !== "string" || argFile) {
+    if (!XARGS_SAFE.has(base))
+      block(`xargs feeds input it cannot see to \`${base}\` (use find -exec or list the files)`);
+    return cmd;
+  }
+  if (replace !== undefined) {
+    const marker = replace;
+    for (const line of stdin.split("\n").filter((l) => l.trim() !== "")) {
+      checkSimple(
+        state,
+        {
+          kind: "simple",
+          assigns: [],
+          words: cmd.map((word) => word.split(marker).join(line)),
+          redirects: [],
+          substitutions: [],
+        },
+        undefined,
+      );
+    }
+    return [];
+  }
+  return [...cmd, ...stdin.split(/\s+/).filter(Boolean)];
+}
+
+function unwrap(state: State, words: string[], stdin: string | undefined | null): string[] {
   // Returns the words of the command that actually runs, checking wrappers on the way.
   let w = words;
   for (let guard = 0; guard < 20 && w.length > 0; guard++) {
@@ -469,13 +581,33 @@ function unwrap(state: State, words: string[]): string[] {
       w = rest.slice(i);
       continue;
     }
+    if (base === "busybox") {
+      w = rest; // `busybox <applet> …` runs the applet
+      continue;
+    }
     if (
-      ["nohup", "time", "command", "builtin", "exec", "chronic", "caffeinate", "unbuffer"].includes(
-        base,
-      )
+      [
+        "nohup",
+        "time",
+        "command",
+        "builtin",
+        "exec",
+        "chronic",
+        "caffeinate",
+        "unbuffer",
+        "setsid",
+      ].includes(base)
     ) {
       if (base === "command" && (rest[0] === "-v" || rest[0] === "-V")) return [];
-      w = rest.filter((x, idx) => !(idx === 0 && x.startsWith("-") && x.length <= 3));
+      let i = 0;
+      while (i < rest.length && (rest[i] ?? "").startsWith("-")) {
+        if (rest[i] === "--") {
+          i += 1;
+          break;
+        }
+        i += base === "exec" && rest[i] === "-a" ? 2 : 1; // `exec -a NAME`
+      }
+      w = rest.slice(i);
       continue;
     }
     if (
@@ -506,20 +638,7 @@ function unwrap(state: State, words: string[]): string[] {
       w = rest.slice(i);
       continue;
     }
-    if (base === "xargs") {
-      let i = 0;
-      while (i < rest.length && (rest[i] ?? "").startsWith("-")) {
-        const a = rest[i] ?? "";
-        i +=
-          /^-[IdEnLPsa]$/.test(a) ||
-          /^--(replace|delimiter|eof|max-args|max-lines|max-procs|max-chars|arg-file)$/.test(a)
-            ? 2
-            : 1;
-      }
-      w = rest.slice(i);
-      if (w.length === 0) return [];
-      continue;
-    }
+    if (base === "xargs") return xargs(state, rest, stdin);
     if (base === "watch") {
       let i = 0;
       while (i < rest.length && (rest[i] ?? "").startsWith("-"))
@@ -530,6 +649,80 @@ function unwrap(state: State, words: string[]): string[] {
     return w;
   }
   return w;
+}
+
+/** awk programs may run commands (`system`, pipes, `getline`) or write files (`>`). */
+function checkAwk(state: State, args: readonly string[]): void {
+  let program: string | undefined;
+  let inplace = false;
+  const files: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? "";
+    if (a === "-F" || a === "-v") i += 1;
+    else if (a === "-f" || a === "--file") {
+      program = state.ctx.readFile?.(resolvePath(state, args[i + 1] ?? "") ?? "") ?? "";
+      i += 1;
+    } else if (a === "-i" || a === "--include") {
+      if (args[i + 1] === "inplace") inplace = true;
+      i += 1;
+    } else if (a.startsWith("-")) continue;
+    else if (program === undefined) program = a;
+    else files.push(a);
+  }
+  const text = program ?? "";
+  if (/\bsystem\s*\(|\|\s*&?\s*["$a-zA-Z_]|"\s*\|&?\s*getline|\bgetline\b[^;]*</.test(text))
+    block("awk program runs commands (system, pipes or getline)");
+  if (/>{1,2}\s*(?!"\/dev\/(stderr|stdout|null)")["$a-zA-Z_]/.test(text.replace(/"[^"]*"/g, '""')))
+    block("awk program writes files (use shell redirection instead)");
+  const found = scanText(text);
+  if (found) block(found);
+  if (inplace) for (const f of files) checkWrite(state, f, "edits");
+}
+
+/** sed scripts may execute commands (`e`, `s///e`), write (`w`, `W`) or read (`r`, `R`) files. */
+function checkSed(state: State, args: readonly string[]): void {
+  const scripts: string[] = [];
+  let explicit = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? "";
+    if (a === "-e" || a === "--expression") {
+      scripts.push(args[i + 1] ?? "");
+      explicit = true;
+      i += 1;
+    } else if (a.startsWith("--expression=")) {
+      scripts.push(a.slice("--expression=".length));
+      explicit = true;
+    } else if (a === "-f" || a === "--file") {
+      scripts.push(state.ctx.readFile?.(resolvePath(state, args[i + 1] ?? "") ?? "") ?? "");
+      explicit = true;
+      i += 1;
+    }
+  }
+  if (!explicit) {
+    const first = positionals(args)[0];
+    if (first !== undefined) scripts.push(first);
+  }
+  for (const script of scripts) {
+    // s/…/…/flags: an `e` flag executes the pattern space; a `w` flag writes a file.
+    for (const m of script.matchAll(
+      /s(.)(?:\\.|(?!\1).)*\1(?:\\.|(?!\1).)*\1([a-zA-Z0-9]*)\s*([^;\n}]*)/g,
+    )) {
+      const flagText = m[2] ?? "";
+      if (flagText.includes("e")) block("sed s///e executes commands");
+      if (flagText.includes("w")) checkWrite(state, (m[3] ?? "").trim(), "sed writes");
+    }
+    const withoutS = script.replace(/s(.)(?:\\.|(?!\1).)*\1(?:\\.|(?!\1).)*\1[a-zA-Z0-9]*/g, "");
+    for (const m of withoutS.matchAll(
+      /(?:^|[;\n{}])\s*(?:[0-9$]+|\/[^/]*\/)?(?:\s*,\s*(?:[0-9$]+|\/[^/]*\/))?\s*!?\s*([ewWrR])(?:\s+([^;\n}]*))?/g,
+    )) {
+      const op = m[1];
+      const target = (m[2] ?? "").trim();
+      if (op === "e") block("sed e executes commands");
+      if ((op === "w" || op === "W") && target !== "") checkWrite(state, target, "sed writes");
+      if ((op === "r" || op === "R") && isSecretPath(target))
+        block(`sed reads secret file \`${target}\``);
+    }
+  }
 }
 
 function checkSimple(
@@ -543,7 +736,7 @@ function checkSimple(
     if (PROTECTED_ENV.test(a.split("=")[0] ?? ""))
       block(`overrides the factory's environment (${a.split("=")[0]})`);
   }
-  const words = unwrap(state, cmd.words);
+  const words = unwrap(state, cmd.words, stdin);
   if (words.length === 0) return;
   checkSecretArgs(words);
   const [head = "", ...args] = words;
@@ -579,14 +772,37 @@ function checkSimple(
   if (base === "set" && args.length === 0) block("set without arguments dumps the environment");
   if (ENV_DUMPS.has(base)) block("printing the environment may expose secrets");
 
+  const inputFile = cmd.redirects.find((r) => r.op === "<" || r.op === "<>")?.target;
   if (SHELLS.has(base)) {
-    const f = args.findIndex((a) => /^-[a-z]*c[a-z]*$/.test(a));
-    if (f !== -1) return checkScript(state, args[f + 1] ?? "");
-    const file = args.find((a) => !a.startsWith("-"));
-    if (file !== undefined) return checkScriptFile(state, file, "shell");
-    const text = heredoc ?? stdin;
-    if (text === null) block(`pipes generated input into ${base}`);
-    if (text !== undefined) checkScript(state, text);
+    // Options first: -c makes the first operand the script, -s reads the script from stdin.
+    let c = false;
+    let fromStdin = false;
+    let i = 0;
+    for (; i < args.length; i++) {
+      const a = args[i] ?? "";
+      if (a === "--" || a === "-") {
+        i += 1;
+        break;
+      }
+      if (a === "-o" || a === "+o" || a === "--rcfile" || a === "--init-file") {
+        i += 1;
+        continue;
+      }
+      if (/^[-+][A-Za-z]+$/.test(a)) {
+        if (a.startsWith("-") && a.includes("c")) c = true;
+        if (a.startsWith("-") && a.includes("s")) fromStdin = true;
+        continue;
+      }
+      if (a.startsWith("--")) continue;
+      break;
+    }
+    const operand = args[i];
+    if (c) return checkScript(state, operand ?? "");
+    if (!fromStdin && operand !== undefined) return checkScriptFile(state, operand, "shell");
+    if (heredoc !== undefined) return checkScript(state, heredoc);
+    if (inputFile !== undefined) return checkScriptFile(state, inputFile, "shell");
+    if (stdin === null) block(`pipes generated input into ${base}`);
+    if (stdin !== undefined) checkScript(state, stdin);
     return;
   }
   if (base === "source" || base === ".") {
@@ -597,15 +813,51 @@ function checkSimple(
   const inline = INTERPRETERS[base.replace(/\d+(\.\d+)*$/, "")] ?? INTERPRETERS[base];
   if (inline) {
     const i = args.findIndex((a) => inline.includes(a));
-    if (i !== -1) {
-      const found = scanText(args[i + 1] ?? "");
+    const joined = args.find((a) =>
+      inline.some((f) => f.startsWith("--") && a.startsWith(`${f}=`)),
+    );
+    if (i !== -1 || joined !== undefined) {
+      const code =
+        joined !== undefined ? joined.slice(joined.indexOf("=") + 1) : (args[i + 1] ?? "");
+      const found = scanText(code);
       if (found) block(found);
       return;
     }
     const file = args.find((a) => !a.startsWith("-"));
-    if (file !== undefined) checkScriptFile(state, file, "other");
-    else if (stdin === null) block(`pipes generated input into ${base}`);
+    if (file !== undefined) return checkScriptFile(state, file, "other");
+    // `python3 -`, `node -` or no operand: the program comes from stdin.
+    if (heredoc !== undefined) {
+      const found = scanText(heredoc);
+      if (found) block(found);
+      return;
+    }
+    if (inputFile !== undefined) return checkScriptFile(state, inputFile, "other");
+    if (stdin === null) block(`pipes generated input into ${base}`);
+    if (stdin !== undefined) {
+      const found = scanText(stdin);
+      if (found) block(found);
+    }
     return;
+  }
+  if (COMMAND_RUNNERS.has(base)) block(`${base} runs commands the factory cannot inspect`);
+  if (EDITORS.has(base) && args.some((a) => /^(-c|--cmd|-S|-s|\+.*|--eval|-l|--load|-x)$/.test(a)))
+    block(`${base} with commands is not allowed (edit files directly)`);
+  if (AWKS.has(base)) checkAwk(state, args);
+  if (base === "sed" || base === "gsed") checkSed(state, args);
+  if (base === "script") {
+    const c = args.findIndex((a) => a === "-c" || a === "--command");
+    if (c !== -1) return checkScript(state, args[c + 1] ?? "");
+  }
+  if (base === "fd" || base === "fdfind") {
+    const x = args.findIndex((a) => ["-x", "--exec", "-X", "--exec-batch"].includes(a));
+    if (x !== -1) {
+      checkSimple(
+        state,
+        { kind: "simple", assigns: [], words: args.slice(x + 1), redirects: [], substitutions: [] },
+        undefined,
+      );
+      return;
+    }
   }
   if (head.includes("/")) checkScriptFile(state, head, "shell");
 
