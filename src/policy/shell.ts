@@ -105,6 +105,18 @@ const DOWNLOADERS = new Set(["curl", "wget", "fetch", "http", "https", "aria2c"]
 const PRIVILEGE = new Set(["sudo", "doas", "su", "pkexec", "runas"]);
 const ENV_DUMPS = new Set(["printenv"]);
 const PROTECTED_ENV = /^(AI_FACTORY_|GIT_CONFIG_|GIT_DIR$|GIT_WORK_TREE$|GIT_INDEX_FILE$)/;
+/**
+ * Variables an agent may not set: they make trusted tools run other programs (git's
+ * GIT_EXTERNAL_DIFF/GIT_SSH_COMMAND, pagers, editors, dynamic loaders, BASH_ENV) or move their
+ * configuration (HOME, XDG_CONFIG_HOME, PATH).
+ */
+const DANGEROUS_ENV =
+  /^(GIT_|AI_FACTORY_|OPENCODE_|SSH_|LD_|DYLD_)|^(PAGER|MANPAGER|EDITOR|VISUAL|BASH_ENV|ENV|HOME|ZDOTDIR|XDG_CONFIG_HOME|XDG_DATA_HOME|PATH|PROMPT_COMMAND|SHELLOPTS|BASHOPTS|IFS|CDPATH|PS4)$/;
+
+function checkSetEnv(name: string): void {
+  if (PROTECTED_ENV.test(name)) block(`overrides the factory's environment (${name})`);
+  if (DANGEROUS_ENV.test(name)) block(`setting ${name} is not allowed (it changes what tools run)`);
+}
 const SAFE_WRITE_TARGETS = /^\/dev\/(null|stdout|stderr|tty|fd\/\d+)$/;
 
 /** Literal text checks for code we cannot parse (inline Python/Node, interpreter scripts). */
@@ -244,7 +256,6 @@ const GIT_READ_ONLY = new Set([
   "hash-object",
   "archive",
   "format-patch",
-  "difftool",
   "annotate",
   "patch-id",
   "fsck",
@@ -262,8 +273,38 @@ const GIT_LOCAL_WRITES = new Set([
   "reset",
   "checkout",
 ]);
+/** `git -c` keys that only change presentation; everything else can run programs or move refs. */
 const SAFE_GIT_CONFIG_KEYS =
-  /^(color\.|core\.quotepath$|advice\.|diff\.|log\.|format\.|pager\.|grep\.|status\.)/i;
+  /^(color\.[a-z.]+|core\.quotepath|advice\.[a-z]+|log\.(date|decorate|abbrevcommit|follow|showroot|mailmap)|format\.pretty|grep\.(linenumber|patterntype|extendedregexp|fullname)|status\.(short|branch|showuntrackedfiles|relativepaths)|diff\.(noprefix|mnemonicprefix|renames|algorithm|context|interhunkcontext|relative|statgraphwidth|colormoved|indentheuristic|suppressblankempty|ignoresubmodules))$/i;
+
+/** Subcommand options that run programs or write files outside the normal flow. */
+function checkGitOptions(state: State, sub: string, rest: readonly string[], f: Set<string>): void {
+  const has = (...names: string[]): boolean =>
+    names.some((n) => f.has(n) || rest.some((a) => a.startsWith(`${n}=`)));
+  if (has("--upload-pack", "--receive-pack", "--exec") || (sub === "ls-remote" && f.has("-u")))
+    block(
+      `git ${sub} with a program option (--upload-pack, --receive-pack, --exec) is not allowed`,
+    );
+  if (sub === "archive" && has("--remote")) block("git archive --remote is not allowed");
+  if (sub === "grep" && (has("--open-files-in-pager") || rest.some((a) => /^-[^-]*O/.test(a))))
+    block("git grep -O runs a pager program");
+  if (sub === "apply" && f.has("--unsafe-paths"))
+    block("git apply --unsafe-paths writes outside the repo");
+  // Options that write files: check where.
+  rest.forEach((a, i) => {
+    let target: string | undefined;
+    if (
+      a === "--output" ||
+      a === "--output-directory" ||
+      (sub === "format-patch" && a === "-o") ||
+      (sub === "archive" && a === "-o")
+    )
+      target = rest[i + 1];
+    else if (a.startsWith("--output=") || a.startsWith("--output-directory="))
+      target = a.slice(a.indexOf("=") + 1);
+    if (target !== undefined) checkWrite(state, target, `git ${sub} writes`);
+  });
+}
 
 function checkGit(state: State, args: readonly string[]): undefined {
   let i = 0;
@@ -278,7 +319,8 @@ function checkGit(state: State, args: readonly string[]): undefined {
       i += 2;
     } else if (a === "-c") {
       const kv = args[i + 1] ?? "";
-      if (!SAFE_GIT_CONFIG_KEYS.test(kv)) block(`git -c ${kv.split("=")[0]} is not allowed`);
+      const key = kv.split("=")[0] ?? "";
+      if (!SAFE_GIT_CONFIG_KEYS.test(key)) block(`git -c ${key} is not allowed`);
       i += 2;
     } else if (/^--(git-dir|work-tree|namespace|exec-path|config-env|super-prefix)/.test(a)) {
       block(`git ${a.split("=")[0]} is not allowed`);
@@ -293,6 +335,7 @@ function checkGit(state: State, args: readonly string[]): undefined {
   if (sub === undefined || sub === "--version" || sub === "--help") return;
   const f = flags(rest);
   const pos = positionals(rest);
+  checkGitOptions(state, sub, rest, f);
   switch (sub) {
     case "push":
       return block("git push is not allowed: the factory never pushes");
@@ -307,6 +350,21 @@ function checkGit(state: State, args: readonly string[]): undefined {
       return block(`git remote ${action} changes remotes`);
     }
     case "config": {
+      const writes = [
+        "--unset",
+        "--unset-all",
+        "--remove-section",
+        "--rename-section",
+        "--add",
+        "--replace-all",
+        "--edit",
+        "-e",
+      ];
+      if (
+        writes.some((w) => f.has(w)) ||
+        ["set", "unset", "rename-section", "remove-section", "edit"].includes(pos[0] ?? "")
+      )
+        return block("git config writes are not allowed");
       const reads = [
         "--get",
         "--get-all",
@@ -321,6 +379,25 @@ function checkGit(state: State, args: readonly string[]): undefined {
         return;
       return block("git config writes are not allowed");
     }
+    case "fetch": {
+      // Only `git fetch [options] [<remote>]`: refspecs can create, force or (with --prune) delete branches.
+      const forcing = ["-f", "--force", "-u", "--update-head-ok", "--refmap"];
+      if (forcing.some((x) => f.has(x)) || rest.some((a) => a.startsWith("--refmap")))
+        return block("git fetch with refspec or force options rewrites branches");
+      if (pos.length > 1)
+        return block("git fetch with a refspec writes branches (fetch a remote by name)");
+      const remote = pos[0];
+      if (
+        remote !== undefined &&
+        (remote === "." || /[:/+*]/.test(remote) || remote.startsWith("."))
+      )
+        return block(
+          "git fetch from a path or with a refspec is not allowed (fetch a remote by name)",
+        );
+      return;
+    }
+    case "difftool":
+      return block("git difftool runs external tools");
     case "reset":
       if (f.has("--hard") || f.has("--merge") || f.has("--keep") || f.has("--soft"))
         return block(`git reset ${[...f].join(" ")} rewrites the branch`);
@@ -571,8 +648,7 @@ function unwrap(state: State, words: string[], stdin: string | undefined | null)
           break;
         } else if (a.startsWith("-")) i += 1;
         else if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(a)) {
-          if (PROTECTED_ENV.test(a.split("=")[0] ?? ""))
-            block(`overrides the factory's environment (${a.split("=")[0]})`);
+          checkSetEnv(a.split("=")[0] ?? "");
           i += 1;
         } else break;
       }
@@ -732,10 +808,7 @@ function checkSimple(
 ): undefined {
   for (const sub of cmd.substitutions) checkScriptAst(state, sub);
   checkRedirects(state, cmd.redirects);
-  for (const a of cmd.assigns) {
-    if (PROTECTED_ENV.test(a.split("=")[0] ?? ""))
-      block(`overrides the factory's environment (${a.split("=")[0]})`);
-  }
+  for (const a of cmd.assigns) checkSetEnv(a.split("=")[0] ?? "");
   const words = unwrap(state, cmd.words, stdin);
   if (words.length === 0) return;
   checkSecretArgs(words);
@@ -764,9 +837,11 @@ function checkSimple(
   ) {
     if (args.length === 0 || args.every((a) => a.startsWith("-")))
       block(`${base} without names dumps the environment`);
-    for (const a of args)
-      if (PROTECTED_ENV.test(a.split("=")[0] ?? ""))
-        block(`changes the factory's environment (${a.split("=")[0]})`);
+    for (const a of args.filter((x) => !x.startsWith("-"))) {
+      const name = a.split("=")[0] ?? "";
+      if (base === "unset" ? PROTECTED_ENV.test(name) : DANGEROUS_ENV.test(name))
+        block(`changes the factory's environment (${name})`);
+    }
     return;
   }
   if (base === "set" && args.length === 0) block("set without arguments dumps the environment");

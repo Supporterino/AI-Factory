@@ -7,7 +7,7 @@ import { checkShell, type ShellContext } from "../src/policy/shell.ts";
  * enforcement layers when it was found. A finding's probes run as `test.failing` until its fix
  * lands and its id joins FIXED; from then on they must be blocked.
  */
-const FIXED = new Set<string>(["S2", "S4"]);
+const FIXED = new Set<string>(["S1", "S2", "S4", "S5", "S12"]);
 
 const WT = "/ws/.factory/worktrees/add-x/app/1.1";
 const FILES: Record<string, string> = {
@@ -43,6 +43,8 @@ const PROBES: Readonly<Record<string, readonly string[]>> = {
     "DYLD_INSERT_LIBRARIES=/tmp/x.dylib ls",
     "PATH=./bin:$PATH git status",
     "BASH_ENV=./x.sh bash -c true",
+    "git log --output=../../x",
+    "git format-patch -o .. HEAD~1",
   ],
   // S2: shell keywords parsed as the command name.
   S2: [
@@ -116,8 +118,6 @@ const PROBES: Readonly<Record<string, readonly string[]>> = {
     "unzip a.zip -d ..",
     "cp -t .. f",
     "sort -o ../x f",
-    "git log --output=../../x",
-    "git format-patch -o .. HEAD~1",
     "git rm AGENTS.md",
     "git mv f .opencode/x",
   ],

@@ -108,7 +108,7 @@ describe("evasions", () => {
   test.each([
     ["sh -c 'git push'", "git push"],
     ['bash -lc "git push origin HEAD"', "git push"],
-    ["env -i PATH=/usr/bin git push", "git push"],
+    ["env -i FOO=1 git push", "git push"],
     ["env -S 'git push'", "git push"],
     ["echo origin | xargs git push", "git push"],
     ["nohup git push &", "git push"],
