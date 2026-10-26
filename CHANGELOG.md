@@ -14,6 +14,7 @@ All notable changes per release. `ai-factory update` applies them to an installe
 - `ai-factory rollback`: restores the latest update backup, including the previous lock.
 - Approving a change snapshots its agent definitions and gate tables, so a forced update never changes a running change.
 - `docs/fleet-update.sh`: an example for updating many workspaces.
+- Tauri v2 language profile (`tauri`). It is detected from `tauri.conf.json`/`Tauri.toml` next to a `tauri` 2.x dependency. It runs the cargo gates in `src-tauri/` instead of the Rust profile (which also validates capabilities and the config), creates a missing `frontendDist` directory before compiling, and comes with its own standard. Existing workspaces get `.opencode/standards/tauri.md` on `update`; run `detect --apply` to add `tauri` to a repo.
 - `ai-factory doctor`: checks tool versions and lock drift, the install, submodules, clean trees, hooks, the resolved gate table with toolchain lookup, cache sizes, model availability, graph freshness and stale locks.
 - `README.md`, `ARCHITECTURE.md`, and E2E transcripts per layout in `docs/e2e/`, recorded with real opencode and a scripted model (`scripts/e2e-transcript.ts`).
 

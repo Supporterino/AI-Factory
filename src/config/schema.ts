@@ -6,7 +6,7 @@ export const CONFIG_SCHEMA_VERSION = 2;
 
 export const CONFIG_FILE = "factory.config.jsonc";
 
-export const LANGUAGES = ["typescript", "react", "python", "go", "rust", "helm"] as const;
+export const LANGUAGES = ["typescript", "react", "python", "go", "rust", "helm", "tauri"] as const;
 export const Language = z.enum(LANGUAGES);
 export type Language = z.infer<typeof Language>;
 

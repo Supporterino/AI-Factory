@@ -65,11 +65,31 @@ function isK8sManifest(root: string, rel: string): boolean {
   }
 }
 
+const TAURI_CONFIGS = new Set(["tauri.conf.json", "tauri.conf.json5", "Tauri.toml"]);
+
+/**
+ * Tauri v2 only: the `tauri` dependency's major version in the Cargo.toml next to the config,
+ * or (for `workspace = true` and the like) a config without the v1 keys `distDir`/`devPath`.
+ */
+function isTauriV2(root: string, dir: string, configPath: string): boolean {
+  const cargo = readText(root, dir === "." ? "Cargo.toml" : `${dir}/Cargo.toml`) ?? "";
+  const major =
+    cargo.match(/^\s*tauri\s*=\s*(?:\{[^}\n]*?version\s*=\s*)?"[\^~=<>]*(\d+)/m)?.[1] ??
+    cargo.match(
+      /^\[(?:[\w.-]+\.)?dependencies\.tauri\][^[]*?^\s*version\s*=\s*"[\^~=<>]*(\d+)/ms,
+    )?.[1];
+  if (major !== undefined) return major === "2";
+  const config = readText(root, configPath) ?? "";
+  return !/\bdistDir\b|\bdevPath\b/.test(config);
+}
+
 /**
  * Detects languages from manifests and markers:
  * - package.json → typescript (the TS/JS profile); a react dependency adds react
  * - pyproject.toml / requirements*.txt → python; go.mod → go; Cargo.toml → rust
  * - Chart.yaml or plain Kubernetes manifests → helm
+ * - tauri.conf.json / tauri.conf.json5 / Tauri.toml of a Tauri v2 app → tauri (with rust from
+ *   its Cargo.toml; the tauri profile runs the cargo gates there)
  */
 export function detectLanguages(root: string, files: readonly FileEntry[]): LanguageDetection {
   const byDir = new Map<string, Set<Language>>();
@@ -94,6 +114,8 @@ export function detectLanguages(root: string, files: readonly FileEntry[]): Lang
       mark(dir, "go");
     } else if (name === "Cargo.toml") {
       mark(dir, "rust");
+    } else if (TAURI_CONFIGS.has(name)) {
+      if (isTauriV2(root, dir, file.path)) mark(dir, "tauri");
     } else if (name === "Chart.yaml") {
       mark(dir, "helm");
     } else if (

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FactoryConfig, type FactoryConfigInput, type Language } from "../src/config/schema.ts";
@@ -63,6 +63,21 @@ describe("targets", () => {
     });
     const targets = findTargets(["typescript", "react"], worktreeFiles(dir));
     expect(targets.map((t) => `${t.profile.id}@${t.dir}`)).toEqual(["typescript@."]);
+  });
+
+  test("tauri supersedes rust in src-tauri; the frontend stays a typescript target", () => {
+    writeFiles(dir, {
+      "package.json": "{}",
+      "src-tauri/Cargo.toml": '[package]\nname = "app"\n',
+      "src-tauri/tauri.conf.json": "{}",
+      "crates/core/Cargo.toml": '[package]\nname = "core"\n',
+    });
+    const targets = findTargets(["typescript", "rust", "tauri"], worktreeFiles(dir));
+    expect(targets.map((t) => `${t.profile.id}@${t.dir}`)).toEqual([
+      "typescript@.",
+      "rust@crates/core",
+      "tauri@src-tauri",
+    ]);
   });
 
   test("Go modules stay separate; charts form one target with every top-most chart", () => {
@@ -228,6 +243,68 @@ describe("task mode", () => {
       { languages: ["rust"], mode: "task", changed: ["crates/core/src/lib.rs"] },
     );
     expect(commands(p)).toContain("testAffected@.: cargo test -p app-core (profile)");
+  });
+});
+
+describe("tauri gates", () => {
+  const app: Files = {
+    "package.json": "{}",
+    "src/main.ts": "export {};\n",
+    "src-tauri/Cargo.toml": '[package]\nname = "app"\n',
+    "src-tauri/tauri.conf.json": JSON.stringify({ build: { frontendDist: "../dist" } }),
+    "src-tauri/src/lib.rs": "pub fn run() {}\n",
+    "src-tauri/capabilities/default.json": "{}",
+  };
+
+  test("cargo gates run once, in src-tauri, after ensuring frontendDist", () => {
+    const p = plan(app, {
+      languages: ["typescript", "rust", "tauri"],
+      extra: { gates: { overrides: {}, scripts: {} } },
+    });
+    const tauri = p.gates.filter((g) => g.profile === "tauri");
+    expect(tauri.map((g) => `${g.type}@${g.cwd}`)).toEqual([
+      "format@src-tauri",
+      "lint@src-tauri",
+      "types@src-tauri",
+      "test@src-tauri",
+    ]);
+    expect(p.gates.some((g) => g.profile === "rust")).toBe(false);
+    expect(tauri.find((g) => g.type === "types")?.command).toEndWith("; cargo check --all-targets");
+    expect(tauri.find((g) => g.type === "format")?.command).toBe("cargo fmt --all --check");
+  });
+
+  test("a capability-only change re-runs the compile checks but selects no crate tests", () => {
+    const p = plan(app, {
+      languages: ["typescript", "rust", "tauri"],
+      mode: "task",
+      changed: ["src-tauri/capabilities/default.json"],
+      extra: { gates: { overrides: {}, scripts: {} } },
+    });
+    expect(p.gates.filter((g) => g.profile === "tauri").map((g) => g.type)).toEqual([
+      "format",
+      "lint",
+      "types",
+    ]);
+    expect(p.skipped.map((g) => `${g.type}@${g.cwd}: ${g.reason}`)).toContain(
+      "testAffected@src-tauri: skip: nothing affected",
+    );
+  });
+
+  test("the frontendDist step creates a missing dist dir and ignores URLs and other formats", async () => {
+    const types = plan(app, { languages: ["tauri"] }).gates.find((g) => g.type === "types");
+    const prelude = types?.command.replace("; cargo check --all-targets", "") ?? "";
+    const sh = (cwd: string) => Bun.spawnSync(["sh", "-c", prelude], { cwd }).exitCode;
+    expect(sh(join(dir, "src-tauri"))).toBe(0);
+    expect(existsSync(join(dir, "dist"))).toBe(true);
+
+    writeFiles(dir, {
+      "url/src-tauri/tauri.conf.json": JSON.stringify({ build: { frontendDist: "http://x" } }),
+      "toml/src-tauri/Tauri.toml": 'frontend-dist = "../out"\n',
+    });
+    expect(sh(join(dir, "url/src-tauri"))).toBe(0);
+    expect(existsSync(join(dir, "url/src-tauri/http:"))).toBe(false);
+    expect(sh(join(dir, "toml/src-tauri"))).toBe(0);
+    expect(existsSync(join(dir, "toml/out"))).toBe(false);
   });
 });
 

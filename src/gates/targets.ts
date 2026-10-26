@@ -57,7 +57,10 @@ export function findTargets(languages: readonly Language[], files: readonly stri
       }
     }
   }
-  return targets;
+  // A profile that supersedes another in the same directory runs instead of it.
+  return targets.filter(
+    (t) => !targets.some((o) => o.dir === t.dir && o.profile.supersedes?.includes(t.profile.id)),
+  );
 }
 
 /** Marker dirs per profile, used by installs (each package/module/chart installs on its own). */

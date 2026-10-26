@@ -60,6 +60,42 @@ describe("detectLanguages", () => {
     });
   });
 
+  test("tauri v2: the src-tauri dir adds tauri next to rust; v1 apps are not tauri", () => {
+    const app = {
+      "package.json": JSON.stringify({ dependencies: { react: "19", "@tauri-apps/api": "2" } }),
+      "src-tauri/Cargo.toml":
+        '[package]\nname = "app"\n\n[dependencies]\ntauri = { version = "2.9", features = [] }\n',
+      "src-tauri/tauri.conf.json": JSON.stringify({ build: { frontendDist: "../dist" } }),
+    };
+    expect(detectLanguages(...args(scan("tauri2", app)))).toEqual({
+      languages: ["typescript", "react", "rust", "tauri"],
+      subPaths: [{ path: "src-tauri", languages: ["rust", "tauri"] }],
+    });
+    const v1 = {
+      ...app,
+      "src-tauri/Cargo.toml": '[package]\nname = "app"\n\n[dependencies]\ntauri = "1.8"\n',
+    };
+    expect(detectLanguages(...args(scan("tauri1", v1))).languages).not.toContain("tauri");
+    // Workspace-inherited versions fall back to the config's shape.
+    const inherited = (config: object) => ({
+      ...app,
+      "src-tauri/Cargo.toml": "[dependencies.tauri]\nworkspace = true\n",
+      "src-tauri/tauri.conf.json": JSON.stringify(config),
+    });
+    expect(
+      detectLanguages(...args(scan("ws2", inherited({ build: { frontendDist: "../dist" } }))))
+        .languages,
+    ).toContain("tauri");
+    expect(
+      detectLanguages(...args(scan("ws1", inherited({ build: { distDir: "../dist" } })))).languages,
+    ).not.toContain("tauri");
+    const toml = {
+      "src-tauri/Cargo.toml": '[dependencies.tauri]\nversion = "2"\n',
+      "src-tauri/Tauri.toml": 'identifier = "com.example.app"\n',
+    };
+    expect(detectLanguages(...args(scan("toml", toml))).languages).toEqual(["rust", "tauri"]);
+  });
+
   test("a plain JS package uses the typescript profile; empty repo has no languages", () => {
     expect(detectLanguages(...args(scan("js", { "package.json": "{}" }))).languages).toEqual([
       "typescript",

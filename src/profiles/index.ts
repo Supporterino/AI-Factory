@@ -3,6 +3,7 @@ import helm from "../../templates/standards/helm.md" with { type: "text" };
 import python from "../../templates/standards/python.md" with { type: "text" };
 import react from "../../templates/standards/react.md" with { type: "text" };
 import rust from "../../templates/standards/rust.md" with { type: "text" };
+import tauri from "../../templates/standards/tauri.md" with { type: "text" };
 import typescript from "../../templates/standards/typescript.md" with { type: "text" };
 import type { GateType, Language } from "../config/schema.ts";
 
@@ -54,6 +55,8 @@ export interface Profile {
   readonly gates: Readonly<Record<GateType, readonly GateCandidate[]>>;
   /** Install step per marker dir: the first lockfile present wins. */
   readonly install: readonly { readonly lockfile: string; readonly command: string }[];
+  /** Profiles whose target in the same directory this one replaces (tauri runs the cargo gates). */
+  readonly supersedes?: readonly Language[];
 }
 
 const TS_TEST_GLOBS = [
@@ -148,6 +151,17 @@ const TS_BASE = {
   install: TS_INSTALL,
 } as const;
 
+const RUST_TEST_GLOBS = ["tests/*", "*/tests/*", "*/tests.rs", "benches/*", "*/benches/*"] as const;
+
+/**
+ * Tauri's `generate_context!` fails when `build.frontendDist` does not exist yet (a fresh
+ * worktree whose frontend was never built). An empty directory satisfies the compile and is
+ * invisible to git, so the gates stay check-only. Reads tauri.conf.json only; JSON5/TOML
+ * projects keep that directory themselves.
+ */
+const TAURI_DIST = `node -e 'const fs=require("fs");try{const d=JSON.parse(fs.readFileSync("tauri.conf.json","utf8")).build?.frontendDist;if(typeof d==="string"&&!/^[a-z]+:/i.test(d))fs.mkdirSync(d,{recursive:true})}catch{}'`;
+const withDist = (command: string): string => `${TAURI_DIST}; ${command}`;
+
 export const PROFILES: Readonly<Record<Language, Profile>> = {
   typescript: { id: "typescript", title: "TypeScript / JavaScript", prose: typescript, ...TS_BASE },
   react: { id: "react", title: "React", prose: react, ...TS_BASE },
@@ -214,7 +228,7 @@ export const PROFILES: Readonly<Record<Language, Profile>> = {
     id: "rust",
     title: "Rust",
     prose: rust,
-    testGlobs: ["tests/*", "*/tests/*", "*/tests.rs", "benches/*", "*/benches/*"],
+    testGlobs: RUST_TEST_GLOBS,
     markers: ["Cargo.toml"],
     targets: "dir",
     extensions: [".rs"],
@@ -255,6 +269,28 @@ export const PROFILES: Readonly<Record<Language, Profile>> = {
       testAffected: [{ command: "helm unittest {charts}" }],
     },
     install: [{ lockfile: "Chart.lock", command: "helm dependency build ." }],
+  },
+  tauri: {
+    id: "tauri",
+    title: "Tauri v2",
+    prose: tauri,
+    testGlobs: RUST_TEST_GLOBS,
+    // The src-tauri dir. The frontend is a separate typescript/react target.
+    markers: ["tauri.conf.json", "tauri.conf.json5", "Tauri.toml"],
+    targets: "dir",
+    // Capabilities and config are compiled in: a change to them re-runs the cargo gates.
+    extensions: [".rs", ".json", ".json5", ".toml"],
+    binDirs: [],
+    gates: {
+      format: [{ command: "cargo fmt --all --check" }],
+      // tauri-build validates the config and every capability's permissions at compile time.
+      lint: [{ command: withDist("cargo clippy --all-targets -- -D warnings") }],
+      types: [{ command: withDist("cargo check --all-targets") }],
+      test: [{ command: withDist("cargo test --workspace") }],
+      testAffected: [{ command: withDist("cargo test {crates}") }],
+    },
+    install: [{ lockfile: "Cargo.lock", command: "cargo fetch --locked" }],
+    supersedes: ["rust"],
   },
 };
 
