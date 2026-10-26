@@ -4,6 +4,7 @@ import { type Approval, approvalFile, readApproval, specHash } from "../approval
 import { PreconditionError } from "../errors.ts";
 import { git, gitOk } from "../exec.ts";
 import { commitPaths } from "../git/commit.ts";
+import { changeBranch, currentBranch } from "../git/repo.ts";
 import { checkDesign } from "../openspec/cli.ts";
 import { now, recordTask, TaskState } from "../state/run.ts";
 import type { Pipeline } from "./context.ts";
@@ -36,6 +37,14 @@ export async function approve(p: Pipeline, id: string): Promise<Approval> {
   if (approver === "")
     throw new PreconditionError("git user.email is not set; it records who approved");
 
+  // The spec is committed on the change's own branch, never on whatever is checked out.
+  const branch = await currentBranch(dir);
+  if (branch !== changeBranch(id)) {
+    throw new PreconditionError(
+      `the spec of ${id} must be committed on ${changeBranch(id)}, but ${dir} is on ${branch ?? "a detached HEAD"}`,
+      [`run \`ai-factory resume ${id}\` to branch first`],
+    );
+  }
   const path = `openspec/changes/${id}`;
   const specCommit =
     (await commitPaths(dir, [path], `docs(spec): ${id}`, { "Change-Id": id })) ??

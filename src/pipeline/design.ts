@@ -99,17 +99,29 @@ export async function intake(p: Pipeline, request: string): Promise<string> {
     usage: result.usage,
   });
 
+  const draft = await ensureDesignBranch(p, id);
+  p.out(`  change ${id}${draft ? ` (drafted in ${draft}; another change is active)` : ""}`);
+  return id;
+}
+
+/**
+ * The AI-repo branch the spec is written on (§7 step 1). Idempotent: a run whose branching
+ * failed after intake (a dirty checkout) branches on resume instead of designing on main.
+ */
+async function ensureDesignBranch(p: Pipeline, id: string): Promise<string | undefined> {
+  const run = p.run(id);
+  if (run.branches["."] !== undefined) return run.draft;
   const { base, draft } = await branchForDesign(p, id);
   await p.update(id, (d) => {
     d.branches["."] = { branch: changeBranch(id), base };
     if (draft !== undefined) d.draft = draft;
   });
-  p.out(`  change ${id}${draft ? ` (drafted in ${draft}; another change is active)` : ""}`);
-  return id;
+  return draft;
 }
 
 /** §7 step 2: explorers in parallel, then the architect, then validation with repair rounds. */
 export async function design(p: Pipeline, id: string): Promise<{ ok: boolean; issues: string[] }> {
+  await ensureDesignBranch(p, id);
   const run = p.run(id);
   const dir = specDir(p, run.draft);
   const repos = p

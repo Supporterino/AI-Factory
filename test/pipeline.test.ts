@@ -348,6 +348,28 @@ describe("pipeline: single repo", () => {
     expect(attempts[1]?.prompt).toContain("package.json: lint");
   });
 
+  test("if branching fails after intake, resume branches first and the spec never lands on main", async () => {
+    await withGates(passAll);
+    writeFileSync(join(fx.root, "dirty.txt"), "x\n");
+    await fixtureGit(fx.root, "add", "dirty.txt");
+    const runtime = new ScriptedRuntime(
+      factoryScript({ changeId: ID, summary: "Math helpers", repos: ["app"], tasks: SINGLE_TASKS }),
+    );
+    expect((await cliWith(runtime, fx.root, "run", "Add math helpers")).code).toBe(
+      ExitCode.Precondition,
+    );
+    await fixtureGit(fx.root, "commit", "-q", "-m", "chore: dirty");
+    expect((await cliWith(runtime, fx.root, "resume", ID)).code).toBe(ExitCode.Ok);
+    expect(await gitOut(fx.root, "branch", "--show-current")).toBe(`change/${ID}`);
+    expect((await cliWith(runtime, fx.root, "approve", ID, "--no-continue")).code).toBe(
+      ExitCode.Ok,
+    );
+    expect(await gitOut(fx.root, "log", "-1", "--format=%s", "main")).toBe("chore: dirty");
+    expect(await gitOut(fx.root, "log", "-1", "--format=%s", `change/${ID}`)).toBe(
+      `docs(spec): ${ID}`,
+    );
+  });
+
   test("the approval is voided by a spec edit and survives checkbox ticks", async () => {
     await withGates(passAll);
     const runtime = new ScriptedRuntime(
