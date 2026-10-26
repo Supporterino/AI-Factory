@@ -76,9 +76,11 @@ export interface MergeTaskInput {
  */
 export async function mergeTask(input: MergeTaskInput): Promise<MergeOutcome> {
   const wt = input.worktree.path;
-  const rebased = (await rebaseInProgress(wt))
-    ? await continueRebase(wt)
-    : await rebaseOnto(wt, changeBranch(input.id));
+  const resumed = await rebaseInProgress(wt);
+  let rebased = resumed ? await continueRebase(wt) : await rebaseOnto(wt, changeBranch(input.id));
+  // While the conflict was being resolved, other tasks may have merged: catch up (a no-op if
+  // nothing moved), or the fast-forward below would fail (audit P4).
+  if (rebased.ok && resumed) rebased = await rebaseOnto(wt, changeBranch(input.id));
   if (!rebased.ok) return { status: "conflict", conflicts: rebased.conflicts };
   if (!(await input.regate(wt))) return { status: "gates-failed" };
   const head = await fastForward(input.repoDir, input.id, input.worktree.branch);

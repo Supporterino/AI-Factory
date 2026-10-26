@@ -180,6 +180,31 @@ describe("task worktrees and the merge queue", () => {
     );
   });
 
+  test("a task merged while a conflict was being resolved does not break the merge (audit P4)", async () => {
+    const t1 = await task("1.1", "main.go", "package main\n// one\n", "Change main one");
+    const t2 = await task("1.2", "main.go", "package main\n// two\n", "Change main two");
+    const t3 = await task("1.3", "other.go", "package main\n", "Add other");
+    const regate = async () => true;
+    expect((await mergeTask({ repoDir: backend, id: "add-x", worktree: t1, regate })).status).toBe(
+      "merged",
+    );
+    expect((await mergeTask({ repoDir: backend, id: "add-x", worktree: t2, regate })).status).toBe(
+      "conflict",
+    );
+    // While the implementer resolves 1.2's conflict, 1.3 merges and moves change/add-x.
+    expect((await mergeTask({ repoDir: backend, id: "add-x", worktree: t3, regate })).status).toBe(
+      "merged",
+    );
+    writeFileSync(join(t2.path, "main.go"), "package main\n// one\n// two\n");
+    expect((await mergeTask({ repoDir: backend, id: "add-x", worktree: t2, regate })).status).toBe(
+      "merged",
+    );
+    expect(await gitOut(backend, "show", "change/add-x:other.go")).toBe("package main");
+    expect(await gitOut(backend, "show", "change/add-x:main.go")).toBe(
+      "package main\n// one\n// two",
+    );
+  });
+
   test("gates failing after the rebase keep the task unmerged", async () => {
     const t1 = await task("1.1", "a.go", "package main\n", "Add a");
     const before = await gitOut(backend, "rev-parse", "change/add-x");
