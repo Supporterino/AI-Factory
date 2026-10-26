@@ -11,6 +11,6 @@
   - They refuse when those paths already have uncommitted changes. `--no-commit` opts out.
   - The commit uses `--no-verify`: it is machine-generated, and user pre-commit hooks (formatters) would otherwise rewrite managed files and break their hashes.
 - **Block-managed files.** `AGENTS.md` and `.gitignore` are managed only between `ai-factory:start/end` markers. The lock hashes the block, and the rest of the file belongs to the user.
-- **Conflicts are checked before anything is written.** A file the factory never rendered is a conflict (`--force` overwrites). The one exception is files that `openspec init` creates in the same run, which the factory takes over (`openspec/config.yaml`).
+- **Conflicts are checked before anything is written.** A file the factory never rendered is a conflict (`--force` overwrites). OpenSpec's generated opencode commands and skills are rendered in a scratch directory and managed like the factory's own files (lock template `openspec-tools`). `openspec init` never runs in the workspace (audit P19). An edited copy from an older install, which has no lock entry, counts as the user's edit.
 - **No local state in the lock.** It holds pinned tool ranges, not the versions installed on one machine. Hook state is checked by `doctor`, not recorded.
 - **Graph.** `init` checks the Graphify version only. Building the graph joins `init` in slice 9.

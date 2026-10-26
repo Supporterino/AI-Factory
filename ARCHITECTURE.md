@@ -63,7 +63,7 @@ flowchart LR
 | ---------------------------------------------------------- | --------- | --------------------------------------------------------------------------------------- |
 | `factory.config.jsonc`                                     | yes       | `init`; you; `detect --apply`; `update` (migrations)                                    |
 | `factory.lock.json`                                        | yes       | `init`, `update`, `detect --apply` only                                                 |
-| `.opencode/` (agents, plugin, standards, schemas, add-ons) | yes       | managed files; `openspec init` (commands, skills)                                       |
+| `.opencode/` (agents, plugin, standards, schemas, add-ons) | yes       | managed files, including OpenSpec's generated commands and skills                       |
 | `AGENTS.md`, `.gitignore`                                  | yes       | your text plus a managed block between `ai-factory` markers                             |
 | `openspec/changes/<id>/`                                   | yes       | architect (spec), CLI (checkbox mirror, archive)                                        |
 | `.factory/runs/<id>.json`                                  | no        | CLI only: phase, tasks, attempts, history                                               |

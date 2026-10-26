@@ -14,7 +14,7 @@
 - **Design repair.** After the architect, the CLI runs `openspec validate --strict`, the proposal check (gap G7), the `tasks.md` parser and DAG validation. Problems go back to the same architect session, up to `gates.maxRetries` rounds; after that the change pauses in design.
 - **Approval.** Commits `docs(spec): <id>` (or reuses the last commit of the change folder) and records `{approver, specCommit, hash}`. Before implementation starts, the CLI re-checks the hash **and** that the spec commit is an ancestor of `change/<id>`.
 - **Context packs.** One architect session writes all missing packs after approval. A missing pack gets a deterministic fallback (task, metadata, spec text), and any pack is truncated to `contextPackMaxTokens` (estimated at 4 characters per token).
-- **Attempts.** Each attempt is a fresh session. Earlier work stays in the worktree, and the compacted gate output, reduced to what changed on retries, is the feedback.
+- **Attempts.** Each attempt is a fresh session. Earlier work stays in the worktree, and the full compacted gate output is the feedback, with a note on top when it repeats the previous attempt's. Diff-only feedback left fresh sessions without the error text (audit P1).
   - After the session, the CLI audits the worktree diff against the scope. Out-of-scope files are reverted and the attempt counts as a failure.
   - On a successful attempt the CLI commits: spec tasks get a Conventional type from the title, testers `test:`, follow-ups `fix:`.
   - A failed dependency install blocks the task without spending budget.
@@ -32,4 +32,3 @@
 
   Nothing is pushed.
 - **Interrupts.** SIGINT/SIGTERM abort the pipeline signal: the scheduler stops dispatching, sessions are interrupted, state stays resumable. The runtime is always closed and the driver released. Exit codes: 6 = paused or aborted, 4 = a precondition (e.g. the spec changed after approval).
-- **Contract check (step 9)** is a pass-through placeholder until slice 8.

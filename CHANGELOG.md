@@ -41,6 +41,13 @@ All notable changes per release. `ai-factory update` applies them to an installe
 
 ### Fixed
 
+- **Retries.** Every retry gets the full gate output; repeated failures no longer arrive as an empty note (audit P1).
+- **Abort.** `abort` stops a change in every phase, interrupts running agents, frees the workspace when the driver stops, and `resume` continues the change (P2).
+- **Branching.** If branching fails after intake, the next run branches first; the spec is only ever committed on `change/<id>` (P3).
+- **Merges.** A task whose conflict was resolved while another task merged now catches up instead of failing (P4).
+- **Server crashes.** A crashed opencode server is restarted. Server failures never spend retry budget, and the change pauses after three in a row (P5).
+- **OpenSpec files.** OpenSpec's opencode commands and skills are managed files: `init` and `update --tools` no longer overwrite your edits (P19).
+
 - The architect and tester agents get edit permissions for their own paths (change and context folders, test globs). Before, opencode's permission layer denied their writes.
 - Closing a change removes its agent snapshot and empty worktree folders, and `status` no longer lists the snapshot as a worktree.
 - Full-suite gate results are written to the change's log.

@@ -26,7 +26,7 @@
   - The update commit contains only install paths (ADR-0014).
   - Submodules are touched only for hook reinstalls, which are not versioned files.
   - `openspec/specs` and `openspec/changes` are never written, apart from the `.gitkeep` placeholders.
-- **`--tools`.** Re-runs `openspec init` (its opencode commands and skills are backed up), and runs a full graph rebuild after the commit when the lock's graph `schemaVersion` differs from the pinned Graphify's.
+- **`--tools`.** Regenerates OpenSpec's opencode commands and skills (in a scratch directory) and merges them like other managed files, and runs a full graph rebuild after the commit when the lock's graph `schemaVersion` differs from the pinned Graphify's.
 - **Fleet.** No fleet mode in the CLI. `docs/fleet-update.sh` loops over workspaces with a dry run and then the update, and reports what it skipped. It never pushes.
 - **Fixture snapshots.** `test/fixtures/make-install-snapshot.ts` stores each release's install (`install-<version>.json`). The upgrade test starts from the previous one.
 

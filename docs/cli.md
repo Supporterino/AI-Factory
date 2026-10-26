@@ -26,11 +26,14 @@ ai-factory init [--force] [--no-commit] [--no-graph] [--json]
 Installs or refreshes the factory. It runs these steps in order:
 1. Checks git, opencode, openspec and graphify against the pinned ranges. A missing or unsupported tool exits with 4 and prints its install command.
 2. Detects the workspace and writes `factory.config.jsonc` if there is none.
-3. Runs `openspec init --tools opencode` with a private config dir.
-4. Renders the managed files: agents, standards, schemas, `AGENTS.md` and `.gitignore` blocks, `.graphifyignore` and the OpenSpec `config.yaml`.
-5. Writes `factory.lock.json`.
-6. Installs `pre-push` hooks in the AI repo and every checked-out submodule.
-7. Commits the result.
+3. Renders the managed files:
+   - agents, standards and schemas;
+   - the `AGENTS.md` and `.gitignore` blocks and `.graphifyignore`;
+   - the OpenSpec `config.yaml`;
+   - OpenSpec's opencode commands and skills, which `openspec init --tools opencode` generates in a scratch directory. Your edits to them are kept like edits to any managed file.
+4. Writes `factory.lock.json`.
+5. Installs `pre-push` hooks in the AI repo and every checked-out submodule.
+6. Commits the result.
 
 Running it again on an unchanged workspace changes nothing.
 
@@ -55,7 +58,7 @@ Upgrades an installed workspace to the factory version you run, as one local com
   - files you deleted stay deleted (`--restore` recreates them);
   - paths in `unmanaged` are skipped.
 - Reinstalls the git hooks and warns when detection differs from the config.
-- `--tools` re-runs `openspec init` and rebuilds the graph when Graphify's format changed.
+- `--tools` regenerates OpenSpec's opencode commands and skills, merges them like other managed files, and rebuilds the graph when Graphify's format changed.
 
 It needs a clean AI repo. It refuses while a change is active, queued or paused with tasks; `--force` updates anyway, and those changes keep the agent and gate definitions they were approved with. Every file it may touch is backed up to `.factory/backups/<timestamp>/` first. A merge conflict leaves markers, commits nothing and exits 4: resolve and commit, or run `rollback`. Submodules (apart from hooks), `openspec/specs` and `openspec/changes` are never touched. See [CHANGELOG.md](../CHANGELOG.md) for what each version changes, and [fleet-update.sh](fleet-update.sh) for updating many workspaces.
 

@@ -29,7 +29,7 @@ bunx ai-factory@0.2.0 init
 
 `npx ai-factory@0.2.0 init` works too. To run it from a checkout of this repository instead, build it with `bun install && bun run build`, then run `node dist/cli.js` (or `npm link` it).
 
-`init` is idempotent. It detects the layout, languages and contracts, and writes `factory.config.jsonc` from what it found, so edit that file afterwards. It also renders the agents, plugin and standards into `.opencode/`, runs `openspec init`, installs the `pre-push` hooks, builds the graph, writes `factory.lock.json`, and commits it all as `chore(factory): init vX.Y.Z`. Then check the setup:
+`init` is idempotent. It detects the layout, languages and contracts, and writes `factory.config.jsonc` from what it found, so edit that file afterwards. It also renders the agents, plugin, standards and OpenSpec's commands and skills into `.opencode/`, installs the `pre-push` hooks, builds the graph, writes `factory.lock.json`, and commits it all as `chore(factory): init vX.Y.Z`. Then check the setup:
 
 ```bash
 ai-factory doctor

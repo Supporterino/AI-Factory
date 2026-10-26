@@ -8,7 +8,7 @@
   - A task is _in flight_ from dispatch until it merges or fails. Two in-flight tasks in one repo never have overlapping `touches`.
   - The exclusion lasts through the merge, so the second task starts from a tip that contains the first.
   - Overlap is a conservative glob test: it serialises when in doubt.
-- **Retry budget.** These count as failures: gate failures (including after a rebase), merge-conflict resolution attempts, and runner errors (an agent session that crashed). That keeps infrastructure failures from looping forever. Rate-limit waits and installs never count. A task fails when its failures exceed `gates.maxRetries` (3 retries after the first attempt). `blocked` (the agent cannot finish within its scope) fails at once.
+- **Retry budget.** These count as failures: gate failures (including after a rebase), merge-conflict resolution attempts, and runner errors (an agent session that crashed). Rate-limit waits and installs never count. Infrastructure failures (the agent server crashed or is unreachable: a `TransientError`) do not count either. The task goes back to `pending`; after 3 in a row the change pauses instead of looping (audit P5). A task fails when its failures exceed `gates.maxRetries` (3 retries after the first attempt). `blocked` (the agent cannot finish within its scope) fails at once.
 - **Conflicts.**
   - The first conflict counts against the budget and gets one resolution attempt.
   - If that does not work, the task's worktree and branch are dropped and it is requeued as **serial**: it runs from scratch, alone in its repo, and blocks other tasks there while it waits, so it cannot starve.
@@ -21,6 +21,8 @@
   - Its `pid` is the current driver: `null` when nobody drives it, and replaceable when the process is dead (stale-lock recovery).
   - A second change gets `busy` and waits in `.factory/queue.json` in approval order.
 - **Abort.**
-  - Sets `abortRequested` and `phase: aborted`, removes the change from the queue and releases the lock. Branches and worktrees stay.
-  - The driver notices within a second (or before its next agent call), interrupts agents and leaves unfinished tasks `pending`.
+  - Sets `abortRequested` and `phase: aborted` and removes the change from the queue. Branches and worktrees stay.
+  - The driver notices it in **every** phase: before each step, before each agent call, and within a second during one (running sessions are interrupted). It never overwrites `aborted`, leaves unfinished tasks `pending`, and frees the workspace when it stops (audit P2).
+  - `abort` releases the lock itself only when no live process drives the change.
+  - `resume` of an aborted change clears the flag and continues.
   - Abort does **not** start the next queued change: the user decides when.
