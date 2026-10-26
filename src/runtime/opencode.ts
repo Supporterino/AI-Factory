@@ -6,8 +6,10 @@ import { join } from "node:path";
 import type { FactoryConfig } from "../config/schema.ts";
 import { agentGitEnv } from "../git/hooks.ts";
 import { appendLog } from "../logs/log.ts";
+import { sandboxEnabled } from "../policy/sandbox.ts";
 import { sessionContextFile } from "../policy/session-files.ts";
 import { toolBin } from "../tools.ts";
+import { PROVIDER_ENV, scrubList } from "./credentials.ts";
 import type { AgentRuntime, AgentSession, SessionSpec, Turn, Usage } from "./types.ts";
 
 /**
@@ -40,34 +42,6 @@ const PROXY_ENV = [
   "no_proxy",
 ];
 
-/** Credential variables per provider id; only providers named in `models` get theirs. */
-const PROVIDER_ENV: Readonly<Record<string, readonly string[]>> = {
-  anthropic: ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"],
-  openai: ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID"],
-  google: ["GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY"],
-  "google-vertex": [
-    "GOOGLE_APPLICATION_CREDENTIALS",
-    "GOOGLE_CLOUD_PROJECT",
-    "GOOGLE_CLOUD_LOCATION",
-    "VERTEX_LOCATION",
-  ],
-  "amazon-bedrock": [
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
-    "AWS_SESSION_TOKEN",
-    "AWS_REGION",
-    "AWS_PROFILE",
-    "AWS_BEARER_TOKEN_BEDROCK",
-  ],
-  azure: ["AZURE_API_KEY", "AZURE_RESOURCE_NAME", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"],
-  openrouter: ["OPENROUTER_API_KEY"],
-  mistral: ["MISTRAL_API_KEY"],
-  groq: ["GROQ_API_KEY"],
-  xai: ["XAI_API_KEY"],
-  deepseek: ["DEEPSEEK_API_KEY"],
-  gitlab: ["GITLAB_TOKEN", "GITLAB_INSTANCE_URL"],
-};
-
 export function providersOf(config: FactoryConfig): string[] {
   const models = Object.values(config.models).filter((m): m is string => typeof m === "string");
   return [...new Set(models.map((m) => m.split("/")[0] ?? ""))].filter(Boolean);
@@ -95,6 +69,9 @@ export function serverEnv(
     OPENCODE_PASSWORD: password,
     OPENCODE_DB: join(root, ".factory", "opencode", "opencode.db"),
     AI_FACTORY_WORKSPACE: root,
+    // The plugin removes these from every shell it lets run, and sandboxes the shell.
+    AI_FACTORY_SCRUB: scrubList().join(","),
+    AI_FACTORY_SANDBOX: sandboxEnabled(config.security.sandbox) ? "seatbelt" : "off",
     AI_FACTORY_GRAPH: join(root, "graphify-out", "graph.json"),
     NO_COLOR: "1",
   };

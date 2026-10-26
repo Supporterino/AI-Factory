@@ -68,6 +68,8 @@ ${contracts}
   },
   "logs": { "retentionDays": 14, "redact": true },
   "graph": { "exclude": ${json(DEFAULT_GRAPH_EXCLUDE)} },
+  // Agent shells and gates run in an OS sandbox where available ("auto"; macOS sandbox-exec).
+  "security": { "sandbox": "auto" },
 
   // Managed files the factory must never overwrite (workspace-relative paths).
   "unmanaged": []

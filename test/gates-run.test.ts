@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ExitCode } from "../src/cli/exit-codes.ts";
 import { FactoryConfig, type FactoryConfigInput } from "../src/config/schema.ts";
@@ -102,6 +102,28 @@ describe("runGates (single repo, override commands)", () => {
     expect(await gitOut(fx.root, "status", "--porcelain")).toBe("M src/sum.ts");
   });
 
+  test("gates run without credentials, with pushes blocked, and (macOS) sandboxed", async () => {
+    process.env.ANTHROPIC_API_KEY = "sk-test";
+    mkdirSync(join(fx.root, ".factory"), { recursive: true });
+    try {
+      const report = await run({
+        format: `test "$AI_FACTORY_AGENT" = 1 && test -z "$ANTHROPIC_API_KEY"`,
+        lint: "git config --get-regexp '^url\\.ai-factory-push-blocked' >/dev/null",
+        types: process.platform === "darwin" ? "! touch .factory/gate-was-here" : "true",
+        testAffected: "true",
+      });
+      expect(report.results.map((r) => [r.type, r.status])).toEqual([
+        ["format", "pass"],
+        ["lint", "pass"],
+        ["types", "pass"],
+        ["testAffected", "pass"],
+      ]);
+      expect(existsSync(join(fx.root, ".factory/gate-was-here"))).toBe(false);
+    } finally {
+      delete process.env.ANTHROPIC_API_KEY;
+    }
+  });
+
   test("a gate that commits is undone too", async () => {
     const head = await gitOut(fx.root, "rev-parse", "HEAD");
     const report = await run({
@@ -110,7 +132,10 @@ describe("runGates (single repo, override commands)", () => {
       types: "true",
       testAffected: "true",
     });
-    expect(report.results.find((r) => r.type === "format")?.status).toBe("not-check-only");
+    // Sandboxed (macOS) the commit cannot even be written; elsewhere it is undone.
+    expect(["not-check-only", "fail"]).toContain(
+      report.results.find((r) => r.type === "format")?.status ?? "",
+    );
     expect(await gitOut(fx.root, "rev-parse", "HEAD")).toBe(head);
     expect(await gitOut(fx.root, "status", "--porcelain")).toBe("M src/sum.ts");
   });

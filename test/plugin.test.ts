@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -102,7 +104,10 @@ beforeAll(async () => {
     setup: (ctx: unknown) => Promise<void>;
   };
   expect(plugin.id).toBe("ai-factory");
-  await plugin.setup({ tool: { hook: (name: string, cb: Hook) => void hooks.set(name, cb) } });
+  await plugin.setup({
+    tool: { hook: (name: string, cb: Hook) => void hooks.set(name, cb) },
+    shell: { hook: (name: string, cb: Hook) => void hooks.set(`shell.${name}`, cb) },
+  });
   delete process.env.AI_FACTORY_WORKSPACE;
 });
 afterAll(() => rmSync(ws, { recursive: true, force: true }));
@@ -115,8 +120,49 @@ describe("plugin bundle", () => {
 });
 
 describe("plugin guards", () => {
-  test("ignores agents that are not factory agents", async () => {
-    expect(await call("whatever", "build", "shell", { command: "git push" })).toBeUndefined();
+  test("refuses agents that are not factory agents", async () => {
+    expect(await call("whatever", "build", "shell", { command: "ls" })).toContain(
+      "does not run on the factory's server",
+    );
+  });
+
+  test("shells: only guarded commands spawn, without credentials, sandboxed", async () => {
+    const create = hooks.get("shell.create.before") as unknown as (e: {
+      command: string;
+      shell?: string;
+      env?: Record<string, string | undefined>;
+    }) => unknown;
+    expect(() => create({ command: "id", env: {} })).toThrow("only through a factory agent");
+
+    process.env.AI_FACTORY_SCRUB = "ANTHROPIC_API_KEY";
+    process.env.AI_FACTORY_SANDBOX = process.platform === "darwin" ? "seatbelt" : "off";
+    try {
+      // A write the parser cannot see; the sandbox must stop it.
+      const command = `echo inside > ok.txt; python3 -c "open('../escape.txt','w').write('x')"`;
+      expect(await call("impl", "implementer-app", "shell", { command })).toBeUndefined();
+      const event = {
+        command,
+        shell: "/bin/sh",
+        env: { PATH: "/usr/bin:/bin", OPENCODE_PASSWORD: "pw", ANTHROPIC_API_KEY: "k" } as Record<
+          string,
+          string | undefined
+        >,
+      };
+      create(event);
+      expect(event.env).toEqual({ PATH: "/usr/bin:/bin" });
+      // The same command again needs its own guard pass.
+      expect(() => create({ command, env: {} })).toThrow("only through a factory agent");
+      if (process.platform === "darwin") {
+        expect(event.command).toStartWith("exec '/usr/bin/sandbox-exec' -p");
+        spawnSync("/bin/sh", ["-c", event.command], { cwd: wt });
+        expect(existsSync(join(wt, "ok.txt"))).toBe(true);
+        expect(existsSync(join(wt, "..", "escape.txt"))).toBe(false);
+        rmSync(join(wt, "ok.txt"));
+      }
+    } finally {
+      delete process.env.AI_FACTORY_SCRUB;
+      delete process.env.AI_FACTORY_SANDBOX;
+    }
   });
 
   test("refuses factory agents without a session context", async () => {

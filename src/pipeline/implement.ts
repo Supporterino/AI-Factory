@@ -14,6 +14,7 @@ import { PreconditionError } from "../errors.ts";
 import { git, gitOk } from "../exec.ts";
 import { changedFiles } from "../gates/affected.ts";
 import { changedSinceLastAttempt } from "../gates/compact.ts";
+import { changedGateDefinitions } from "../gates/definitions.ts";
 import { installDeps } from "../gates/install.ts";
 import { resolveGates } from "../gates/resolve.ts";
 import { type GateReport, runGates } from "../gates/run.ts";
@@ -394,6 +395,20 @@ export class PipelineTaskRunner implements TaskRunner {
         status: "gate-failed",
         output: `edits outside your scope were reverted:\n${violations.join("\n")}`,
       };
+    }
+    // The gates check the work as the repo defined them when the change started.
+    const changeBase = this.p.run(this.id).branches[task.repo]?.base;
+    if (changeBase !== undefined) {
+      const names = Object.values(this.p.config.gates.scripts).filter(
+        (n): n is string => typeof n === "string",
+      );
+      const redefined = await changedGateDefinitions(dir, changeBase, names);
+      if (redefined.length > 0) {
+        return {
+          status: "gate-failed",
+          output: `you changed how your work is checked; revert these gate definitions:\n${redefined.join("\n")}`,
+        };
+      }
     }
     const report = await this.#gates(task, dir);
     if (!report.passed) {

@@ -151,6 +151,11 @@ export const DEFAULT_GRAPH_EXCLUDE = [
   "graphify-out/**",
 ] as const;
 
+const SecurityConfig = z.strictObject({
+  /** OS sandbox for agent shells and gates: "auto" (macOS sandbox-exec when present) or "off". */
+  sandbox: z.enum(["auto", "off"]).default("auto"),
+});
+
 const GraphConfig = z.strictObject({
   exclude: z.array(z.string().min(1)).default([...DEFAULT_GRAPH_EXCLUDE]),
 });
@@ -168,6 +173,7 @@ const FactoryConfigBase = z.strictObject({
   addons: z.strictObject({ ponytail: PonytailConfig.prefault({}) }).prefault({}),
   logs: LogsConfig.prefault({}),
   graph: GraphConfig.prefault({}),
+  security: SecurityConfig.prefault({}),
   /** Managed files (workspace-relative) the factory must never overwrite on update. */
   unmanaged: z.array(RelPath).default([]),
 });

@@ -26,6 +26,13 @@ describe.skipIf(!enabled)("OpencodeRuntime against real opencode", () => {
     stub = startStubModel([
       { tool: "shell", input: { command: "sh -c 'git push origin main'" } },
       { tool: "shell", input: { command: "echo $AI_FACTORY_GRAPH" } },
+      { tool: "shell", input: { command: "echo pw=[$OPENCODE_PASSWORD]" } },
+      {
+        tool: "shell",
+        input: {
+          command: `python3 -c "open('.factory/tamper.json','w').write('x')"; echo exit=$?`,
+        },
+      },
       {
         text: 'Done.\n```json\n{"status":"done","task":"1.1","filesChanged":[],"decisions":["probe"],"risks":[],"openQuestions":[]}\n```',
       },
@@ -101,6 +108,12 @@ describe.skipIf(!enabled)("OpencodeRuntime against real opencode", () => {
     expect(log).toContain("git push is not allowed");
     // The shell saw the factory env; the stub received the tool result.
     expect(JSON.stringify(stub.requests)).toContain("graphify-out/graph.json");
+    // Shells lose the server password; on macOS they run sandboxed (no writes to .factory).
+    expect(JSON.stringify(stub.requests)).toContain("pw=[]");
+    if (process.platform === "darwin") {
+      expect(existsSync(join(fx.root, ".factory/tamper.json"))).toBe(false);
+      expect(JSON.stringify(stub.requests)).toContain("exit=1");
+    }
     // The model came from the session create call, not the agent frontmatter default.
     expect(JSON.stringify(stub.requests.at(-1))).toContain("claude-stub");
   }, 120_000);

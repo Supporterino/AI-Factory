@@ -72,7 +72,7 @@ describe("doctor", () => {
     expect(res.out).toContain("✓ reviewer: anthropic/claude-opus-5-5");
     expect(res.out).toContain("! graph: not built yet");
     expect(res.out).toMatch(/app format\s+true {2}\(override\)/);
-    expect(res.out).toContain("0 problem(s), 1 warning(s)");
+    expect(res.out).toContain("0 problem(s)");
 
     const json = await report(root);
     expect(json.gates.map((g) => g.type)).toEqual(["format", "lint", "types", "test"]);

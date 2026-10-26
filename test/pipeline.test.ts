@@ -316,6 +316,35 @@ describe("pipeline: single repo", () => {
     expect(await gitOut(fx.root, "log", `change/${ID}`, "--format=%s")).not.toContain("sneaky");
   });
 
+  test("a task that rewrites a gate script fails until it reverts it", async () => {
+    await withGates({ format: "true", types: "true", testAffected: "true" }); // lint: package.json
+    const runtime = new ScriptedRuntime(
+      factoryScript({
+        changeId: ID,
+        summary: "Math helpers",
+        repos: ["app"],
+        tasks: SINGLE_TASKS.map((t) =>
+          t.id === "1.2" ? { ...t, touches: [...t.touches, "package.json"] } : t,
+        ),
+        implement: (task, call) => {
+          if (task.id !== "1.2" || call.prompt.includes("previous attempt failed"))
+            return undefined;
+          const pkg = JSON.parse(readFileSync(join(call.directory, "package.json"), "utf8"));
+          pkg.scripts.lint = "true";
+          return {
+            edits: { [task.file]: task.content, "package.json": JSON.stringify(pkg, null, 2) },
+            handoff: { task: task.id },
+          };
+        },
+      }),
+    );
+    await cliWith(runtime, fx.root, "run", "Add math helpers");
+    await cliWith(runtime, fx.root, "approve", ID);
+    const attempts = runtime.calls.filter((c) => c.prompt.startsWith("Task 1.2:"));
+    expect(attempts[1]?.prompt).toContain("revert these gate definitions");
+    expect(attempts[1]?.prompt).toContain("package.json: lint");
+  });
+
   test("the approval is voided by a spec edit and survives checkbox ticks", async () => {
     await withGates(passAll);
     const runtime = new ScriptedRuntime(

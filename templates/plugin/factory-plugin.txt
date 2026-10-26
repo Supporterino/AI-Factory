@@ -1,8 +1,8 @@
 // ai-factory opencode plugin — generated from src/plugin/entry.ts; do not edit.
 // @bun
 // src/plugin/entry.ts
-import { existsSync as existsSync3, readFileSync as readFileSync2, statSync as statSync3 } from "fs";
-import { isAbsolute as isAbsolute3, join as join6, relative as relative3, resolve as resolve4 } from "path";
+import { existsSync as existsSync4, readFileSync as readFileSync3, statSync as statSync3 } from "fs";
+import { isAbsolute as isAbsolute4, join as join7, relative as relative3, resolve as resolve5 } from "path";
 
 // src/approval/approval.ts
 import { createHash } from "crypto";
@@ -209,8 +209,130 @@ function realPathOf(abs, depth = 0) {
   return abs;
 }
 
+// src/policy/sandbox.ts
+import { existsSync as existsSync3, readFileSync as readFileSync2 } from "fs";
+import { isAbsolute, join as join4, resolve as resolve2 } from "path";
+var SANDBOX_EXEC = "/usr/bin/sandbox-exec";
+var HOME_WRITE_DENY = [
+  ".zshrc",
+  ".zshenv",
+  ".zprofile",
+  ".zlogin",
+  ".bashrc",
+  ".bash_profile",
+  ".bash_login",
+  ".profile",
+  ".gitconfig",
+  ".config/git",
+  ".config/fish",
+  ".ssh",
+  ".npmrc",
+  ".config/opencode",
+  ".local/share/opencode",
+  ".opencode",
+  "Library/LaunchAgents",
+  ".config/autostart",
+  ".config/systemd",
+  ".local/bin",
+  "bin",
+  ".bun/bin",
+  ".cargo/bin",
+  "go/bin"
+];
+var SYSTEM_WRITE_DENY = ["/opt/homebrew", "/usr/local/bin", "/usr/local/sbin"];
+var HOME_READ_DENY = [
+  ".ssh",
+  ".aws",
+  ".azure",
+  ".kube",
+  ".gnupg",
+  ".config/gcloud",
+  ".config/gh",
+  ".config/op",
+  ".local/share/opencode",
+  ".docker/config.json",
+  ".netrc",
+  ".npmrc",
+  ".pypirc",
+  ".git-credentials",
+  ".vault-token",
+  ".pgpass",
+  ".cargo/credentials",
+  ".cargo/credentials.toml",
+  ".terraform.d/credentials.tfrc.json",
+  "Library/Keychains"
+];
+var sbString = (s) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
+var subpath = (p) => `(subpath ${sbString(realPathOf(p))})`;
+function seatbeltProfile(policy) {
+  const home = policy.home;
+  const lines = [
+    "(version 1)",
+    "(allow default)",
+    `(deny file-write* ${subpath(policy.workspace)})`
+  ];
+  if (policy.writable.length > 0)
+    lines.push(`(allow file-write* ${policy.writable.map(subpath).join(" ")})`);
+  if ((policy.readOnly ?? []).length > 0)
+    lines.push(`(deny file-write* ${(policy.readOnly ?? []).map(subpath).join(" ")})`);
+  if ((policy.writableInside ?? []).length > 0)
+    lines.push(`(allow file-write* ${(policy.writableInside ?? []).map(subpath).join(" ")})`);
+  if (home !== undefined) {
+    lines.push(`(deny file-write* ${HOME_WRITE_DENY.map((p) => subpath(join4(home, p))).join(" ")})`);
+    lines.push(`(deny file-read* ${HOME_READ_DENY.map((p) => subpath(join4(home, p))).join(" ")})`);
+  }
+  lines.push(`(deny file-write* ${SYSTEM_WRITE_DENY.map(subpath).join(" ")})`);
+  lines.push('(deny process-exec (regex #"/git-credential-[^/]*$"))');
+  lines.push('(deny network-outbound (remote tcp "*:22"))');
+  return lines.join(`
+`);
+}
+var shQuote = (s) => `'${s.replace(/'/g, "'\\''")}'`;
+function sandboxCommand(profile, shell, command) {
+  return `exec ${shQuote(SANDBOX_EXEC)} -p ${shQuote(profile)} ${shQuote(shell)} -c ${shQuote(command)}`;
+}
+function gitWritableDirs(worktree) {
+  const dotGit = join4(worktree, ".git");
+  let gitDir = dotGit;
+  try {
+    const text = readFileSync2(dotGit, "utf8");
+    const m = text.match(/^gitdir:\s*(.+)$/m);
+    if (m?.[1])
+      gitDir = isAbsolute(m[1].trim()) ? m[1].trim() : resolve2(worktree, m[1].trim());
+  } catch {
+    return [join4(dotGit, "index"), join4(dotGit, "index.lock"), join4(dotGit, "objects")];
+  }
+  let common = gitDir;
+  try {
+    const rel = readFileSync2(join4(gitDir, "commondir"), "utf8").trim();
+    common = isAbsolute(rel) ? rel : resolve2(gitDir, rel);
+  } catch {}
+  return [gitDir, join4(common, "objects")];
+}
+function protectedInWorktree(worktree) {
+  return [
+    ".git",
+    ".opencode",
+    ".factory",
+    "AGENTS.md",
+    "factory.config.jsonc",
+    "factory.lock.json",
+    "openspec/specs",
+    ".gitmodules"
+  ].map((p) => join4(worktree, p));
+}
+function checkoutPolicy(workspace, dir, extra = [], home = process.env.HOME) {
+  return {
+    workspace,
+    writable: [dir],
+    readOnly: protectedInWorktree(dir),
+    writableInside: [...gitWritableDirs(dir), ...extra],
+    ...home === undefined ? {} : { home }
+  };
+}
+
 // src/policy/scope.ts
-import { isAbsolute, normalize, relative, resolve as resolve2 } from "path";
+import { isAbsolute as isAbsolute2, normalize, relative, resolve as resolve3 } from "path";
 
 // src/tasks/glob.ts
 var cache = new Map;
@@ -286,9 +408,9 @@ var architectDirs = (changeId) => [
 ];
 var IMPLEMENTING_ROLES = new Set(["implementer", "tester"]);
 function checkEdit(ctx, path, approval) {
-  const abs = normalize(isAbsolute(path) ? path : resolve2(ctx.directory, path));
+  const abs = normalize(isAbsolute2(path) ? path : resolve3(ctx.directory, path));
   const rel = relative(ctx.directory, abs);
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+  if (rel === "" || rel.startsWith("..") || isAbsolute2(rel)) {
     return {
       allowed: false,
       reason: `\`${path}\` is outside your ${ctx.role === "architect" ? "workspace" : "worktree"}`
@@ -340,11 +462,11 @@ function patchPaths(patchText) {
 }
 
 // src/policy/session-files.ts
-import { join as join4 } from "path";
-var sessionContextFile = (workspace, sessionId) => join4(workspace, ".factory", "sessions", `${sessionId}.json`);
+import { join as join5 } from "path";
+var sessionContextFile = (workspace, sessionId) => join5(workspace, ".factory", "sessions", `${sessionId}.json`);
 
 // src/policy/shell.ts
-import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, join as join5, normalize as normalize2, relative as relative2, resolve as resolve3 } from "path";
+import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute3, join as join6, normalize as normalize2, relative as relative2, resolve as resolve4 } from "path";
 
 // src/policy/shell-parse.ts
 class ShellParseError extends Error {
@@ -820,14 +942,14 @@ function resolvePath(state, word) {
   });
   if (w.includes("$"))
     return;
-  if (isAbsolute2(w))
+  if (isAbsolute3(w))
     return normalize2(w);
-  return state.cwd === undefined ? undefined : normalize2(resolve3(state.cwd, w));
+  return state.cwd === undefined ? undefined : normalize2(resolve4(state.cwd, w));
 }
 var real = (state, abs) => state.ctx.realpath?.(abs) ?? abs;
 var within = (abs, dir) => {
   const rel = relative2(dir, abs);
-  return rel === "" || !rel.startsWith("..") && !isAbsolute2(rel);
+  return rel === "" || !rel.startsWith("..") && !isAbsolute3(rel);
 };
 function tempDirs(state) {
   return ["/tmp", "/private/tmp", state.ctx.env?.TMPDIR].filter((d) => !!d).flatMap((d) => [normalize2(d), real(state, normalize2(d))]);
@@ -1229,7 +1351,7 @@ function checkRm(state, args) {
     const abs = resolvePath(state, t);
     if (abs === undefined)
       return block(`rm \`${t}\` depends on an unknown variable or directory`);
-    const where = locate(state, join5(real(state, dirname2(abs)), basename2(abs)));
+    const where = locate(state, join6(real(state, dirname2(abs)), basename2(abs)));
     if (where.rel === undefined) {
       if (!where.temp)
         block(`rm \`${t}\` is outside the session directory`);
@@ -1245,14 +1367,14 @@ function checkLn(state, args) {
   const symbolic = flags(args).has("-s") || flags(args).has("--symbolic");
   const dir = optionValues(args, "t", ["--target-directory"])[0];
   const p = positionals(args).filter((x) => x !== dir);
-  const pairs = dir !== undefined ? p.map((t) => ({ target: t, link: join5(dir, basename2(t)) })) : p.length === 1 ? [{ target: p[0] ?? "", link: basename2(p[0] ?? "") }] : p.slice(0, -1).map((t) => ({
+  const pairs = dir !== undefined ? p.map((t) => ({ target: t, link: join6(dir, basename2(t)) })) : p.length === 1 ? [{ target: p[0] ?? "", link: basename2(p[0] ?? "") }] : p.slice(0, -1).map((t) => ({
     target: t,
-    link: p.length > 2 ? join5(p.at(-1) ?? "", basename2(t)) : p.at(-1) ?? ""
+    link: p.length > 2 ? join6(p.at(-1) ?? "", basename2(t)) : p.at(-1) ?? ""
   }));
   for (const { target, link } of pairs) {
     checkWrite(state, link, "ln creates");
     const linkAbs = resolvePath(state, link);
-    const targetAbs = symbolic && !isAbsolute2(target) && !target.startsWith("~") && !target.startsWith("$") ? linkAbs === undefined ? undefined : resolve3(dirname2(linkAbs), target) : resolvePath(state, target);
+    const targetAbs = symbolic && !isAbsolute3(target) && !target.startsWith("~") && !target.startsWith("$") ? linkAbs === undefined ? undefined : resolve4(dirname2(linkAbs), target) : resolvePath(state, target);
     if (targetAbs === undefined)
       return block(`ln target \`${target}\` depends on an unknown variable`);
     const where = locate(state, targetAbs);
@@ -1952,7 +2074,7 @@ function readText(abs) {
   try {
     if (statSync3(abs).size > MAX_SCRIPT_BYTES)
       return;
-    const text = readFileSync2(abs, "utf8");
+    const text = readFileSync3(abs, "utf8");
     return text.includes("\x00") ? undefined : text;
   } catch {
     return;
@@ -1962,7 +2084,7 @@ var pinned = new Map;
 function loadContext(workspace, sessionID) {
   let raw;
   try {
-    raw = readFileSync2(sessionContextFile(workspace, sessionID), "utf8");
+    raw = readFileSync3(sessionContextFile(workspace, sessionID), "utf8");
   } catch {
     return;
   }
@@ -1993,17 +2115,17 @@ function checkEditReal(ctx, path, approved) {
   const verdict = checkEdit(ctx, path, approved);
   if (!verdict.allowed)
     throw new Refused(verdict.reason);
-  const abs = isAbsolute3(path) ? path : resolve4(ctx.directory, path);
+  const abs = isAbsolute4(path) ? path : resolve5(ctx.directory, path);
   const realDir = realPathOf(ctx.directory);
   const realAbs = realPathOf(abs);
   const rel = relative3(realDir, realAbs);
-  if (rel === "" || rel.startsWith("..") || isAbsolute3(rel))
+  if (rel === "" || rel.startsWith("..") || isAbsolute4(rel))
     throw new Refused(`\`${path}\` resolves outside your directory through a symlink`);
-  const real2 = checkEdit(ctx, join6(ctx.directory, rel), approved);
+  const real2 = checkEdit(ctx, join7(ctx.directory, rel), approved);
   if (!real2.allowed)
     throw new Refused(`${real2.reason} (through a symlink at \`${path}\`)`);
 }
-var isSecretReal = (directory, path) => isSecretPath(path) || isSecretPath(realPathOf(isAbsolute3(path) ? path : resolve4(directory, path)));
+var isSecretReal = (directory, path) => isSecretPath(path) || isSecretPath(realPathOf(isAbsolute4(path) ? path : resolve5(directory, path)));
 
 class Refused extends Error {
   constructor(reason) {
@@ -2024,7 +2146,7 @@ function guard(workspace, event) {
     case "shell": {
       const command = field(input, "command") ?? "";
       const workdir = field(input, "workdir");
-      const cwd = workdir === undefined ? ctx.directory : resolve4(ctx.directory, workdir);
+      const cwd = workdir === undefined ? ctx.directory : resolve5(ctx.directory, workdir);
       const root = ctx.role === "architect" ? ctx.workspace : ctx.directory;
       if (!`${cwd}/`.startsWith(`${root}/`) && cwd !== root)
         throw new Refused(`workdir ${workdir} is outside your directory`);
@@ -2033,12 +2155,13 @@ function guard(workspace, event) {
         root,
         env: process.env,
         readFile: readText,
-        exists: (abs) => existsSync3(abs),
+        exists: (abs) => existsSync4(abs),
         realpath: realPathOf,
         workspace: ctx.workspace
       });
       if (!verdict.allowed)
         throw new Refused(verdict.reason);
+      approveShell(command, ctx);
       return { ctx };
     }
     case "edit":
@@ -2056,7 +2179,7 @@ function guard(workspace, event) {
       const path = field(input, "path", "filePath") ?? "";
       if (isSecretReal(ctx.directory, path))
         throw new Refused(`\`${path}\` is a secret file`);
-      const abs = isAbsolute3(path) ? path : join6(ctx.directory, path);
+      const abs = isAbsolute4(path) ? path : join7(ctx.directory, path);
       try {
         const st = statSync3(abs);
         const stamp = `${st.mtimeMs}:${st.size}`;
@@ -2089,15 +2212,47 @@ var summarize = (input) => {
   }
   return out;
 };
+var approvedShells = new Map;
+function approveShell(command, ctx) {
+  approvedShells.set(command, [...approvedShells.get(command) ?? [], ctx]);
+}
+function sandboxPolicy(workspace, ctx) {
+  if (ctx.role === "implementer" || ctx.role === "tester")
+    return checkoutPolicy(workspace, ctx.directory);
+  const home2 = process.env.HOME;
+  const writable = ctx.role === "architect" ? [
+    join7(ctx.directory, "openspec", "changes", ctx.changeId),
+    join7(workspace, ".factory", "context", ctx.changeId)
+  ] : [];
+  return { workspace, writable, ...home2 === undefined ? {} : { home: home2 } };
+}
+function onShellCreate(workspace, event) {
+  const queue = approvedShells.get(event.command);
+  const ctx = queue?.shift();
+  if (queue !== undefined && queue.length === 0)
+    approvedShells.delete(event.command);
+  if (ctx === undefined)
+    throw new Refused("shell commands run only through a factory agent's shell tool");
+  const scrub = (process.env.AI_FACTORY_SCRUB ?? "").split(",").filter(Boolean);
+  if (event.env !== undefined) {
+    for (const name of ["OPENCODE_PASSWORD", "OPENCODE_SERVER_PASSWORD", ...scrub])
+      delete event.env[name];
+  }
+  if (process.env.AI_FACTORY_SANDBOX === "seatbelt") {
+    const shell = typeof event.shell === "string" && event.shell.startsWith("/") ? event.shell : "/bin/bash";
+    event.command = sandboxCommand(seatbeltProfile(sandboxPolicy(workspace, ctx)), shell, event.command);
+  }
+}
 var entry_default = {
   id: "ai-factory",
   async setup(ctx) {
     const workspace = process.env.AI_FACTORY_WORKSPACE;
     if (workspace === undefined)
       return;
+    await ctx.shell?.hook("create.before", (event) => onShellCreate(workspace, event));
     await ctx.tool.hook("execute.before", (event) => {
       if (!isFactoryAgent(event.agent))
-        return;
+        throw new Refused(`agent \`${event.agent}\` does not run on the factory's server`);
       let changeId = "unknown";
       try {
         const { ctx: session, note } = guard(workspace, event);

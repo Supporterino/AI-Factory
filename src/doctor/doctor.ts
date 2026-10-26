@@ -11,6 +11,7 @@ import { prePushState } from "../git/hooks.ts";
 import { dirtyPaths } from "../git/repo.ts";
 import { graphStatus } from "../graph/graph.ts";
 import { buildLock, type Lock, readLock } from "../lock/lock.ts";
+import { sandboxEnabled } from "../policy/sandbox.ts";
 import { parseScript, type Script } from "../policy/shell-parse.ts";
 import { PROFILES } from "../profiles/index.ts";
 import { serverEnv } from "../runtime/opencode.ts";
@@ -530,6 +531,27 @@ function checkChanges(c: Checks, root: string): void {
   if (queue.length > 0) c.add("ok", "queue", queue.join(", "));
 }
 
+function checkSandbox(c: Checks, config: FactoryConfig): void {
+  c.in("security");
+  if (config.security.sandbox === "off")
+    c.add(
+      "warn",
+      "sandbox",
+      "off: agent shells and gates run unsandboxed",
+      'set security.sandbox to "auto"',
+    );
+  else if (sandboxEnabled(config.security.sandbox))
+    c.add("ok", "sandbox", "agent shells and gates run under macOS sandbox-exec");
+  else
+    c.add(
+      "warn",
+      "sandbox",
+      `no OS sandbox on ${process.platform} yet: the shell parser, plugin, audit and git layers still apply`,
+      "run the factory on macOS for the sandbox (ADR-0026)",
+    );
+  c.in("install");
+}
+
 export async function runDoctor(root: string): Promise<DoctorReport> {
   const c = new Checks("tools");
   const lock = readLock(root);
@@ -549,6 +571,7 @@ export async function runDoctor(root: string): Promise<DoctorReport> {
     return { checks: c.list, gates: [], uninitialised };
   }
   c.add("ok", "config", `schemaVersion ${config.schemaVersion}, layout ${config.layout}`);
+  checkSandbox(c, config);
   checkManaged(c, root, config);
   const repos = await checkRepos(c, root, config, uninitialised);
   const gates = checkGates(c, root, config, repos);

@@ -3,6 +3,8 @@ import { newShortcuts } from "../addons/shortcuts.ts";
 import type { FactoryConfig, GateType, RepoConfig } from "../config/schema.ts";
 import { exec } from "../exec.ts";
 import { dependentFiles } from "../graph/graph.ts";
+import { checkoutPolicy, sandboxArgv, sandboxEnabled, seatbeltProfile } from "../policy/sandbox.ts";
+import { agentProcessEnv } from "../runtime/credentials.ts";
 import { changedFiles } from "./affected.ts";
 import { compactOutput } from "./compact.ts";
 import { changedSince, restore, snapshot } from "./guard.ts";
@@ -65,16 +67,30 @@ const TEST_GATES: ReadonlySet<GateType> = new Set(["test", "testAffected"]);
 async function runOne(input: RunGatesInput, gate: ResolvedGate): Promise<GateResult> {
   const before = await snapshot(input.worktree);
   const bins = gate.binDirs.map((b) => join(input.worktree, b));
+  // Gates run code the agents wrote: no credentials, pushes blocked, sandboxed where possible.
   const env = {
+    ...agentProcessEnv(),
     ...cacheEnv(input.root, input.repo.name),
     ...QUIET_ENV,
     PATH: [...bins, process.env.PATH ?? ""].join(delimiter),
   };
-  const res = await exec(["sh", "-c", gate.command], {
-    cwd: join(input.worktree, gate.cwd),
-    env,
-    timeoutMs: input.timeoutMs ?? 15 * 60_000,
-  });
+  const argv = ["sh", "-c", gate.command];
+  const res = await exec(
+    sandboxEnabled(input.config.security.sandbox)
+      ? sandboxArgv(
+          seatbeltProfile(
+            checkoutPolicy(input.root, input.worktree, [join(input.root, ".factory", "cache")]),
+          ),
+          argv,
+        )
+      : argv,
+    {
+      cwd: join(input.worktree, gate.cwd),
+      env,
+      replaceEnv: true,
+      timeoutMs: input.timeoutMs ?? 15 * 60_000,
+    },
+  );
   const base = {
     type: gate.type,
     cwd: gate.cwd,

@@ -17,6 +17,12 @@ import { appendLog } from "../logs/log.ts";
 import { isSecretPath } from "../policy/paths.ts";
 import { realPathOf } from "../policy/realpath.ts";
 import {
+  checkoutPolicy,
+  type SandboxPolicy,
+  sandboxCommand,
+  seatbeltProfile,
+} from "../policy/sandbox.ts";
+import {
   checkEdit,
   parseSessionContext,
   patchPaths,
@@ -36,12 +42,26 @@ interface ToolAfterEvent extends ToolEvent {
   readonly status: "completed" | "error";
 }
 
+/** What opencode is about to spawn for a shell (`shell` hook `create.before`, mutable). */
+interface ShellCreateEvent {
+  command: string;
+  cwd?: string;
+  shell?: unknown;
+  env?: Record<string, string | undefined>;
+}
+
 interface PluginContext {
   readonly tool: {
     hook(name: "execute.before", cb: (e: ToolEvent) => Promise<void> | void): Promise<void> | void;
     hook(
       name: "execute.after",
       cb: (e: ToolAfterEvent) => Promise<void> | void,
+    ): Promise<void> | void;
+  };
+  readonly shell?: {
+    hook(
+      name: "create.before",
+      cb: (e: ShellCreateEvent) => Promise<void> | void,
     ): Promise<void> | void;
   };
 }
@@ -157,6 +177,7 @@ function guard(workspace: string, event: ToolEvent): { ctx: SessionContext; note
         workspace: ctx.workspace,
       });
       if (!verdict.allowed) throw new Refused(verdict.reason);
+      approveShell(command, ctx);
       return { ctx };
     }
     case "edit":
@@ -213,14 +234,67 @@ const summarize = (input: unknown): unknown => {
   return out;
 };
 
+/** Shell commands the guard allowed, waiting for opencode to spawn them (FIFO per text). */
+const approvedShells = new Map<string, SessionContext[]>();
+
+function approveShell(command: string, ctx: SessionContext): void {
+  approvedShells.set(command, [...(approvedShells.get(command) ?? []), ctx]);
+}
+
+/** What a session's programs may write: its worktree, or for the architect its two folders. */
+function sandboxPolicy(workspace: string, ctx: SessionContext): SandboxPolicy {
+  if (ctx.role === "implementer" || ctx.role === "tester")
+    return checkoutPolicy(workspace, ctx.directory);
+  const home = process.env.HOME;
+  const writable =
+    ctx.role === "architect"
+      ? [
+          join(ctx.directory, "openspec", "changes", ctx.changeId),
+          join(workspace, ".factory", "context", ctx.changeId),
+        ]
+      : [];
+  return { workspace, writable, ...(home === undefined ? {} : { home }) };
+}
+
+/**
+ * Every shell opencode spawns: it must be a command the guard allowed (opencode's REST shell
+ * API is refused), it loses the server password and credentials, and it runs sandboxed.
+ */
+function onShellCreate(workspace: string, event: ShellCreateEvent): void {
+  const queue = approvedShells.get(event.command);
+  const ctx = queue?.shift();
+  if (queue !== undefined && queue.length === 0) approvedShells.delete(event.command);
+  if (ctx === undefined)
+    throw new Refused("shell commands run only through a factory agent's shell tool");
+  const scrub = (process.env.AI_FACTORY_SCRUB ?? "").split(",").filter(Boolean);
+  if (event.env !== undefined) {
+    for (const name of ["OPENCODE_PASSWORD", "OPENCODE_SERVER_PASSWORD", ...scrub])
+      delete event.env[name];
+  }
+  if (process.env.AI_FACTORY_SANDBOX === "seatbelt") {
+    const shell =
+      typeof event.shell === "string" && event.shell.startsWith("/") ? event.shell : "/bin/bash";
+    event.command = sandboxCommand(
+      seatbeltProfile(sandboxPolicy(workspace, ctx)),
+      shell,
+      event.command,
+    );
+  }
+}
+
 export default {
   id: "ai-factory",
   async setup(ctx: PluginContext): Promise<void> {
     const workspace = process.env.AI_FACTORY_WORKSPACE;
     if (workspace === undefined) return;
 
+    await ctx.shell?.hook("create.before", (event) => onShellCreate(workspace, event));
+
     await ctx.tool.hook("execute.before", (event) => {
-      if (!isFactoryAgent(event.agent)) return;
+      // The factory's server runs factory agents only (anyone holding the password could
+      // otherwise start an unguarded built-in agent).
+      if (!isFactoryAgent(event.agent))
+        throw new Refused(`agent \`${event.agent}\` does not run on the factory's server`);
       let changeId = "unknown";
       try {
         const { ctx: session, note } = guard(workspace, event);

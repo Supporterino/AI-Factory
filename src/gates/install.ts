@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { RepoConfig } from "../config/schema.ts";
 import { exec } from "../exec.ts";
 import { profilesFor } from "../profiles/index.ts";
+import { agentProcessEnv } from "../runtime/credentials.ts";
 import { installDirs, worktreeFiles } from "./targets.ts";
 
 /**
@@ -51,7 +52,9 @@ export async function installDeps(
   timeoutMs = 15 * 60_000,
 ): Promise<InstallStep[]> {
   const files = worktreeFiles(worktree);
-  const env = { ...cacheEnv(root, repo.name), ...QUIET_ENV };
+  // Installs run lockfile scripts: no model keys or forge tokens, pushes blocked. Registry
+  // credentials (~/.npmrc) stay usable, so installs are not sandboxed.
+  const env = { ...agentProcessEnv(), ...cacheEnv(root, repo.name), ...QUIET_ENV };
   const steps: InstallStep[] = [];
   const done = new Set<string>();
   for (const profile of profilesFor(repo.languages)) {
@@ -72,6 +75,7 @@ export async function installDeps(
       const res = await exec(["sh", "-c", step.command], {
         cwd: join(worktree, dir),
         env,
+        replaceEnv: true,
         timeoutMs,
       });
       steps.push({
