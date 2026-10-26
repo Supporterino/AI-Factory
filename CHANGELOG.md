@@ -2,6 +2,16 @@
 
 All notable changes per release. `ai-factory update` applies them to an installed workspace (see [docs/cli.md](docs/cli.md#update)).
 
+## 0.3.0
+
+### Minor Changes
+
+- 7d6bb18: Add config schema v3: project instructions, skills and MCP permissions, custom agents with path routing, per-repo and per-agent models, conditional/generated gates, generated/CRD/IPC/custom contracts, Swift, `refine`/`run --interactive`, `quick`, gitmoji commits, legacy setup archiving and release/CI detection. Existing v2 configs keep working and `update` migrates them to v3.
+
+### Patch Changes
+
+- c0937d5: Ship `dist/package.json` with the CLI bundle so Node 20 parses `dist/cli.js` as ESM instead of failing with `Cannot use import statement outside a module`.
+
 ## 0.2.0
 
 ### Breaking (handled by `update`)
