@@ -54,14 +54,3 @@ export function compactOutput(raw: string, maxLines: number): string {
   const shown = selected.slice(0, maxLines - 1);
   return [...shown, `… ${selected.length - shown.length} more lines`].join("\n");
 }
-
-/**
- * For a retry: lines of the new compacted output that were not in the previous attempt's,
- * so the agent sees what changed. Falls back to the full output when everything is new.
- */
-export function changedSinceLastAttempt(previous: string, current: string): string {
-  const before = new Set(previous.split("\n"));
-  const fresh = current.split("\n").filter((l) => !before.has(l));
-  if (fresh.length === 0) return "(same failures as the previous attempt)";
-  return fresh.length === current.split("\n").length ? current : fresh.join("\n");
-}

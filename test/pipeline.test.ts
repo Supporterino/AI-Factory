@@ -248,9 +248,12 @@ describe("pipeline: single repo", () => {
     );
     expect(attempts).toHaveLength(4);
     expect(attempts[1]?.prompt).toContain("The previous attempt failed with");
-    expect(attempts[1]?.prompt).toContain("[lint]");
+    // Every attempt is a fresh session: each one needs the real gate output (audit P1).
+    for (const a of attempts.slice(1)) expect(a.prompt).toContain("[lint]");
+    expect(attempts[2]?.prompt).toContain("same failures as the previous attempt");
     const report = readFileSync(join(fx.root, ".factory/reports", `${ID}-paused.md`), "utf8");
     expect(report).toContain("- Failed: 1.1");
+    expect(report).toContain("[lint]");
     expect(report).toContain(`ai-factory retry ${ID} --task <task>`);
 
     fixed = true;

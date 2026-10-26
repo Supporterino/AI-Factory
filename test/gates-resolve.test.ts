@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FactoryConfig, type FactoryConfigInput, type Language } from "../src/config/schema.ts";
 import { globToRegExp, isTestFile } from "../src/gates/affected.ts";
-import { changedSinceLastAttempt, compactOutput } from "../src/gates/compact.ts";
+import { compactOutput } from "../src/gates/compact.ts";
 import { type GatePlan, resolveGates } from "../src/gates/resolve.ts";
 import { findTargets, worktreeFiles } from "../src/gates/targets.ts";
 import { PROFILES } from "../src/profiles/index.ts";
@@ -346,10 +346,5 @@ describe("compactOutput", () => {
 
   test("falls back to the tail when nothing looks like a failure", () => {
     expect(compactOutput("a\nb\nc\nd", 2)).toBe("c\nd");
-  });
-
-  test("retries see only new lines", () => {
-    expect(changedSinceLastAttempt("x\ny", "x\nz")).toBe("z");
-    expect(changedSinceLastAttempt("x", "x")).toBe("(same failures as the previous attempt)");
   });
 });

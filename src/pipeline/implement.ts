@@ -13,7 +13,6 @@ import type { FactoryConfig } from "../config/schema.ts";
 import { PreconditionError } from "../errors.ts";
 import { git, gitOk } from "../exec.ts";
 import { changedFiles } from "../gates/affected.ts";
-import { changedSinceLastAttempt } from "../gates/compact.ts";
 import { changedGateDefinitions } from "../gates/definitions.ts";
 import { installDeps } from "../gates/install.ts";
 import { resolveGates } from "../gates/resolve.ts";
@@ -205,6 +204,12 @@ function gateCommands(p: Pipeline, task: TaskState, worktree: string): string[] 
 }
 
 /** The real task runner: worktree, agent session, scope audit, gates, commit, merge. */
+const REPEAT_NOTE = "(same failures as the previous attempt: your last change did not fix them)";
+
+/** Whether a failed attempt reproduced the previous attempt's gate output. */
+const isRepeat = (previous: string | undefined, output: string): boolean =>
+  previous !== undefined && previous.replace(`${REPEAT_NOTE}\n`, "") === output;
+
 export class PipelineTaskRunner implements TaskRunner {
   readonly #lastRegate = new Map<string, GateReport>();
 
@@ -418,7 +423,8 @@ export class PipelineTaskRunner implements TaskRunner {
         .join("\n\n");
       return {
         status: "gate-failed",
-        output: ctx.feedback ? changedSinceLastAttempt(ctx.feedback, output) : output,
+        // Every attempt is a fresh session: it needs the whole output, not a diff (audit P1).
+        output: isRepeat(ctx.feedback, output) ? `${REPEAT_NOTE}\n${output}` : output,
       };
     }
     // Follow-up kinds have a fixed commit type; spec tasks derive it from the title.
