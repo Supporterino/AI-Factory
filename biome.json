@@ -5,6 +5,7 @@
     "ignoreUnknown": true,
     "includes": [
       "**",
+      "!.changeset",
       "!docs/research/notes",
       "!templates/addons/ponytail",
       "!test/fixtures/install-*.json"

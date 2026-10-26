@@ -72,6 +72,7 @@ jobs:
           TARBALL=$(ls "$RUNNER_TEMP"/npm-pack/*.tgz)
           tar -tzf "$TARBALL" > "$RUNNER_TEMP/pack-files.txt"
           grep -qx "package/dist/cli.js" "$RUNNER_TEMP/pack-files.txt"
+          grep -qx "package/dist/package.json" "$RUNNER_TEMP/pack-files.txt"
           if grep -qE '^package/(src|test|scripts)/' "$RUNNER_TEMP/pack-files.txt"; then
             echo "unexpected source files in the tarball" >&2
             exit 1
@@ -86,7 +87,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: cli-dist
-          path: dist/cli.js
+          path: |
+            dist/cli.js
+            dist/package.json
           if-no-files-found: error
 
   node-smoke:

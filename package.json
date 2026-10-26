@@ -32,7 +32,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "bun scripts/build-plugin.ts && bun build src/cli/bin.ts --target=node --outfile dist/cli.js",
+    "build": "bun scripts/build-plugin.ts && bun build src/cli/bin.ts --target=node --outfile dist/cli.js && bun scripts/write-dist-package.ts",
     "dev": "bun src/cli/bin.ts",
     "test": "bun test --timeout 60000",
     "typecheck": "tsc --noEmit",
