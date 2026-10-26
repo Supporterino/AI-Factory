@@ -228,6 +228,31 @@ describe("init: single repo", () => {
     expect(readLock(fx.root)?.managed[skill]).toBeDefined();
   });
 
+  test("an older CLI refuses to downgrade a newer install unless told to", async () => {
+    await cli(fx.root, "init");
+    const lockFile = join(fx.root, LOCK_FILE);
+    writeFileSync(
+      lockFile,
+      readFileSync(lockFile, "utf8").replace(
+        /"factoryVersion": "[^"]+"/,
+        '"factoryVersion": "9.9.9"',
+      ),
+    );
+    await commitAll(fx.root, "chore: installed by a newer factory");
+    const head = await gitOut(fx.root, "rev-parse", "HEAD");
+
+    for (const argv of [["init"], ["update"], ["detect", "--apply"]]) {
+      const res = await cli(fx.root, ...argv);
+      expect(res.code).toBe(ExitCode.Precondition);
+      expect(res.err).toContain("installed by ai-factory 9.9.9");
+      expect(res.err).toContain("npx @supporterino/ai-factory@9.9.9");
+    }
+    expect(await gitOut(fx.root, "rev-parse", "HEAD")).toBe(head);
+
+    expect((await cli(fx.root, "init", "--allow-downgrade")).code).toBe(ExitCode.Ok);
+    expect(readLock(fx.root)?.factoryVersion).toBe(FACTORY_VERSION);
+  });
+
   test("unmanaged files are left alone", async () => {
     await cli(fx.root, "init");
     const cfgPath = join(fx.root, "factory.config.jsonc");

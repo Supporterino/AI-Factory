@@ -6,6 +6,7 @@ import { PreconditionError } from "../../errors.ts";
 import { commitPaths } from "../../git/commit.ts";
 import { ensureClean } from "../../git/repo.ts";
 import { updateGraph } from "../../graph/graph.ts";
+import { ensureNotNewer } from "../../lock/lock.ts";
 import { renderOpenspecTools } from "../../openspec/cli.ts";
 import { checkTools } from "../../tools.ts";
 import {
@@ -33,7 +34,7 @@ async function workspaceRoot(io: Io): Promise<string> {
 export const updateCommand: Command = {
   name: "update",
   summary: "Upgrade an installed workspace (templates, config, tools)",
-  help: `Usage: ai-factory update [--dry-run] [--tools] [--restore] [--force] [--json]
+  help: `Usage: ai-factory update [--dry-run] [--tools] [--restore] [--force] [--allow-downgrade] [--json]
 
 Upgrades this workspace to the installed factory version, as one local commit
 ("chore(factory): update to vX.Y.Z") after backing up every file it touches to
@@ -47,6 +48,7 @@ Upgrades this workspace to the installed factory version, as one local commit
   --tools     Also refresh OpenSpec's opencode files and rebuild the graph if its format changed
   --restore   Recreate managed files you deleted
   --force     Update although a change is active or queued (it keeps its snapshot)
+  --allow-downgrade  Let this (older) version rewrite a workspace a newer one installed
   --json      Machine-readable result`,
   async run(args, io) {
     const { values } = parseCommandArgs("update", args, {
@@ -54,10 +56,12 @@ Upgrades this workspace to the installed factory version, as one local commit
       tools: { type: "boolean", default: false },
       restore: { type: "boolean", default: false },
       force: { type: "boolean", default: false },
+      "allow-downgrade": { type: "boolean", default: false },
       json: { type: "boolean", default: false },
     });
     const root = await workspaceRoot(io);
     const lock = requireInstalled(root);
+    ensureNotNewer(lock, values["allow-downgrade"]);
 
     const inProgress = changesInProgress(root);
     if (inProgress.length > 0 && !values.force) {

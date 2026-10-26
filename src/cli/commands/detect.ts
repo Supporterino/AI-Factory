@@ -6,13 +6,13 @@ import { applyChanges } from "../../detect/apply.ts";
 import { diffDetection, formatChange } from "../../detect/diff.ts";
 import { detectWorkspace } from "../../detect/workspace.ts";
 import { PreconditionError } from "../../errors.ts";
-import { readLock } from "../../lock/lock.ts";
+import { ensureNotNewer, readLock } from "../../lock/lock.ts";
 import { FACTORY_VERSION } from "../../version.ts";
 import { commitInstall, dirtyInstallPaths, syncWorkspace } from "../../workspace/sync.ts";
 import { type Command, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
 
-const HELP = `Usage: ai-factory detect [--apply [--no-commit]] [--check] [--json]
+const HELP = `Usage: ai-factory detect [--apply [--no-commit] [--allow-downgrade]] [--check] [--json]
 
 Re-detects the layout, repos, languages and contracts and shows the difference
 from ${CONFIG_FILE}. Detection only proposes; nothing is written without --apply.
@@ -21,6 +21,7 @@ Options:
   --apply   Write the shown changes into ${CONFIG_FILE} (comments are kept), regenerate
             implementer agents, scopes, OpenSpec context and hooks, and commit the result
   --no-commit  With --apply: leave the changes uncommitted
+  --allow-downgrade  With --apply: let this (older) version rewrite a newer install
   --check   Exit with code ${ExitCode.Drift} when there are differences
   --json    Print the detection and the changes as JSON
   -h, --help`;
@@ -35,6 +36,7 @@ export const detectCommand: Command = {
       check: { type: "boolean", default: false },
       json: { type: "boolean", default: false },
       "no-commit": { type: "boolean", default: false },
+      "allow-downgrade": { type: "boolean", default: false },
     });
 
     const root = await findWorkspaceRoot(io.cwd);
@@ -48,6 +50,7 @@ export const detectCommand: Command = {
     if (values.apply && loaded === undefined) {
       throw new PreconditionError(`no ${CONFIG_FILE} to apply to`, ["run `ai-factory init` first"]);
     }
+    if (values.apply) ensureNotNewer(readLock(root), values["allow-downgrade"]);
 
     const detection = await detectWorkspace(root);
     const changes = diffDetection(detection, loaded?.config);

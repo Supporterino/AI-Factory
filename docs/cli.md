@@ -1,6 +1,8 @@
 # CLI reference
 
-`ai-factory [-C <dir>] <command> [options]`. Every command takes `-h/--help`.
+`ai-factory [-C <dir>] <command> [options]`. Every command takes `-h/--help`, and `-V/--version` prints the version. The npm package is `@supporterino/ai-factory` (`npx @supporterino/ai-factory@<version> <command>`). The unscoped package `ai-factory` on npm is an unrelated project.
+
+`init`, `update` and `detect --apply` refuse to rewrite a workspace that a newer version installed, because that would downgrade it. Run the matching version, or pass `--allow-downgrade` to go back on purpose.
 
 ## Exit codes
 
@@ -20,7 +22,7 @@ The source of truth is `src/cli/exit-codes.ts`; numbers are never reused.
 ## init
 
 ```
-ai-factory init [--force] [--no-commit] [--no-graph] [--json]
+ai-factory init [--force] [--allow-downgrade] [--no-commit] [--no-graph] [--json]
 ```
 
 Installs or refreshes the factory. It runs these steps in order:
@@ -47,7 +49,7 @@ Tool binaries can be overridden with `AI_FACTORY_<TOOL>_BIN`, e.g. `AI_FACTORY_O
 ## update
 
 ```
-ai-factory update [--dry-run] [--tools] [--restore] [--force] [--json]
+ai-factory update [--dry-run] [--tools] [--restore] [--force] [--allow-downgrade] [--json]
 ```
 
 Upgrades an installed workspace to the factory version you run, as one local commit `chore(factory): update to vX.Y.Z`. It prints the plan first, and `--dry-run` stops there.
@@ -94,7 +96,7 @@ It exits 4 when any check fails. Warnings exit 0.
 ## detect
 
 ```
-ai-factory detect [--apply] [--check] [--json]
+ai-factory detect [--apply [--no-commit] [--allow-downgrade]] [--check] [--json]
 ```
 
 Re-detects the layout, repos, languages and contracts and prints the differences from the config:

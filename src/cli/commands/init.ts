@@ -7,6 +7,7 @@ import { detectWorkspace } from "../../detect/workspace.ts";
 import { PreconditionError } from "../../errors.ts";
 import { gitOk } from "../../exec.ts";
 import { graphFile, updateGraph } from "../../graph/graph.ts";
+import { ensureNotNewer, readLock } from "../../lock/lock.ts";
 import type { SyncAction } from "../../managed/sync.ts";
 import { renderOpenspecTools } from "../../openspec/cli.ts";
 import { checkTools, type ToolName } from "../../tools.ts";
@@ -20,7 +21,7 @@ import {
 import { type Command, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
 
-const HELP = `Usage: ai-factory init [--force] [--no-commit] [--no-graph] [--json]
+const HELP = `Usage: ai-factory init [--force] [--allow-downgrade] [--no-commit] [--no-graph] [--json]
 
 Installs the factory into the workspace: detects repos, languages and contracts, checks
 the tools, runs \`openspec init\` for opencode, renders agents, standards and config,
@@ -30,6 +31,7 @@ no diff and no commit.
 
 Options:
   --force       Overwrite existing files that ai-factory did not create
+  --allow-downgrade  Let this (older) version rewrite a workspace a newer one installed
   --no-commit   Leave the changes uncommitted
   --no-graph    Skip building the workspace graph (build it later with \`ai-factory graph\`)
   --json        Print the result as JSON
@@ -54,6 +56,7 @@ export const initCommand: Command = {
   async run(args, io) {
     const { values } = parseCommandArgs("init", args, {
       force: { type: "boolean", default: false },
+      "allow-downgrade": { type: "boolean", default: false },
       "no-commit": { type: "boolean", default: false },
       "no-graph": { type: "boolean", default: false },
       json: { type: "boolean", default: false },
@@ -65,6 +68,7 @@ export const initCommand: Command = {
         "ai-factory installs into a git repository (the AI repo or the single repo)",
       ]);
     }
+    ensureNotNewer(readLock(root), values["allow-downgrade"]);
     const top = await gitOk(["rev-parse", "--show-toplevel"], { cwd: root });
     if (top !== root) {
       throw new PreconditionError(`${root} is not the top level of its git repository (${top})`);

@@ -3,8 +3,9 @@ import { join } from "node:path";
 import { z } from "zod";
 import { formatZodIssues } from "../config/load.ts";
 import { CONFIG_SCHEMA_VERSION } from "../config/schema.ts";
-import { ConfigError } from "../errors.ts";
-import { FACTORY_VERSION } from "../version.ts";
+import { ConfigError, PreconditionError } from "../errors.ts";
+import { compareVersions } from "../tools.ts";
+import { FACTORY_VERSION, runVersion } from "../version.ts";
 import { GIT, GRAPHIFY, OPENCODE, OPENSPEC } from "../versions.ts";
 
 export const LOCK_FILE = "factory.lock.json";
@@ -86,4 +87,20 @@ export function readLock(root: string): Lock | undefined {
   if (!parsed.success)
     throw new ConfigError(`${LOCK_FILE} is invalid`, formatZodIssues(parsed.error));
   return parsed.data;
+}
+
+/**
+ * An older CLI must not rewrite a workspace a newer one installed: its templates, migrations
+ * and lock format would silently go back a version. `allow` opts in on purpose.
+ */
+export function ensureNotNewer(lock: Lock | undefined, allow = false): void {
+  if (lock === undefined || allow) return;
+  if (compareVersions(lock.factoryVersion, FACTORY_VERSION) <= 0) return;
+  throw new PreconditionError(
+    `this workspace was installed by ai-factory ${lock.factoryVersion}; this is ${FACTORY_VERSION}, which would downgrade it`,
+    [
+      `run the matching version: ${runVersion(lock.factoryVersion)} <command>`,
+      "or pass --allow-downgrade to go back on purpose",
+    ],
+  );
 }
