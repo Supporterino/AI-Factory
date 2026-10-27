@@ -87,6 +87,7 @@ function isTauriV2(root: string, dir: string, configPath: string): boolean {
  * Detects languages from manifests and markers:
  * - package.json → typescript (the TS/JS profile); a react dependency adds react
  * - pyproject.toml / requirements*.txt → python; go.mod → go; Cargo.toml → rust
+ * - Package.swift, XcodeGen's project.yml, or a *.xcodeproj bundle → swift
  * - Chart.yaml or plain Kubernetes manifests → helm
  * - tauri.conf.json / tauri.conf.json5 / Tauri.toml of a Tauri v2 app → tauri (with rust from
  *   its Cargo.toml; the tauri profile runs the cargo gates there)
@@ -114,6 +115,11 @@ export function detectLanguages(root: string, files: readonly FileEntry[]): Lang
       mark(dir, "go");
     } else if (name === "Cargo.toml") {
       mark(dir, "rust");
+    } else if (name === "Package.swift" || name === "project.yml") {
+      mark(dir, "swift");
+    } else if (name === "project.pbxproj" && dir.endsWith(".xcodeproj")) {
+      // The bundle is the marker; the Swift sources live beside it.
+      mark(dirOf(dir), "swift");
     } else if (TAURI_CONFIGS.has(name)) {
       if (isTauriV2(root, dir, file.path)) mark(dir, "tauri");
     } else if (name === "Chart.yaml") {

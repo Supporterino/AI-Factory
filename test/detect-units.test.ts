@@ -105,6 +105,45 @@ describe("detectLanguages", () => {
       subPaths: [],
     });
   });
+
+  test("swift: SwiftPM, XcodeGen and bare Xcode projects are detected", () => {
+    expect(
+      detectLanguages(
+        ...args(
+          scan("spm", {
+            "Package.swift": "// swift-tools-version: 6.0\n",
+            "Sources/App/App.swift": "struct App {}\n",
+          }),
+        ),
+      ).languages,
+    ).toEqual(["swift"]);
+
+    expect(
+      detectLanguages(
+        ...args(
+          scan("xcodegen", {
+            "project.yml": "name: App\n",
+            "App/App.swift": "struct App {}\n",
+          }),
+        ),
+      ).languages,
+    ).toEqual(["swift"]);
+
+    // The bundle is the marker: a nested project belongs to the directory that contains it.
+    expect(
+      detectLanguages(
+        ...args(
+          scan("xcode", {
+            "apps/App.xcodeproj/project.pbxproj": "",
+            "apps/App/App.swift": "struct App {}\n",
+          }),
+        ),
+      ),
+    ).toEqual({
+      languages: ["swift"],
+      subPaths: [{ path: "apps", languages: ["swift"] }],
+    });
+  });
 });
 
 function args(s: { root: string; files: ReturnType<typeof listFiles> }) {
