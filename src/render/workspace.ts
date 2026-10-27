@@ -187,7 +187,9 @@ function sharedSections(role: AgentRole): string[] {
 
 function renderAgent(config: FactoryConfig, spec: AgentSpec): ManagedFile {
   const skillList = skillNames(config, spec.modelRole);
-  const web = spec.role === "reviewer" || spec.role === "contract-reviewer";
+  // Research is read-only, so every role that has tools may search and fetch. The
+  // orchestrator works from its prompt alone and keeps no tools.
+  const web = spec.role !== "orchestrator";
   const options: AgentRuleOptions = {
     ...(skillList.length > 0 ? { skills: true } : {}),
     ...(web ? { web: true } : {}),
@@ -252,16 +254,13 @@ function renderImplementer(config: FactoryConfig, repo: RepoConfig): ManagedFile
         description: `ai-factory implementer for ${repo.name} (${repo.path}; ${langs}).`,
         model: modelFor(config, "implementer", { repo: repo.name }),
         role: "implementer",
-        ...(skills === undefined && config.mcp.roles.implementer === undefined
-          ? {}
-          : {
-              permissions: agentRules("implementer", [], {
-                skills: skills !== undefined,
-                ...(config.mcp.roles.implementer === undefined
-                  ? {}
-                  : { mcp: config.mcp.roles.implementer }),
-              }),
-            }),
+        permissions: agentRules("implementer", [], {
+          web: true,
+          ...(skills === undefined ? {} : { skills: true }),
+          ...(config.mcp.roles.implementer === undefined
+            ? {}
+            : { mcp: config.mcp.roles.implementer }),
+        }),
       }),
       sections: [
         implementer.replaceAll("{{repo}}", repo.name),
