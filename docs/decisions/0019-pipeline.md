@@ -4,7 +4,7 @@
 
 **Decision.**
 - **REST, not `@opencode/client`.** `OpencodeRuntime` calls the server's REST API with `fetch`; every endpoint was verified end to end (docs/research/opencode-e2e.md). This avoids pinning a second package that changed shape in 2.1.0.
-  - Turn completion: `/wait` can return before a queued prompt starts. A turn is complete when the newest message is an `idle` entry newer than our prompt.
+  - Turn completion: `/wait` can return before a queued prompt starts. A turn is complete when the newest message is an `idle` entry newer than our prompt. The long-poll is bounded and retried (60 s slices): it sends no response headers until the turn is idle, so one open request would hit Node's 300 s `fetch` headers timeout and fail a healthy turn with a misleading "server unreachable".
   - Messages are read newest first; 200 per page is the server maximum.
 - **Drafts.** If another change occupies the AI-repo checkout (active, or awaiting approval on its branch), `run` drafts the new change in `.factory/drafts/<id>`, an AI-repo worktree on `change/<id>` created from the occupying change's base.
   - `approve` commits the spec there.
