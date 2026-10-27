@@ -34,6 +34,22 @@ export function addUsage(a: Usage, b: Usage): Usage {
   };
 }
 
+/**
+ * Live progress inside one agent session (opencode's event stream). It is display-only: the
+ * pipeline never depends on it, and a runtime without an event stream simply emits none.
+ */
+export type SessionActivity =
+  | { readonly kind: "step-started"; readonly model?: string }
+  | { readonly kind: "tool"; readonly tool: string; readonly input?: unknown }
+  | {
+      readonly kind: "tool-done";
+      readonly tool: string;
+      readonly status: "ok" | "failed";
+      readonly error?: string;
+    }
+  | { readonly kind: "step-done"; readonly usage: Usage }
+  | { readonly kind: "retry"; readonly reason?: string };
+
 export interface SessionSpec {
   /** opencode agent id, e.g. "implementer-backend". */
   readonly agent: string;
@@ -42,6 +58,8 @@ export interface SessionSpec {
   /** Plugin context; `sessionId` is filled in by the runtime. */
   readonly context: Omit<SessionContext, "sessionId">;
   readonly title: string;
+  /** Progress for the terminal. Callbacks must be cheap and must not throw. */
+  readonly onActivity?: (activity: SessionActivity) => void;
 }
 
 export interface Turn {

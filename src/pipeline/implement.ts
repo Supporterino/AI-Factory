@@ -281,11 +281,12 @@ export class PipelineTaskRunner implements TaskRunner {
     return gitOk(["merge-base", "HEAD", changeBranch(this.id)], { cwd: dir });
   }
 
-  async #gates(task: TaskState, dir: string): Promise<GateReport> {
+  async #gates(task: TaskState, dir: string, stage = "gates"): Promise<GateReport> {
     const repo = this.p.repo(task.repo);
     const base = await this.#base(dir);
-    const report = await this.p.gates.run(() =>
-      runGates({
+    const report = await this.p.gates.run(async () => {
+      const started = this.p.progress.now();
+      const report = await runGates({
         root: this.p.root,
         ...gateDefinitions(this.p, this.id),
         repo,
@@ -294,8 +295,11 @@ export class PipelineTaskRunner implements TaskRunner {
         base,
         graph: { root: this.p.root, repoPath: repo.path },
         forbidShortcuts: forbidShortcuts(this.p),
-      }),
-    );
+        onGate: (event) => this.p.progress.gate(task.id, event, stage),
+      });
+      this.p.progress.gatesDone(task.id, report, this.p.progress.now() - started, stage);
+      return report;
+    });
     appendLog(this.p.root, this.id, {
       kind: "gates",
       task: task.id,
@@ -375,13 +379,24 @@ export class PipelineTaskRunner implements TaskRunner {
     else if (!task.installed) {
       // Until it succeeds, also in a kept worktree. A failure (registry down) is not the
       // task's: no budget is spent, and repeats pause the change (audit P12).
+      this.p.progress.install(task.id, task.repo, "start");
+      const started = this.p.progress.now();
       const steps = await installDeps(this.p.root, dir, this.p.repo(task.repo));
       const failed = steps.find((s) => s.status === "failed");
-      if (failed)
+      if (failed) {
+        this.p.progress.install(
+          task.id,
+          task.repo,
+          "failed",
+          this.p.progress.now() - started,
+          failed.detail ?? failed.dir,
+        );
         return {
           status: "transient",
           reason: `dependency install failed in ${failed.dir}: ${failed.detail ?? ""}`.trim(),
         };
+      }
+      this.p.progress.install(task.id, task.repo, "done", this.p.progress.now() - started);
       await this.p.update(this.id, (d) => {
         const t = d.tasks.find((x) => x.id === task.id);
         if (t) t.installed = true;
@@ -416,6 +431,7 @@ export class PipelineTaskRunner implements TaskRunner {
       modelRole: isTest ? "tester" : "implementer",
       context: this.#context(task, dir),
       title: `${this.id} ${task.id} attempt ${ctx.attempt}`,
+      label: task.title,
       step: task.id,
       kind: "attempt",
       attempt: ctx.attempt,
@@ -511,7 +527,7 @@ export class PipelineTaskRunner implements TaskRunner {
       id: this.id,
       worktree: { path, branch, created: false },
       regate: async (wt) => {
-        const report = await this.#gates(task, wt);
+        const report = await this.#gates(task, wt, "gates after rebase");
         this.#lastRegate.set(task.id, report);
         return report.passed;
       },
@@ -568,7 +584,6 @@ export class PipelineTaskRunner implements TaskRunner {
       repo: task.repo,
       mergeSeq: seq,
     });
-    this.p.out(`  ✓ ${task.id} merged (${task.repo})`);
     // Incremental, serialised and coalesced; dependents wait for coverage in attempt().
     this.graph.request(seq);
   }
@@ -579,9 +594,11 @@ export async function implement(p: Pipeline, id: string): Promise<RunSummary> {
   const run = loadRun(p.root, id);
   if (run === undefined) throw new PreconditionError(`no change ${id}`);
   const pending = run.tasks.filter((t) => t.status !== "merged").length;
+  p.progress.setChangeId(id);
   p.out(
     `▶ implement: ${pending} task${pending === 1 ? "" : "s"} (max ${p.config.parallel.maxAgents} agents)`,
   );
+  const started = p.progress.now();
   const graph = new GraphUpdater(
     async () => {
       const result = await updateGraph(p.root, { changeId: id });
@@ -606,9 +623,20 @@ export async function implement(p: Pipeline, id: string): Promise<RunSummary> {
       : {}),
     runner: new PipelineTaskRunner(p, id, graph),
     signal: p.deps.signal,
+    observe: (event) => p.progress.task(event),
   });
   const summary = await scheduler.run();
   // Reviews and later tasks read the graph; let the last update finish.
   await graph.idle();
+  p.progress.implementSummary(
+    {
+      merged: summary.merged.length,
+      failed: summary.failed.length,
+      cancelled: summary.cancelled.length,
+      pending: summary.pending.length,
+      total: p.run(id).tasks.length,
+    },
+    p.progress.now() - started,
+  );
   return summary;
 }

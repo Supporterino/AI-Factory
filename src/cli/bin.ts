@@ -6,6 +6,7 @@ const code = await runCli(process.argv.slice(2), {
   cwd: process.cwd(),
   out: (text) => process.stdout.write(`${text}\n`),
   err: (text) => process.stderr.write(`${text}\n`),
+  tty: process.stdout.isTTY === true,
   ...(process.stdin.isTTY ? { confirm: askYesNo, ask: askText } : {}),
 });
 process.exit(code);

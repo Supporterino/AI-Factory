@@ -2,14 +2,17 @@ import { UsageError } from "../../errors.ts";
 import { quickTask } from "../../pipeline/quick.ts";
 import { type Command, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
-import { withPipeline } from "./pipeline-commands.ts";
+import { PROGRESS_OPTIONS, verbosityOf, withPipeline } from "./pipeline-commands.ts";
 
-const HELP = `Usage: ai-factory quick "<task>" [--repo <name>] [--agent <id>] [--no-review]
+const HELP = `Usage: ai-factory quick "<task>" [--repo <name>] [--agent <id>] [--no-review] [--verbose|--quiet]
 
 The no-OpenSpec path: create a task/<slug> branch, implement, run the repository gates, run
 one review pass, then make one local commit. No spec, no approval hash, and no push.
 --agent selects a configured custom implementer. The branch stays checked out so you can
-inspect or amend it.`;
+inspect or amend it.
+
+  --verbose         Also print one line per agent tool call and per gate
+  --quiet           Only banners, commits, failures and the summary`;
 
 export const quickCommand: Command = {
   name: "quick",
@@ -23,12 +26,14 @@ export const quickCommand: Command = {
         repo: { type: "string" },
         agent: { type: "string" },
         "no-review": { type: "boolean", default: false },
+        ...PROGRESS_OPTIONS,
       },
       true,
     );
     const task = positionals.join(" ").trim();
     if (task === "") throw new UsageError('quick: expected a task, e.g. "fix the login typo"');
-    return withPipeline(io, "quick", async (p) => {
+    const verbosity = verbosityOf(values);
+    return withPipeline(io, "quick", { verbosity }, async (p) => {
       const result = await quickTask(p, {
         task,
         ...(values.repo === undefined ? {} : { repo: values.repo }),

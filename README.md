@@ -72,7 +72,7 @@ ai-factory run "Add full-text search to the product list"
    ```
 
    This commits the spec (`docs(spec): <id>`) and records its hash. Any later edit to the spec, other than a task checkbox, voids the approval. If another change is active, this one queues and starts automatically when the other one closes. Use `--no-continue` to only record the approval.
-3. **Implement.** Tasks run in parallel in their own worktrees, at most `maxAgents` at a time. Tasks in one repo whose `touches` overlap run one after the other. Each task gets an affected-test gate. Merges go through a per-repo queue: rebase, gates again, fast-forward. A failing task gets three retries, then the change pauses with a report.
+3. **Implement.** Tasks run in parallel in their own worktrees, at most `maxAgents` at a time. Tasks in one repo whose `touches` overlap run one after the other. Each task gets an affected-test gate. Merges go through a per-repo queue: rebase, gates again, fast-forward. A failing task gets three retries, then the change pauses with a report. The terminal shows each task starting (title, agent, model, attempt), its gates, retries and merges, plus a 30-second heartbeat with the elapsed time and current tool while agents and gates run. `--verbose` streams every tool call; `--quiet` keeps only merges, failures and the summary.
 4. **Review, contracts, full suite.** Each touched repo gets one reviewer and one tester pass. Then come the contract gate and contract review, and finally every touched repo's full suite. Findings and failures become fix tasks.
 5. **Close.** The CLI mirrors the checkboxes, bumps the pointers, archives the spec and writes the report to `.factory/reports/<id>.md`. It makes local commits only.
 
@@ -81,6 +81,7 @@ While it runs, or after it stops:
 | Situation                                                                                             | Command                                                      |
 | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | See what is happening: phase, task DAG, worktrees, gate results, token usage                          | `ai-factory status [<id>] [--json]`                          |
+| Watch it from a second terminal (refreshes every 2 s until Ctrl-C)                                    | `ai-factory status <id> --watch`                             |
 | It paused because a task failed three times: fix it in the task's worktree (path in the report), then | `ai-factory retry <id> --task <n>`                           |
 | It paused, was aborted, or the process died: continue from the last consistent state                  | `ai-factory resume <id>`                                     |
 | Stop it safely (branches and worktrees stay, the lock is released)                                    | `ai-factory abort <id>`                                      |

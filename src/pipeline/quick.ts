@@ -118,6 +118,20 @@ export async function quickTask(
   let feedback: string | undefined;
   let passed = false;
   let output = "";
+  const runQuickGates = async (): Promise<Awaited<ReturnType<typeof runGates>>> => {
+    const started = p.progress.now();
+    const report = await runGates({
+      root: p.root,
+      config: p.config,
+      repo,
+      worktree: dir,
+      mode: "task",
+      base,
+      onGate: (event) => p.progress.gate("quick", event),
+    });
+    p.progress.gatesDone("quick", report, p.progress.now() - started);
+    return report;
+  };
   for (let attempt = 1; attempt <= 3 && !passed; attempt++) {
     const res = await p.call({
       changeId: `quick-${slug}`,
@@ -126,6 +140,7 @@ export async function quickTask(
       modelRole: "implementer",
       context,
       title: `quick ${slug} attempt ${attempt}`,
+      label: input.task,
       step: "quick",
       kind: "attempt",
       attempt,
@@ -165,14 +180,7 @@ export async function quickTask(
         detail: `edits outside the quick scope were reverted:\n${violations.map((v) => `${v.path}: ${v.reason}`).join("\n")}`,
       };
     }
-    const report = await runGates({
-      root: p.root,
-      config: p.config,
-      repo,
-      worktree: dir,
-      mode: "task",
-      base,
-    });
+    const report = await runQuickGates();
     if (report.passed) {
       passed = true;
       break;
@@ -220,6 +228,7 @@ export async function quickTask(
         modelRole: "implementer",
         context,
         title: `quick ${slug} fix ${round}`,
+        label: input.task,
         step: "quick",
         kind: "attempt",
         attempt: 4 + round,
@@ -228,14 +237,7 @@ export async function quickTask(
       if (fix.handoff?.status !== "done") {
         return { repo: repo.name, branch, ok: false, detail: "review fix did not finish" };
       }
-      const report = await runGates({
-        root: p.root,
-        config: p.config,
-        repo,
-        worktree: dir,
-        mode: "task",
-        base,
-      });
+      const report = await runQuickGates();
       if (!report.passed) {
         return {
           repo: repo.name,

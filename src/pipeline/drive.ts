@@ -166,7 +166,8 @@ async function step(p: Pipeline, id: string): Promise<Step> {
       }
       if (summary.status === "paused") {
         const report = writePauseReport(p, id, summary);
-        return stop({ id, phase: "paused", detail: `report: ${report}` });
+        const failed = summary.failed.length > 0 ? `failed: ${summary.failed.join(", ")}; ` : "";
+        return stop({ id, phase: "paused", detail: `${failed}report: ${report}` });
       }
       await setPhase(p, id, "reviewing");
       return go(id);
