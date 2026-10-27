@@ -52,7 +52,7 @@ export function toolEnv(name: ToolName): Readonly<Record<string, string>> {
   return TOOL_SPECS[name].env ?? {};
 }
 
-/** First x.y.z in a `--version` output ("opencode v2.1.2", "git version 2.54.0 (…)"). */
+/** First x.y.z in a `--version` output ("opencode v2.2.0", "git version 2.54.0 (…)"). */
 export function parseVersion(output: string): string | undefined {
   return output.match(/(\d+)\.(\d+)\.(\d+)/)?.[0];
 }

@@ -1,4 +1,6 @@
 # opencode v2.1.2 findings (research agent, 2026-10-23)
+> Re-verified against 2.2.0 on 2026-10-27: see [`opencode-2.2.0.md`](opencode-2.2.0.md).
+
 Source: github.com/anomalyco/opencode (sst/opencode redirects) tag v2.1.2 (a517687f); v2.1.3 exists, not checked. V2 docs: opencode.ai/v2/docs. opencode.ai/docs + repo packages/web = V1 docs (plugin API there doesn't run on V2). Local clone: scratchpad/opencode/src, docs dump v2docs/*.txt (+openapi.json), help.txt, spike/.
 Labels [S]ource [D]ocs [H]elp [X]tested (private serve w/ scratch XDG, no creds, no LLM).
 

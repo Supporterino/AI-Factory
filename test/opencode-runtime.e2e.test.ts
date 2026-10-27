@@ -10,8 +10,8 @@ import { createSingleRepoFixture, type Fixture } from "./fixtures/workspaces.ts"
 import { cli } from "./helpers.ts";
 
 /**
- * Opt-in: drives the real opencode binary (pinned 2.1.x) with a stub model. No real model,
- * isolated HOME/XDG. Run with AI_FACTORY_E2E=1 (and opencode installed).
+ * Opt-in: drives the real opencode binary (supported 2.1.2–2.2.x) with a stub model. No real
+ * model, isolated HOME/XDG. Run with AI_FACTORY_E2E=1 (and opencode installed).
  */
 const REAL_OPENCODE = Bun.which("opencode") ?? join(homedir(), ".opencode/bin/opencode");
 const enabled = process.env.AI_FACTORY_E2E === "1" && existsSync(REAL_OPENCODE);

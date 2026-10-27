@@ -14,12 +14,12 @@ How it works inside: [ARCHITECTURE.md](ARCHITECTURE.md). Every command: [docs/cl
 
 Requirements: macOS or Linux, Node ≥ 20 or Bun ≥ 1.3, and these tools on `PATH`:
 
-| Tool     | Version          | Install                                            |
-| -------- | ---------------- | -------------------------------------------------- |
-| git      | ≥ 2.31           | Xcode CLT or your package manager                  |
-| opencode | 2.1.x (≥ 2.1.2)  | `npm install --global @opencode/cli@2.1.2`         |
-| OpenSpec | 1.x (≥ 1.10)     | `npm install --global @fission-ai/openspec@1.14.3` |
-| Graphify | 0.9.x (≥ 0.9.93) | `uv tool install graphifyy==0.9.93`                |
+| Tool     | Version                             | Install                                            |
+| -------- | ----------------------------------- | -------------------------------------------------- |
+| git      | ≥ 2.31                              | Xcode CLT or your package manager                  |
+| opencode | 2.1.x–2.2.x (≥ 2.1.2; tested 2.2.0) | `npm install --global @opencode/cli@2.2.0`         |
+| OpenSpec | 1.x (≥ 1.10)                        | `npm install --global @fission-ai/openspec@1.14.3` |
+| Graphify | 0.9.x (≥ 0.9.93)                    | `uv tool install graphifyy==0.9.93`                |
 
 Plus credentials for the model providers you configure, either exported (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …) or stored with `opencode auth login`.
 
@@ -213,7 +213,7 @@ bun scripts/e2e-transcript.ts single        # re-record docs/e2e/single.md (also
 
 The test suite builds fixture workspaces in temp dirs: a single TS repo, and an AI repo with Go, React and Helm submodules. It stubs the LLM with scripted handoffs. The manual end-to-end runs in [docs/e2e/](docs/e2e/) drive the real opencode server, git, OpenSpec, Graphify and gate toolchains, with a scripted role-aware model, so they cost nothing and can be reproduced. See ADR-0023 for what they cover and what they don't.
 
-CI runs the full suite on Ubuntu and macOS, then smoke-tests the npm tarball and the built bundle on Node 20.3, 22 and 24. The manual `E2E` workflow runs the real-opencode runtime test against the pinned opencode version.
+CI runs the full suite on Ubuntu and macOS, then smoke-tests the npm tarball and the built bundle on Node 20.3, 22 and 24. The manual `E2E` workflow runs the real-opencode runtime test against each supported opencode version (2.1.2 and 2.2.0).
 
 ### Releasing
 

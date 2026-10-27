@@ -34,7 +34,7 @@ Every one of them passed through the shell parser, because a parser can only jud
   - Protected and secret paths match case-insensitively.
 - **Agent commits.** The CLI records `HEAD` before each session. If `HEAD` moved, the CLI soft-resets back to it and logs it, so the audit sees every change. The audit uses the real approval check.
 - **Session context.** The plugin pins each session's context at first read and refuses everything if the file changes mid-session.
-- **Every shell spawn is guarded.** opencode 2.1.2 calls the plugin's `shell` hook `create.before` with `{command, cwd, shell, env}` before spawning any shell (found in the binary, verified end to end). The plugin:
+- **Every shell spawn is guarded.** opencode 2.1.2 and 2.2.0 call the plugin's `shell` hook `create.before` with `{command, cwd, shell, env}` before spawning any shell (found in the binary, verified end to end). The plugin:
   - only lets commands its `execute.before` guard approved spawn, which refuses opencode's REST `/api/shell`;
   - deletes the server password, model keys and forge tokens (`AI_FACTORY_SCRUB`) from the shell's environment;
   - wraps the command in the sandbox.

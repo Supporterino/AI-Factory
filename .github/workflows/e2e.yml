@@ -7,11 +7,15 @@ permissions: {}
 
 jobs:
   opencode-runtime:
-    name: opencode runtime
+    name: opencode runtime (${{ matrix.opencode }})
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        opencode: ["2.1.2", "2.2.0"]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -21,8 +25,8 @@ jobs:
         with:
           node-version: 24
       - run: bun install --frozen-lockfile
-      - name: Install the pinned opencode CLI
-        run: npm install --global @opencode/cli@2.1.2
+      - name: Install opencode ${{ matrix.opencode }}
+        run: npm install --global @opencode/cli@${{ matrix.opencode }}
       - run: opencode --version
       - name: Run the real-runtime test with the stub model
         env:
