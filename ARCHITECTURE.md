@@ -217,6 +217,7 @@ The worktree metadata lives in `.git/modules/repos/backend/worktrees/`. Dependen
 - **Sessions.** Every agent call is a fresh session in a known directory: a task worktree, a repo checkout or the root. The CLI writes a session context file first; the plugin refuses any factory agent that has none.
 - **Handoffs.** Agents end with a JSON handoff that is validated against `.opencode/schemas/handoff.schema.json`. An invalid handoff gets one repair turn.
 - **Token use.** Prompts put stable text first so it can be cached. Context packs are capped at `contextPackMaxTokens`, and gate output is compacted. Usage per agent, task and change is reported in `status` and in the final report, and never enforced.
+- **Progress.** Every agent call prints a start and end line, the scheduler emits task transitions, the runner adds gates and dependency installs, and a 30-second heartbeat covers long turns and gates. Tool calls stream with `--verbose`; `status --watch` reprints the DAG in a second terminal (ADR-0031).
 
 ## Updates
 

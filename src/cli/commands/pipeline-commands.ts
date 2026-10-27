@@ -8,7 +8,9 @@ import { pruneLogs } from "../../logs/log.ts";
 import { approve } from "../../pipeline/approve.ts";
 import { Pipeline } from "../../pipeline/context.ts";
 import { design, intake } from "../../pipeline/design.ts";
-import { type DriveOutcome, drive } from "../../pipeline/drive.ts";
+import type { DriveOutcome } from "../../pipeline/drive.ts";
+import { drive } from "../../pipeline/drive.ts";
+import type { Verbosity } from "../../pipeline/progress.ts";
 import { refineRequest } from "../../pipeline/refine.ts";
 import { OpencodeRuntime } from "../../runtime/opencode.ts";
 import { readActive, releaseDriver } from "../../state/active.ts";
@@ -37,6 +39,7 @@ async function setup(
 export async function withPipeline<T>(
   io: Io,
   changeId: string,
+  options: { readonly verbosity?: Verbosity },
   work: (p: Pipeline) => Promise<T>,
 ): Promise<T> {
   const { root, config } = await setup(io);
@@ -54,10 +57,12 @@ export async function withPipeline<T>(
     runtime,
     out: (l) => io.out(l),
     signal: controller.signal,
+    ...(options.verbosity === undefined ? {} : { verbosity: options.verbosity }),
   });
   try {
     return await work(p);
   } finally {
+    p.progress.stop();
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
     await runtime.close();
@@ -65,6 +70,24 @@ export async function withPipeline<T>(
     if (active?.pid === process.pid) await releaseDriver(root, active.changeId);
   }
 }
+
+/** `--verbose` and `--quiet` are per command; the default is `normal`. */
+export function verbosityOf(values: {
+  readonly verbose?: boolean;
+  readonly quiet?: boolean;
+}): Verbosity {
+  if (values.verbose === true && values.quiet === true)
+    throw new UsageError("--verbose and --quiet exclude each other");
+  if (values.quiet === true) return "quiet";
+  if (values.verbose === true) return "verbose";
+  return "normal";
+}
+
+/** The flags every pipeline command accepts. */
+export const PROGRESS_OPTIONS = {
+  verbose: { type: "boolean", default: false },
+  quiet: { type: "boolean", default: false },
+} as const;
 
 function report(io: Io, outcome: DriveOutcome): ExitCode {
   io.out(`${outcome.id}: ${outcome.phase}${outcome.detail ? ` — ${outcome.detail}` : ""}`);
@@ -82,7 +105,7 @@ function changeIdArg(command: string, positionals: readonly string[]): string {
 export const runCommand: Command = {
   name: "run",
   summary: "Start a change from a request and run it up to spec approval",
-  help: `Usage: ai-factory run "<request>" [--request <file>] [--interactive]
+  help: `Usage: ai-factory run "<request>" [--request <file>] [--interactive] [--verbose|--quiet]
 
 Intake (change id and summary), a change branch in the AI repo, explorers per likely repo,
 then the architect writes the OpenSpec change. Stops at spec approval: review
@@ -90,7 +113,9 @@ openspec/changes/<id>/ and run \`ai-factory approve <id>\`. If another change is
 new one is drafted in .factory/drafts/<id> and queued after approval.
 
   --request <file>  Read the request from a file (e.g. one written by \`ai-factory refine\`)
-  --interactive     Ask scope/verification questions before intake`,
+  --interactive     Ask scope/verification questions before intake
+  --verbose         Also print one line per agent tool call and per gate
+  --quiet           Only phase banners, merges, failures and the summary`,
   async run(args, io) {
     const { values, positionals } = parseCommandArgs(
       "run",
@@ -98,6 +123,7 @@ new one is drafted in .factory/drafts/<id> and queued after approval.
       {
         request: { type: "string" },
         interactive: { type: "boolean", default: false },
+        ...PROGRESS_OPTIONS,
       },
       true,
     );
@@ -107,7 +133,8 @@ new one is drafted in .factory/drafts/<id> and queued after approval.
     }
     if (request === "")
       throw new UsageError('run: expected a request, e.g. ai-factory run "add a health endpoint"');
-    return withPipeline(io, "intake", async (p) => {
+    const verbosity = verbosityOf(values);
+    return withPipeline(io, "intake", { verbosity }, async (p) => {
       if (values.interactive) {
         if (!p.config.workflow.refine) {
           throw new PreconditionError("workflow.refine is disabled");
@@ -137,21 +164,25 @@ new one is drafted in .factory/drafts/<id> and queued after approval.
 export const approveCommand: Command = {
   name: "approve",
   summary: "Approve a change's spec and continue the pipeline",
-  help: `Usage: ai-factory approve <change-id> [--no-continue]
+  help: `Usage: ai-factory approve <change-id> [--no-continue] [--verbose|--quiet]
 
 Validates the change, commits the spec on its AI-repo branch (\`docs(spec): <id>\`) and
 records the approval (approver = git user.email, spec commit, content hash; task checkboxes
 are excluded from the hash). Then continues automatically: implementation starts, or the
-change is queued while another one is active. --no-continue only records the approval.`,
+change is queued while another one is active. --no-continue only records the approval.
+
+  --verbose         Also print one line per agent tool call and per gate
+  --quiet           Only phase banners, merges, failures and the summary`,
   async run(args, io) {
     const { values, positionals } = parseCommandArgs(
       "approve",
       args,
-      { "no-continue": { type: "boolean", default: false } },
+      { "no-continue": { type: "boolean", default: false }, ...PROGRESS_OPTIONS },
       true,
     );
     const id = changeIdArg("approve", positionals);
-    return withPipeline(io, id, async (p) => {
+    const verbosity = verbosityOf(values);
+    return withPipeline(io, id, { verbosity }, async (p) => {
       await approve(p, id);
       if (values["no-continue"]) return ExitCode.Ok;
       return report(io, await drive(p, id));
@@ -162,14 +193,18 @@ change is queued while another one is active. --no-continue only records the app
 export const resumeCommand: Command = {
   name: "resume",
   summary: "Continue a paused, aborted, interrupted or queued change",
-  help: `Usage: ai-factory resume <change-id>
+  help: `Usage: ai-factory resume <change-id> [--verbose|--quiet]
 
 Continues the change from its last consistent state: interrupted tasks restart in their
-kept worktrees, finished ones stay; a queued change starts when the workspace is free.`,
+kept worktrees, finished ones stay; a queued change starts when the workspace is free.
+
+  --verbose         Also print one line per agent tool call and per gate
+  --quiet           Only phase banners, merges, failures and the summary`,
   async run(args, io) {
-    const { positionals } = parseCommandArgs("resume", args, {}, true);
+    const { positionals, values } = parseCommandArgs("resume", args, PROGRESS_OPTIONS, true);
     const id = changeIdArg("resume", positionals);
-    return withPipeline(io, id, async (p) => {
+    const verbosity = verbosityOf(values);
+    return withPipeline(io, id, { verbosity }, async (p) => {
       const run = loadRun(p.root, id);
       if (run === undefined) throw new PreconditionError(`no change ${id}`);
       if (run.phase === "done") {

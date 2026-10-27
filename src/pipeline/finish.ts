@@ -131,8 +131,9 @@ export async function fullSuite(p: Pipeline, id: string): Promise<string[]> {
   await Promise.all(
     repos.map(async (name) => {
       const repo = p.repo(name);
-      const report = await p.gates.run(() =>
-        runGates({
+      const report = await p.gates.run(async () => {
+        const started = p.progress.now();
+        const gated = await runGates({
           root: p.root,
           ...gateDefinitions(p, id),
           repo,
@@ -140,8 +141,11 @@ export async function fullSuite(p: Pipeline, id: string): Promise<string[]> {
           mode: "full",
           base: run.branches[name]?.base ?? "HEAD",
           forbidShortcuts: forbidShortcuts(p),
-        }),
-      );
+          onGate: (event) => p.progress.gate(name, event),
+        });
+        p.progress.gatesDone(name, gated, p.progress.now() - started);
+        return gated;
+      });
       appendLog(p.root, id, {
         kind: "gates",
         repo: name,
@@ -272,6 +276,7 @@ export async function close(p: Pipeline, id: string): Promise<string> {
 
   // Each step is recorded once done, so a close resumed after a crash skips it (audit P6).
   if (p.config.layout === "submodules" && !run.pointersBumped) {
+    p.progress.note("  ⚙ bumping submodule pointers");
     const repos = touchedRepos(run)
       .map((n) => p.repo(n))
       .filter((r) => r.path !== ".");
@@ -290,6 +295,7 @@ export async function close(p: Pipeline, id: string): Promise<string> {
     // A crash between `openspec archive` and its commit leaves the moved folder behind.
     let archivedAs = archivedName(p.root, id);
     if (archivedAs === undefined) {
+      p.progress.note("  ⚙ archiving the spec");
       const issues = await validateChange(p.root, p.root, id);
       if (issues.length > 0)
         throw new PreconditionError(`openspec validate ${id} failed before archive`, issues);

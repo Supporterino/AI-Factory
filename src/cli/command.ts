@@ -15,6 +15,10 @@ export interface Io {
   readonly cwd: string;
   out(text: string): void;
   err(text: string): void;
+  /** stdout is a terminal: in-place screens and colors are safe. */
+  readonly tty?: boolean;
+  /** Stops a watch loop (tests pass a signal; the CLI relies on Ctrl-C terminating). */
+  readonly signal?: AbortSignal;
   /** Agent runtime; defaults to a private opencode server. Tests inject a scripted one. */
   readonly runtime?: RuntimeFactory;
   /** Asks the user a yes/no question; undefined when nobody can answer (no TTY). */

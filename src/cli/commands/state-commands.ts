@@ -77,6 +77,39 @@ function worktreesOf(root: string, id: string): string[] {
     );
 }
 
+/** One frame of `status`; `--watch` calls this with a collecting `Io`. */
+function renderStatus(io: Io, root: string, positionals: readonly string[]): void {
+  // Corrupt state files are shown, not fatal: status is how they are found (audit P15).
+  const lock = readOrCorrupt(() => readActive(root));
+  const active = lock.value;
+  const queued = readOrCorrupt(() => readQueue(root));
+  const queue = queued.value?.entries.map((e) => e.changeId) ?? [];
+  const { runs, corrupt } =
+    positionals.length > 0
+      ? { runs: [requireRun(root, changeId("status", positionals))], corrupt: [] }
+      : scanRuns(root);
+
+  if (positionals.length === 0) {
+    io.out(
+      lock.corrupt
+        ? `active: unreadable: ${lock.corrupt.message}\n  ${lock.corrupt.fix}`
+        : active
+          ? `active: ${active.changeId}`
+          : "active: none",
+    );
+    io.out(
+      queued.corrupt
+        ? `queue: unreadable: ${queued.corrupt.message}\n  ${queued.corrupt.fix}`
+        : `queue: ${queue.length > 0 ? queue.join(", ") : "empty"}`,
+    );
+    if (runs.length === 0 && corrupt.length === 0)
+      io.out('no changes yet (start one with `ai-factory run "<request>"`)');
+  }
+  for (const run of runs) printRun(io, root, run, active, queue.indexOf(run.id));
+  for (const c of corrupt)
+    io.out(`change ${c.id} — unreadable: ${c.error.message}\n  ${c.error.fix}`);
+}
+
 function printRun(
   io: Io,
   root: string,
@@ -150,18 +183,40 @@ function printRun(
 export const statusCommand: Command = {
   name: "status",
   summary: "Show the active change, the queue, task states and branches",
-  help: `Usage: ai-factory status [<change-id>] [--json]
+  help: `Usage: ai-factory status [<change-id>] [--json] [--watch [--interval <seconds>]]
 
 Without an id: the active change (if any), the queue and every known change.
-With an id: that change's phase, branches, task DAG with states, retries and worktrees.`,
+With an id: that change's phase, branches, task DAG with states, retries and worktrees.
+
+  --watch            Reprint the same view every few seconds until Ctrl-C (a second
+                     terminal is the easiest way to watch a long run)
+  --interval <s>     Seconds between frames with --watch (default 2)`,
   async run(args, io) {
     const { values, positionals } = parseCommandArgs(
       "status",
       args,
-      { json: { type: "boolean", default: false } },
+      {
+        json: { type: "boolean", default: false },
+        watch: { type: "boolean", default: false },
+        interval: { type: "string" },
+      },
       true,
     );
+    if (values.watch && values.json)
+      throw new UsageError("status: --watch and --json exclude each other");
     const root = await workspace(io);
+    if (positionals.length > 0) changeId("status", positionals);
+    if (values.watch) {
+      const seconds = values.interval === undefined ? 2 : Number(values.interval);
+      if (!Number.isFinite(seconds) || seconds <= 0)
+        throw new UsageError("status: --interval must be a positive number of seconds");
+      await watchStatus(io, root, positionals, Math.max(10, Math.round(seconds * 1000)));
+      return ExitCode.Ok;
+    }
+    if (!values.json) {
+      renderStatus(io, root, positionals);
+      return ExitCode.Ok;
+    }
     // Corrupt state files are shown, not fatal: status is how they are found (audit P15).
     const lock = readOrCorrupt(() => readActive(root));
     const active = lock.value;
@@ -171,50 +226,64 @@ With an id: that change's phase, branches, task DAG with states, retries and wor
       positionals.length > 0
         ? { runs: [requireRun(root, changeId("status", positionals))], corrupt: [] }
         : scanRuns(root);
-
-    if (values.json) {
-      io.out(
-        JSON.stringify(
-          {
-            active: active ?? null,
-            driverAlive: active ? driverAlive(active) : false,
-            queue,
-            runs: runs.map((r) => ({ ...r, usage: summarizeUsage(root, r.id) })),
-            corrupt: [
-              ...[lock.corrupt, queued.corrupt]
-                .filter((e) => e !== undefined)
-                .map((e) => ({ file: e.file, error: e.message })),
-              ...corrupt.map((c) => ({ id: c.id, file: c.error.file, error: c.error.message })),
-            ],
-          },
-          null,
-          2,
-        ),
-      );
-      return ExitCode.Ok;
-    }
-    if (positionals.length === 0) {
-      io.out(
-        lock.corrupt
-          ? `active: unreadable: ${lock.corrupt.message}\n  ${lock.corrupt.fix}`
-          : active
-            ? `active: ${active.changeId}`
-            : "active: none",
-      );
-      io.out(
-        queued.corrupt
-          ? `queue: unreadable: ${queued.corrupt.message}\n  ${queued.corrupt.fix}`
-          : `queue: ${queue.length > 0 ? queue.join(", ") : "empty"}`,
-      );
-      if (runs.length === 0 && corrupt.length === 0)
-        io.out('no changes yet (start one with `ai-factory run "<request>"`)');
-    }
-    for (const run of runs) printRun(io, root, run, active, queue.indexOf(run.id));
-    for (const c of corrupt)
-      io.out(`change ${c.id} — unreadable: ${c.error.message}\n  ${c.error.fix}`);
+    io.out(
+      JSON.stringify(
+        {
+          active: active ?? null,
+          driverAlive: active ? driverAlive(active) : false,
+          queue,
+          runs: runs.map((r) => ({ ...r, usage: summarizeUsage(root, r.id) })),
+          corrupt: [
+            ...[lock.corrupt, queued.corrupt]
+              .filter((e) => e !== undefined)
+              .map((e) => ({ file: e.file, error: e.message })),
+            ...corrupt.map((c) => ({ id: c.id, file: c.error.file, error: c.error.message })),
+          ],
+        },
+        null,
+        2,
+      ),
+    );
     return ExitCode.Ok;
   },
 };
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted === true) {
+      resolve();
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    function done(): void {
+      if (timer !== undefined) clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
+
+/** `status --watch`: one frame per interval, cleared on a terminal, separated when piped. */
+async function watchStatus(
+  io: Io,
+  root: string,
+  positionals: readonly string[],
+  intervalMs: number,
+): Promise<void> {
+  let first = true;
+  while (io.signal?.aborted !== true) {
+    const lines: string[] = [];
+    renderStatus({ ...io, out: (line) => lines.push(line) }, root, positionals);
+    if (io.tty === true) io.out("\x1b[2J\x1b[H");
+    else if (!first) io.out("");
+    io.out(`updated ${new Date().toLocaleTimeString()} · Ctrl-C to stop`);
+    for (const line of lines) io.out(line);
+    first = false;
+    await sleep(intervalMs, io.signal);
+  }
+}
 
 export const abortCommand: Command = {
   name: "abort",

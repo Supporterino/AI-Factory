@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ExitCode } from "../src/cli/exit-codes.ts";
+import { runCli } from "../src/cli/main.ts";
 import { claimActive, enqueue, readActive, readQueue } from "../src/state/active.ts";
 import { loadRun, newRun, saveRun, TaskState } from "../src/state/run.ts";
 import { FACTORY_VERSION } from "../src/version.ts";
@@ -63,6 +64,20 @@ describe("status, retry and abort", () => {
     expect(json.active.changeId).toBe("add-x");
     expect(json.queue).toEqual(["next-thing"]);
     expect(json.runs.map((r) => r.id).sort()).toEqual(["add-x", "next-thing"]);
+  });
+
+  test("status --watch reprints frames until interrupted", async () => {
+    const out: string[] = [];
+    const code = await runCli(["status", "add-x", "--watch", "--interval", "0.01"], {
+      cwd: fx.root,
+      out: (line) => out.push(line),
+      err: () => {},
+      signal: AbortSignal.timeout(80),
+    });
+    expect(code).toBe(ExitCode.Ok);
+    expect(out.filter((line) => line.startsWith("updated ")).length).toBeGreaterThanOrEqual(2);
+    expect(out.join("\n")).toContain("change add-x — paused");
+    expect((await cli(fx.root, "status", "add-x", "--watch", "--json")).code).toBe(ExitCode.Usage);
   });
 
   test("status shows the full suite, contract results and provisional pointers (audit G4)", async () => {

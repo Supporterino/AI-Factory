@@ -11,10 +11,12 @@ import {
   addUsage,
   type SessionSpec,
   type Usage,
+  ZERO_USAGE,
 } from "../runtime/types.ts";
 import { loadRun, type RunState, updateRun } from "../state/run.ts";
 import { recordUsage, type UsageEntry } from "../usage/usage.ts";
 import { Semaphore } from "../util/semaphore.ts";
+import { Progress, type Verbosity } from "./progress.ts";
 
 /** Everything a pipeline step needs; one per CLI command invocation. */
 export interface PipelineDeps {
@@ -22,6 +24,11 @@ export interface PipelineDeps {
   /** Progress lines for the user. */
   readonly out: (line: string) => void;
   readonly signal: AbortSignal;
+  /** How much progress to print; defaults to "normal". */
+  readonly verbosity?: Verbosity;
+  /** Tests: 0 disables the heartbeat, `now` freezes elapsed time. */
+  readonly heartbeatMs?: number;
+  readonly now?: () => number;
 }
 
 export interface AgentCall {
@@ -31,6 +38,8 @@ export interface AgentCall {
   readonly modelRole: Role;
   readonly context: Omit<SessionSpec["context"], "changeId" | "role">;
   readonly title: string;
+  /** Progress label, usually the task title. */
+  readonly label?: string;
   readonly prompt: string;
   /** Usage bookkeeping: task id or step name, and the attempt kind (§11). */
   readonly step: string;
@@ -60,6 +69,7 @@ export class Pipeline {
   readonly limiter = new RateLimiter();
   readonly agents: Semaphore;
   readonly gates: Semaphore;
+  readonly progress: Progress;
 
   constructor(
     readonly root: string,
@@ -68,6 +78,13 @@ export class Pipeline {
   ) {
     this.agents = new Semaphore(config.parallel.maxAgents);
     this.gates = new Semaphore(config.parallel.maxGateProcesses);
+    this.progress = new Progress({
+      out: (line) => this.deps.out(line),
+      ...(deps.verbosity === undefined ? {} : { verbosity: deps.verbosity }),
+      maxAttempts: config.gates.maxRetries + 1,
+      ...(deps.heartbeatMs === undefined ? {} : { heartbeatMs: deps.heartbeatMs }),
+      ...(deps.now === undefined ? {} : { now: deps.now }),
+    });
   }
 
   codeRepos(): RepoConfig[] {
@@ -130,6 +147,7 @@ export class Pipeline {
   }
 
   async #call(call: AgentCall, signal: AbortSignal): Promise<AgentResult> {
+    const started = this.progress.now();
     const first = modelFor(this.config, call.modelRole, {
       ...(call.context.repo === undefined ? {} : { repo: call.context.repo }),
       agent: call.agent,
@@ -144,6 +162,7 @@ export class Pipeline {
           model: candidate,
           title: call.title,
           context: { ...call.context, changeId: call.changeId, role: call.role },
+          onActivity: (activity) => this.progress.activity(call.step, activity),
         });
         model = candidate;
         break;
@@ -152,54 +171,88 @@ export class Pipeline {
       }
     }
     if (raw === undefined) {
-      throw lastError instanceof Error
-        ? lastError
-        : new Error(`could not open a session for ${call.agent}`);
+      const err =
+        lastError instanceof Error
+          ? lastError
+          : new Error(`could not open a session for ${call.agent}`);
+      this.progress.agentFinished({
+        step: call.step,
+        outcome: "failed",
+        durationMs: this.progress.now() - started,
+        usage: ZERO_USAGE,
+        problem: err.message,
+      });
+      throw err;
     }
-    const provider = model.split("/")[0] ?? model;
-    const session = limited(raw, this.limiter, provider);
-    let turn = await promptForHandoff(session, call.prompt, signal);
-    let usage = turn.usage;
-    for (let attempt = 1; call.retry && turn.outcome === "succeeded"; attempt++) {
-      const next = await call.retry(turn.handoff, attempt);
-      if (next === undefined) break;
-      turn = await promptForHandoff(session, next, signal);
-      usage = addUsage(usage, turn.usage);
-    }
-    appendLog(
-      this.root,
-      call.changeId,
-      {
-        kind: "session",
-        session: raw.id,
-        agent: call.agent,
-        model,
-        title: call.title,
-        outcome: turn.outcome,
-        usage,
-        ...(turn.problem ? { problem: turn.problem } : {}),
-      },
-      { redact: this.config.logs.redact },
-    );
-    const entry: UsageEntry = {
-      at: new Date().toISOString(),
-      sessionId: raw.id,
+    this.progress.agentStarted({
+      step: call.step,
       agent: call.agent,
       model,
-      step: call.step,
-      kind: call.kind ?? "step",
+      ...(call.label === undefined ? {} : { label: call.label }),
       ...(call.attempt === undefined ? {} : { attempt: call.attempt }),
-      usage,
-    };
-    // Intake runs before the change id exists; `intake` records its entry under the id.
-    if (call.changeId !== "intake") await recordUsage(this.root, call.changeId, entry);
-    return {
-      ...(turn.handoff ? { handoff: turn.handoff } : {}),
-      ...(turn.problem ? { problem: turn.problem } : {}),
-      outcome: turn.outcome,
-      usage,
-      sessionId: raw.id,
-      model,
-    };
+    });
+    const finish = (
+      outcome: "succeeded" | "failed" | "interrupted",
+      usage: Usage,
+      problem?: string,
+    ) =>
+      this.progress.agentFinished({
+        step: call.step,
+        outcome,
+        durationMs: this.progress.now() - started,
+        usage,
+        ...(problem === undefined ? {} : { problem }),
+      });
+    try {
+      const provider = model.split("/")[0] ?? model;
+      const session = limited(raw, this.limiter, provider);
+      let turn = await promptForHandoff(session, call.prompt, signal);
+      let usage = turn.usage;
+      for (let attempt = 1; call.retry && turn.outcome === "succeeded"; attempt++) {
+        const next = await call.retry(turn.handoff, attempt);
+        if (next === undefined) break;
+        turn = await promptForHandoff(session, next, signal);
+        usage = addUsage(usage, turn.usage);
+      }
+      appendLog(
+        this.root,
+        call.changeId,
+        {
+          kind: "session",
+          session: raw.id,
+          agent: call.agent,
+          model,
+          title: call.title,
+          outcome: turn.outcome,
+          usage,
+          ...(turn.problem ? { problem: turn.problem } : {}),
+        },
+        { redact: this.config.logs.redact },
+      );
+      const entry: UsageEntry = {
+        at: new Date().toISOString(),
+        sessionId: raw.id,
+        agent: call.agent,
+        model,
+        step: call.step,
+        kind: call.kind ?? "step",
+        ...(call.attempt === undefined ? {} : { attempt: call.attempt }),
+        usage,
+      };
+      // Intake runs before the change id exists; `intake` records its entry under the id.
+      if (call.changeId !== "intake") await recordUsage(this.root, call.changeId, entry);
+      finish(turn.outcome, usage, turn.problem);
+      return {
+        ...(turn.handoff ? { handoff: turn.handoff } : {}),
+        ...(turn.problem ? { problem: turn.problem } : {}),
+        outcome: turn.outcome,
+        usage,
+        sessionId: raw.id,
+        model,
+      };
+    } catch (err) {
+      finish("failed", ZERO_USAGE, err instanceof Error ? err.message : String(err));
+      throw err;
+    }
   }
 }

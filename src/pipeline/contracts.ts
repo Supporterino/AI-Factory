@@ -65,6 +65,8 @@ export async function contractPhase(p: Pipeline, id: string): Promise<ContractOu
   const bases = Object.fromEntries(Object.entries(run.branches).map(([repo, b]) => [repo, b.base]));
   const results: ContractResult[] = [];
   for (const contract of contracts) {
+    if (p.progress.verbosity === "verbose")
+      p.progress.line(`  ⚙ [contracts] checking ${contract.kind} ${contract.path}`);
     results.push(
       await checkContract(
         {

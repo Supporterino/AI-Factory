@@ -143,7 +143,7 @@ Pointers whose MR has not merged stay provisional, and the command exits with 4.
 ## status
 
 ```
-ai-factory status [<change-id>] [--json]
+ai-factory status [<change-id>] [--json] [--watch [--interval <seconds>]]
 ```
 
 Shows the active change and its driver, the queue, and each change's details, including token usage (by agent and task, retry overhead, wasted re-reads) and how far the graph lags behind the merges:
@@ -153,6 +153,8 @@ Shows the active change and its driver, the queue, and each change's details, in
 - the full-suite result per repo, the contract gate results and the provisional pointer commit
 - the worktrees
 - corrupt run files, `active.lock` or `queue.json`, with how to recover (other changes still show)
+
+`--watch` reprints the same view every `--interval` seconds (default 2) until Ctrl-C. It clears the screen on a terminal and prints a separator between frames when piped, so a second terminal can watch a long run. `--watch` and `--json` exclude each other.
 
 ## retry
 
@@ -183,7 +185,7 @@ Feed it to `run --request`, or use `run --interactive` to refine in the same com
 ## quick
 
 ```
-ai-factory quick "<task>" [--repo <name>] [--agent <id>] [--no-review]
+ai-factory quick "<task>" [--repo <name>] [--agent <id>] [--no-review] [--verbose|--quiet]
 ```
 
 The no-OpenSpec path. Creates a `task/<slug>` branch (prefix from
@@ -194,7 +196,7 @@ gates; only the spec and approval hash are skipped. The branch stays checked out
 ## run
 
 ```
-ai-factory run "<request>" [--request <file>] [--interactive]
+ai-factory run "<request>" [--request <file>] [--interactive] [--verbose|--quiet]
 ```
 
 Starts a change and runs it up to spec approval. `--request` reads the request from a file
@@ -207,10 +209,12 @@ Starts a change and runs it up to spec approval. `--request` reads the request f
 
 When another change occupies the AI-repo checkout, the new change is drafted in `.factory/drafts/<id>`. Exit 0 means it awaits approval; exit 6 means the spec does not validate yet.
 
+Every agent call prints when it starts (step, agent, model) and ends (outcome, duration, tokens); gates and dependency installs print when they run, and a 30-second heartbeat lists what is still running. `--verbose` adds one line per tool call and every gate start; `--quiet` keeps only phase banners, merges, failures and the summary. The same flags work on `approve`, `resume` and `quick`.
+
 ## approve
 
 ```
-ai-factory approve <change-id> [--no-continue]
+ai-factory approve <change-id> [--no-continue] [--verbose|--quiet]
 ```
 
 Validates the change and commits the spec (`docs(spec): <id>`). Records the approval in `.factory/approvals/<id>.json`: the approver (git `user.email`), the spec commit and a content hash with task checkboxes normalised out. Then it continues automatically: activation, implementation, review and tests, contracts, full suite, close. If another change is active, this one is queued and starts when that one closes.
@@ -218,7 +222,7 @@ Validates the change and commits the spec (`docs(spec): <id>`). Records the appr
 ## resume
 
 ```
-ai-factory resume <change-id>
+ai-factory resume <change-id> [--verbose|--quiet]
 ```
 
 Continues a paused, aborted, interrupted or queued change from its last consistent state. The spec is re-checked against its approval first, and any edit other than a task checkbox voids the approval.

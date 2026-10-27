@@ -55,6 +55,9 @@ describe("quick task", () => {
     const res = await cliWith(runtime, fx.root, "quick", "add quick file", "--repo", "app");
     expect(res.code).toBe(ExitCode.Ok);
     expect(res.out).toContain("task/add-quick-file");
+    expect(res.out).toContain("  ▶ [quick] add quick file · implementer-app");
+    expect(res.out).toContain("  ⚙ [quick] gates:");
+    expect(res.out).toContain("  ✓ [quick] gates passed in");
     expect(await gitOut(fx.root, "branch", "--show-current")).toBe("task/add-quick-file");
     expect(readFileSync(join(fx.root, "src/quick.ts"), "utf8")).toContain("quick = 1");
     expect(await gitOut(fx.root, "log", "-1", "--format=%s")).toBe("feat: add quick file");

@@ -1,7 +1,13 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Handoff } from "../../src/handoff/schema.ts";
-import type { AgentRuntime, AgentSession, SessionSpec, Turn } from "../../src/runtime/types.ts";
+import type {
+  AgentRuntime,
+  AgentSession,
+  SessionActivity,
+  SessionSpec,
+  Turn,
+} from "../../src/runtime/types.ts";
 
 /**
  * A scripted agent runtime (ADR-0009): each prompt calls the script, which may edit files in
@@ -27,6 +33,8 @@ export interface ScriptStep {
   readonly outcome?: Turn["outcome"];
   readonly error?: string;
   readonly delayMs?: number;
+  /** Activities the runtime would stream while the turn runs (progress tests). */
+  readonly activity?: SessionActivity | readonly SessionActivity[];
 }
 
 export type Script = (call: ScriptCall) => ScriptStep | Promise<ScriptStep>;
@@ -79,6 +87,13 @@ export class ScriptedRuntime implements AgentRuntime {
         try {
           const step = await this.script(call);
           if (step.delayMs) await Bun.sleep(step.delayMs);
+          const activities =
+            step.activity === undefined
+              ? []
+              : Array.isArray(step.activity)
+                ? step.activity
+                : [step.activity];
+          for (const activity of activities) spec.onActivity?.(activity as SessionActivity);
           for (const [rel, content] of Object.entries(step.edits ?? {})) {
             const abs = join(spec.context.directory, rel);
             if (content === null) rmSync(abs, { force: true });

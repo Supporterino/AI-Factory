@@ -41,6 +41,25 @@ export interface GateReport {
   readonly results: readonly GateResult[];
 }
 
+/** A gate as progress output names it, before it has run. */
+export interface GateInfo {
+  readonly type: GateType;
+  readonly name?: string;
+  readonly command: string;
+  readonly cwd: string;
+}
+
+/** Live gate progress for the terminal; the report stays the source of truth. */
+export type GateEvent =
+  | { readonly phase: "plan"; readonly gates: readonly GateInfo[] }
+  | { readonly phase: "start"; readonly gate: GateInfo }
+  | {
+      readonly phase: "end";
+      readonly gate: GateInfo;
+      readonly status: GateStatus;
+      readonly durationMs: number;
+    };
+
 export interface RunGatesInput {
   /** Workspace root (for caches). */
   readonly root: string;
@@ -61,6 +80,8 @@ export interface RunGatesInput {
   readonly forbidShortcuts?: boolean;
   /** Gate tables from the change's snapshot. */
   readonly gateTables?: ResolveInput["gateTables"];
+  /** Progress while the gates run. Exceptions are ignored, never fatal to a gate. */
+  readonly onGate?: (event: GateEvent) => void;
 }
 
 const FAILING: ReadonlySet<GateStatus> = new Set(["fail", "missing", "not-check-only", "timeout"]);
@@ -219,6 +240,20 @@ export async function runGates(input: RunGatesInput): Promise<GateReport> {
       }),
     ),
   ];
+  const info = (gate: ResolvedGate): GateInfo => ({
+    type: gate.type,
+    ...(gate.name === undefined ? {} : { name: gate.name }),
+    command: gate.command,
+    cwd: gate.cwd,
+  });
+  const emit = (event: GateEvent): void => {
+    try {
+      input.onGate?.(event);
+    } catch {
+      // Progress is display-only; it must not fail a gate or a task.
+    }
+  };
+  emit({ phase: "plan", gates: plan.gates.map(info) });
   let failedBeforeTests = results.some((r) => FAILING.has(r.status));
   for (const gate of plan.gates) {
     if (TEST_GATES.has(gate.type) && failedBeforeTests) {
@@ -230,10 +265,18 @@ export async function runGates(input: RunGatesInput): Promise<GateReport> {
         durationMs: 0,
         output: "skip: format, lint or types failed",
       });
+      emit({ phase: "end", gate: info(gate), status: "skipped", durationMs: 0 });
       continue;
     }
+    emit({ phase: "start", gate: info(gate) });
     const result = await runOne(input, gate);
     results.push(result);
+    emit({
+      phase: "end",
+      gate: info(gate),
+      status: result.status,
+      durationMs: result.durationMs,
+    });
     if (!TEST_GATES.has(gate.type) && FAILING.has(result.status)) failedBeforeTests = true;
   }
 

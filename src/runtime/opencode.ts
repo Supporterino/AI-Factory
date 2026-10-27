@@ -11,7 +11,14 @@ import { sandboxEnabled } from "../policy/sandbox.ts";
 import { sessionContextFile } from "../policy/session-files.ts";
 import { toolBin } from "../tools.ts";
 import { PROVIDER_ENV, scrubList } from "./credentials.ts";
-import type { AgentRuntime, AgentSession, SessionSpec, Turn, Usage } from "./types.ts";
+import type {
+  AgentRuntime,
+  AgentSession,
+  SessionActivity,
+  SessionSpec,
+  Turn,
+  Usage,
+} from "./types.ts";
 
 /**
  * Drives one private `opencode serve` per CLI run (ADR-0001; verified end to end in
@@ -102,6 +109,50 @@ interface ServerMessage {
   readonly error?: { message?: string };
 }
 
+/** The parts of an opencode SSE event this runtime reads (all optional; events vary by version). */
+interface ServerEvent {
+  readonly type?: string;
+  readonly data?: {
+    readonly sessionID?: string;
+    readonly id?: string;
+    readonly assistantMessageID?: string;
+    readonly name?: string;
+    readonly input?: unknown;
+    readonly action?: string;
+    readonly resources?: string[];
+    readonly model?: {
+      readonly providerID?: string;
+      readonly id?: string;
+      readonly modelID?: string;
+    };
+    readonly tokens?: {
+      readonly input?: number;
+      readonly output?: number;
+      readonly reasoning?: number;
+      readonly cache?: { readonly read?: number; readonly write?: number };
+    };
+    readonly cost?: number;
+    readonly error?: { readonly message?: string };
+    readonly reason?: string;
+  };
+}
+
+const toolKey = (message: string, id: string): string => `${message}\0${id}`;
+
+/** Per-step usage from `session.step.ended`; absent on older servers, so it is optional. */
+function stepUsage(data: NonNullable<ServerEvent["data"]>): Usage | undefined {
+  const tokens = data.tokens;
+  if (tokens === undefined) return undefined;
+  return {
+    input: tokens.input ?? 0,
+    output: tokens.output ?? 0,
+    reasoning: tokens.reasoning ?? 0,
+    cacheRead: tokens.cache?.read ?? 0,
+    cacheWrite: tokens.cache?.write ?? 0,
+    cost: data.cost ?? 0,
+  };
+}
+
 interface SessionInfo {
   readonly outcome?: string;
   readonly cost?: number;
@@ -176,6 +227,10 @@ export class OpencodeRuntime implements AgentRuntime {
   #auth = "";
   #events = new AbortController();
   readonly #loaded = new Set<string>();
+  /** Session id → its progress callback (registered on `open`). */
+  readonly #activity = new Map<string, (activity: SessionActivity) => void>();
+  /** `assistantMessageID\0toolID` → tool name: `session.tool.called` does not repeat it. */
+  readonly #toolNames = new Map<string, string>();
 
   constructor(opts: OpencodeRuntimeOptions) {
     this.#opts = opts;
@@ -245,6 +300,7 @@ export class OpencodeRuntime implements AgentRuntime {
       this.#events.abort();
       this.#events = new AbortController();
       this.#loaded.clear();
+      this.#toolNames.clear();
     }
     const password = randomBytes(18).toString("base64url");
     const port = await freePort();
@@ -312,17 +368,29 @@ export class OpencodeRuntime implements AgentRuntime {
   }
 
   async #onEvent(raw: string): Promise<void> {
-    let event: {
-      type?: string;
-      data?: { id?: string; sessionID?: string; action?: string; resources?: string[] };
-    };
+    let event: ServerEvent;
     try {
-      event = JSON.parse(raw);
+      event = JSON.parse(raw) as ServerEvent;
     } catch {
       return;
     }
-    if (event.type !== "permission.asked" || !event.data?.id || !event.data.sessionID) return;
-    const { id, sessionID } = event.data;
+    const sessionID = event.data?.sessionID;
+    if (typeof sessionID === "string") {
+      const listener = this.#activity.get(sessionID);
+      if (listener !== undefined) {
+        const activity = this.#activityOf(event);
+        if (activity !== undefined) {
+          // Progress is display-only: a broken terminal must never break the session.
+          try {
+            listener(activity);
+          } catch {
+            // Ignored on purpose.
+          }
+        }
+      }
+    }
+    if (event.type !== "permission.asked" || !event.data?.id || !sessionID) return;
+    const { id } = event.data;
     appendLog(this.#opts.root, this.#opts.changeId, {
       kind: "permission-rejected",
       session: sessionID,
@@ -333,6 +401,72 @@ export class OpencodeRuntime implements AgentRuntime {
       decision: "reject",
     });
     if (reply.status >= 400) await this.#api("POST", `/api/session/${sessionID}/interrupt`);
+  }
+
+  /** Tool name cached from `session.tool.input.started`, when the event itself lacks it. */
+  #toolName(data: NonNullable<ServerEvent["data"]>): string {
+    if (typeof data.id === "string" && typeof data.assistantMessageID === "string") {
+      const name = this.#toolNames.get(toolKey(data.assistantMessageID, data.id));
+      if (name !== undefined) return name;
+    }
+    return typeof data.name === "string" ? data.name : "tool";
+  }
+
+  /** The opencode event stream as display progress; unknown and foreign events are ignored. */
+  #activityOf(event: ServerEvent): SessionActivity | undefined {
+    const data = event.data;
+    if (data === undefined) return undefined;
+    switch (event.type) {
+      case "session.step.started": {
+        const model = data.model;
+        const name =
+          model === undefined
+            ? undefined
+            : [model.providerID, model.id ?? model.modelID]
+                .filter((p) => p !== undefined)
+                .join("/");
+        return { kind: "step-started", ...(name ? { model: name } : {}) };
+      }
+      case "session.tool.input.started": {
+        if (
+          typeof data.id === "string" &&
+          typeof data.assistantMessageID === "string" &&
+          typeof data.name === "string"
+        ) {
+          this.#toolNames.set(toolKey(data.assistantMessageID, data.id), data.name);
+        }
+        return undefined;
+      }
+      case "session.tool.called":
+        return {
+          kind: "tool",
+          tool: this.#toolName(data),
+          ...(data.input === undefined ? {} : { input: data.input }),
+        };
+      case "session.tool.success":
+      case "session.tool.failed": {
+        const tool = this.#toolName(data);
+        const error = data.error?.message;
+        if (typeof data.id === "string" && typeof data.assistantMessageID === "string")
+          this.#toolNames.delete(toolKey(data.assistantMessageID, data.id));
+        return {
+          kind: "tool-done",
+          tool,
+          status: event.type === "session.tool.failed" ? "failed" : "ok",
+          ...(typeof error === "string" ? { error } : {}),
+        };
+      }
+      case "session.step.ended": {
+        const usage = stepUsage(data);
+        return usage === undefined ? undefined : { kind: "step-done", usage };
+      }
+      case "session.retry.scheduled": {
+        const reason = data.error?.message ?? data.reason;
+        return { kind: "retry", ...(typeof reason === "string" ? { reason } : {}) };
+      }
+      default:
+        return undefined;
+    }
   }
 
   /**
@@ -371,6 +505,7 @@ export class OpencodeRuntime implements AgentRuntime {
         `opencode session create failed (${created.status}): ${JSON.stringify(created.data)}`,
       );
     }
+    if (spec.onActivity !== undefined) this.#activity.set(id, spec.onActivity);
     // The plugin refuses every tool call of a session without its context file.
     const file = sessionContextFile(this.#opts.root, id);
     mkdirSync(join(this.#opts.root, ".factory", "sessions"), { recursive: true });
@@ -492,6 +627,8 @@ export class OpencodeRuntime implements AgentRuntime {
 
   async close(): Promise<void> {
     this.#events.abort();
+    this.#activity.clear();
+    this.#toolNames.clear();
     const proc = this.#proc;
     if (!proc || proc.exitCode !== null) return;
     proc.kill("SIGTERM");

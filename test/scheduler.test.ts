@@ -10,6 +10,7 @@ import {
   type MergeResult,
   retryTask,
   Scheduler,
+  type TaskEvent,
   type TaskRunner,
 } from "../src/scheduler/scheduler.ts";
 import {
@@ -107,7 +108,12 @@ class FakeRunner implements TaskRunner {
 
 const schedule = (
   runner: TaskRunner,
-  extra: { maxAgents?: number; maxRetries?: number; serialRepos?: string[] } = {},
+  extra: {
+    maxAgents?: number;
+    maxRetries?: number;
+    serialRepos?: string[];
+    observe?: (event: TaskEvent) => void;
+  } = {},
 ) =>
   new Scheduler({
     root,
@@ -116,6 +122,7 @@ const schedule = (
     maxRetries: extra.maxRetries ?? 3,
     runner,
     ...(extra.serialRepos ? { serialRepos: extra.serialRepos } : {}),
+    ...(extra.observe ? { observe: extra.observe } : {}),
   }).run();
 
 const task = (id: string) => loadRun(root, "add-x")?.tasks.find((t) => t.id === id);
@@ -177,6 +184,40 @@ describe("Scheduler", () => {
     expect((await schedule(runner)).status).toBe("complete");
     expect(runner.feedback["1.1"]).toEqual([undefined, "lint: e1", "lint: e2", "lint: e3"]);
     expect(task("1.1")).toMatchObject({ status: "merged", failures: 3 });
+  });
+
+  test("progress events follow the lifecycle, and a broken listener cannot stop the DAG", async () => {
+    seed([
+      { id: "1.1", touches: ["a/**"] },
+      { id: "1.2", touches: ["b/**"] },
+      { id: "1.3", touches: ["b/**"] },
+    ]);
+    const runner = new FakeRunner();
+    // 1.2 outlives 1.1, so the next dispatch finds 1.3 blocked by a running task.
+    runner.onAttempt = async (t) => {
+      if (t.id === "1.2") await Bun.sleep(200);
+    };
+    const events: TaskEvent[] = [];
+    const summary = await schedule(runner, {
+      observe: (event) => {
+        events.push(event);
+        throw new Error("a progress listener must never break scheduling");
+      },
+    });
+    expect(summary.status).toBe("complete");
+    expect(events.filter((e) => e.type === "merged")).toHaveLength(3);
+    const waiting = events.find((e) => e.type === "waiting" && e.tasks.some((t) => t.id === "1.3"));
+    expect(waiting).toMatchObject({ tasks: [{ id: "1.3", reason: "touches overlap with 1.2" }] });
+  });
+
+  test("a spent retry is announced with its next attempt number", async () => {
+    seed([{ id: "1.1" }]);
+    const runner = new FakeRunner();
+    runner.attempts.set("1.1", [{ status: "gate-failed", output: "lint" }]);
+    const events: TaskEvent[] = [];
+    expect((await schedule(runner, { observe: (e) => events.push(e) })).status).toBe("complete");
+    const retry = events.find((e) => e.type === "retry");
+    expect(retry).toMatchObject({ type: "retry", attempt: 2, reason: "gate-failed" });
   });
 
   test("an agent-server crash does not spend the retry budget (audit P5)", async () => {

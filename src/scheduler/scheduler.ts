@@ -40,6 +40,30 @@ export type MergeResult =
   | { status: "conflict"; conflicts: string[] }
   | { status: "gates-failed"; output: string };
 
+/**
+ * Task transitions for progress output. The run state stays the source of truth; these are
+ * emitted at the same points, so a listener sees exactly what `status` would show later.
+ */
+export type TaskEvent =
+  | { readonly type: "started"; readonly task: TaskState; readonly attempt: number }
+  | {
+      readonly type: "retry";
+      readonly task: TaskState;
+      readonly attempt: number;
+      readonly reason: string;
+    }
+  | { readonly type: "failed"; readonly task: TaskState; readonly reason: string }
+  | { readonly type: "merging"; readonly task: TaskState }
+  | { readonly type: "merged"; readonly task: TaskState; readonly commit: string }
+  | { readonly type: "conflict"; readonly task: TaskState; readonly files: readonly string[] }
+  | { readonly type: "requeued"; readonly task: TaskState; readonly reason: string }
+  | { readonly type: "transient"; readonly task: TaskState; readonly reason: string }
+  | { readonly type: "interrupted"; readonly task: TaskState }
+  | {
+      readonly type: "waiting";
+      readonly tasks: readonly { readonly id: string; readonly reason: string }[];
+    };
+
 /** The side-effecting work per task; the pipeline provides the real one, tests a fake. */
 export interface TaskRunner {
   /** One implementation attempt: agent session, gates and the task commit in its worktree. */
@@ -68,6 +92,8 @@ export interface SchedulerOptions {
   readonly runner: TaskRunner;
   /** External stop (signal handler). `abortRequested` in the run state is polled too. */
   readonly signal?: AbortSignal;
+  /** Progress listener; exceptions are ignored so output can never stall the DAG. */
+  readonly observe?: (event: TaskEvent) => void;
 }
 
 export interface RunSummary {
@@ -110,11 +136,21 @@ export class Scheduler {
   /** Consecutive infrastructure failures, and the reason once dispatch stopped for them. */
   #transient = 0;
   #halted: string | undefined;
+  /** Last waiting line emitted, so an unchanged blocked DAG does not repeat it. */
+  #lastWaiting = "";
 
   constructor(opts: SchedulerOptions) {
     this.#opts = opts;
     this.#agents = new Semaphore(opts.maxAgents);
     opts.signal?.addEventListener("abort", () => this.#abort.abort(), { once: true });
+  }
+
+  #emit(event: TaskEvent): void {
+    try {
+      this.#opts.observe?.(event);
+    } catch {
+      // Progress is display-only: it must never stall the DAG.
+    }
   }
 
   async #update(mutate: (draft: RunState) => void): Promise<RunState> {
@@ -139,20 +175,31 @@ export class Scheduler {
   /** Whether `task` may start now, given what is in flight. */
   #canStart(task: TaskState): boolean {
     if (task.status !== "pending" || this.#inFlight.has(task.id)) return false;
+    return this.#blockReason(task) === undefined;
+  }
+
+  /** Why a pending, not-dispatched task has to wait, phrased for the terminal. */
+  #blockReason(task: TaskState): string | undefined {
     const done = (dep: string): boolean =>
       this.#state.tasks.find((t) => t.id === dep)?.status === "merged";
-    if (!task.deps.every(done)) return false;
+    const waiting = task.deps.filter((dep) => !done(dep));
+    if (waiting.length > 0) return `waiting on ${waiting.join(", ")}`;
     const serialRepo = this.#opts.serialRepos?.includes(task.repo) ?? false;
     const busy = [...this.#inFlight.keys()]
       .map((id) => this.#task(id))
       .filter((t) => t.repo === task.repo);
-    if (task.serial || serialRepo) return busy.length === 0;
-    if (busy.some((t) => t.serial || touchesOverlap(t.touches, task.touches))) return false;
+    if (task.serial || serialRepo)
+      return busy.length === 0
+        ? undefined
+        : `${busy.map((t) => t.id).join(", ")} is running in ${task.repo}`;
+    const blocking = busy.find((t) => t.serial || touchesOverlap(t.touches, task.touches));
+    if (blocking !== undefined)
+      return `${blocking.serial ? "a serial task" : "touches overlap with"} ${blocking.id}`;
     // A waiting serial task in the repo goes first, so it cannot starve.
     const serialWaiting = this.#state.tasks.some(
       (t) => t.repo === task.repo && t.serial && t.status === "pending" && t.deps.every(done),
     );
-    return !serialWaiting;
+    return serialWaiting ? "a serial task in the repo goes first" : undefined;
   }
 
   async #fail(id: string, reason: string): Promise<void> {
@@ -170,6 +217,8 @@ export class Scheduler {
         }
       }
     });
+    const task = this.#state.tasks.find((t) => t.id === id);
+    if (task !== undefined) this.#emit({ type: "failed", task, reason });
   }
 
   /** Counts one failure against the budget; true when the task may try again. */
@@ -183,21 +232,23 @@ export class Scheduler {
       await this.#fail(id, `${event}; retry budget (${this.#opts.maxRetries}) exhausted`);
       return false;
     }
+    this.#emit({ type: "retry", task, attempt: task.failures + 1, reason: event });
     return true;
   }
 
   /** Back to pending after an interrupt; the task resumes where it stopped. */
   async #interrupted(id: string): Promise<void> {
-    await this.#mutateTask(id, (t) => {
+    const task = await this.#mutateTask(id, (t) => {
       t.status = "pending";
       recordTask(t, "interrupted");
     });
+    this.#emit({ type: "interrupted", task });
   }
 
   /** Drops the task's work and queues it to run alone in its repo from the latest tip. */
   async #requeueSerially(id: string, reason: string): Promise<void> {
     await this.#opts.runner.reset(this.#task(id));
-    await this.#mutateTask(id, (t) => {
+    const task = await this.#mutateTask(id, (t) => {
       t.status = "pending";
       t.serial = true;
       t.gatesPassed = false;
@@ -206,6 +257,7 @@ export class Scheduler {
       delete t.branch;
       recordTask(t, "requeued serially", reason);
     });
+    this.#emit({ type: "requeued", task, reason });
   }
 
   /** Checks the run state for an abort another process requested (`ai-factory abort`). */
@@ -236,6 +288,7 @@ export class Scheduler {
             t.gatesPassed = false;
             recordTask(t, "attempt", `attempt ${t.failures + 1}`);
           });
+          this.#emit({ type: "started", task, attempt: task.failures + 1 });
           try {
             return await runner.attempt(task, {
               signal,
@@ -253,10 +306,11 @@ export class Scheduler {
         if (result.status === "transient") {
           // Not the task's fault: back to pending, budget untouched; stop after repeats.
           this.#transient++;
-          await this.#mutateTask(id, (t) => {
+          const task = await this.#mutateTask(id, (t) => {
             t.status = "pending";
             recordTask(t, "infrastructure failed", result.reason);
           });
+          this.#emit({ type: "transient", task, reason: result.reason });
           if (this.#transient >= MAX_TRANSIENT) {
             this.#halted ??= result.reason;
             return;
@@ -285,9 +339,10 @@ export class Scheduler {
       // Merge through the repo's queue; conflicts get one resolution attempt.
       let resolvedOnce = false;
       for (;;) {
-        await this.#mutateTask(id, (t) => {
+        const merging = await this.#mutateTask(id, (t) => {
           t.status = "merging";
         });
+        this.#emit({ type: "merging", task: merging });
         const task = this.#task(id);
         const merge = await this.#merges.run(task.repo, () => runner.merge(task));
         if (merge.status === "merged") {
@@ -303,6 +358,7 @@ export class Scheduler {
               }
             })
           ).mergeSeq;
+          this.#emit({ type: "merged", task: this.#task(id), commit: merge.commit });
           if (runner.afterMerge) {
             const merged = this.#task(id);
             this.#afterMergeChain = this.#afterMergeChain.then(() =>
@@ -323,6 +379,7 @@ export class Scheduler {
           break; // back to implementation attempts in the rebased worktree
         }
         // Conflict.
+        this.#emit({ type: "conflict", task: this.#task(id), files: merge.conflicts });
         if (this.#task(id).serial || resolvedOnce) {
           if (this.#task(id).serial) {
             await this.#fail(
@@ -358,9 +415,11 @@ export class Scheduler {
 
   #dispatch(): void {
     if (this.#halted !== undefined) return;
+    let dispatched = false;
     for (const task of this.#state.tasks) {
       if (this.#aborted()) return;
       if (!this.#canStart(task)) continue;
+      dispatched = true;
       const work = this.#process(task.id)
         .catch(async (err: unknown) => {
           await this.#fail(
@@ -374,6 +433,27 @@ export class Scheduler {
         });
       this.#inFlight.set(task.id, work);
     }
+    this.#reportWaiting(dispatched);
+  }
+
+  /** Says why pending tasks are not running, once per distinct blocked state. */
+  #reportWaiting(dispatched: boolean): void {
+    if (dispatched) {
+      this.#lastWaiting = "";
+      return;
+    }
+    if (this.#inFlight.size >= this.#opts.maxAgents) return;
+    const waiting = this.#state.tasks
+      .filter((t) => t.status === "pending" && !this.#inFlight.has(t.id))
+      .map((t) => ({ id: t.id, reason: this.#blockReason(t) ?? "next free slot" }));
+    if (waiting.length === 0) {
+      this.#lastWaiting = "";
+      return;
+    }
+    const key = waiting.map((w) => `${w.id}:${w.reason}`).join("|");
+    if (key === this.#lastWaiting) return;
+    this.#lastWaiting = key;
+    this.#emit({ type: "waiting", tasks: waiting });
   }
 
   /** Crash recovery: interrupted work goes back to pending, merges are retried. */

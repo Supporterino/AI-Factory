@@ -263,6 +263,62 @@ describe("pipeline: single repo", () => {
       t.replace('"overrides": {}', `"overrides": ${JSON.stringify({ app: gates })}`),
     );
 
+  /** A scripted change whose implementers report one tool call and one failed tool call. */
+  const progressRuntime = () =>
+    new ScriptedRuntime(
+      factoryScript({
+        changeId: ID,
+        summary: "Math helpers",
+        repos: ["app"],
+        tasks: SINGLE_TASKS,
+        implement: (task) => ({
+          edits: { [task.file]: task.content },
+          handoff: { task: task.id },
+          activity: [
+            { kind: "tool", tool: "bash", input: { command: "bun test" } },
+            { kind: "tool-done", tool: "bash", status: "failed", error: "exit 1" },
+          ],
+        }),
+      }),
+    );
+
+  test("implementation prints task, gate, merge and summary progress", async () => {
+    await withGates(passAll);
+    const runtime = progressRuntime();
+    await cliWith(runtime, fx.root, "run", "Add math helpers");
+    const approve = await cliWith(runtime, fx.root, "approve", ID);
+    expect(approve.code).toBe(ExitCode.Ok);
+    expect(approve.out).toContain("  ▶ [1.1] Add a multiply helper · implementer-app");
+    expect(approve.out).toContain("  ⚙ [1.1] gates:");
+    expect(approve.out).toContain("  ✓ [1.1] gates passed in");
+    expect(approve.out).toContain("  ✓ 1.1 merged (app)");
+    // A failed tool call is shown even without --verbose; a successful one is not.
+    expect(approve.out).toContain("  ✗ [1.1] bash failed: exit 1");
+    expect(approve.out).not.toContain("· [1.1] bash: bun test");
+    expect(approve.out).toContain("implement: 2/2 merged in");
+  });
+
+  test("--verbose streams tool calls", async () => {
+    await withGates(passAll);
+    const runtime = progressRuntime();
+    await cliWith(runtime, fx.root, "run", "Add math helpers");
+    const approve = await cliWith(runtime, fx.root, "approve", ID, "--verbose");
+    expect(approve.code).toBe(ExitCode.Ok);
+    expect(approve.out).toContain("  · [1.1] bash: bun test");
+  });
+
+  test("--quiet drops the play-by-play but keeps merges and the summary", async () => {
+    await withGates(passAll);
+    const runtime = progressRuntime();
+    await cliWith(runtime, fx.root, "run", "Add math helpers");
+    const approve = await cliWith(runtime, fx.root, "approve", ID, "--quiet");
+    expect(approve.code).toBe(ExitCode.Ok);
+    expect(approve.out).not.toContain("▶ [1.1]");
+    expect(approve.out).not.toContain("⚙ [1.1]");
+    expect(approve.out).toContain("  ✓ 1.1 merged (app)");
+    expect(approve.out).toContain("implement: 2/2 merged in");
+  });
+
   test("a gate failure retries 3× with feedback, pauses with a report, and retry + resume finish it", async () => {
     await withGates({ ...passAll, lint: "! grep -rq BROKEN src" });
     let fixed = false;
@@ -282,6 +338,8 @@ describe("pipeline: single repo", () => {
 
     const approve = await cliWith(runtime, fx.root, "approve", ID);
     expect(approve.code).toBe(ExitCode.Paused);
+    expect(approve.out).toContain("failed: 1.1");
+    expect(approve.out).toContain(`${ID}-paused.md`);
     const state = loadRun(fx.root, ID);
     expect(state?.tasks.map((t) => [t.id, t.status, t.failures])).toEqual([
       ["1.1", "failed", 4],
