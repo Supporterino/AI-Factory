@@ -27,10 +27,16 @@ function dirOf(path: string): string {
 const within = (path: string, dir: string): boolean =>
   dir === "." || path === dir || path.startsWith(`${dir}/`);
 
+/** An Xcode project bundle marks its parent; any other marker file marks its own dir. */
+function markerDir(path: string): string {
+  const dir = dirOf(path);
+  return dir.endsWith(".xcodeproj") ? dirOf(dir) : dir;
+}
+
 function markerDirs(profile: Profile, files: readonly string[]): string[] {
   const dirs = [
     ...new Set(
-      files.filter((f) => profile.markers.includes(f.slice(f.lastIndexOf("/") + 1))).map(dirOf),
+      files.filter((f) => profile.markers.includes(f.slice(f.lastIndexOf("/") + 1))).map(markerDir),
     ),
   ].sort((a, b) => a.split("/").length - b.split("/").length || a.localeCompare(b));
   if (profile.targets === "nested") return dirs;

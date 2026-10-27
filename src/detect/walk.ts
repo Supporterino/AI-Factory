@@ -8,6 +8,7 @@ export const SKIP_DIRS: ReadonlySet<string> = new Set([
   "vendor",
   "dist",
   "build",
+  ".build",
   "target",
   ".venv",
   "venv",

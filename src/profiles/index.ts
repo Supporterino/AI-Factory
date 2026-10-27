@@ -163,6 +163,21 @@ const RUST_TEST_GLOBS = ["tests/*", "*/tests/*", "*/tests.rs", "benches/*", "*/b
 const TAURI_DIST = `node -e 'const fs=require("fs");try{const d=JSON.parse(fs.readFileSync("tauri.conf.json","utf8")).build?.frontendDist;if(typeof d==="string"&&!/^[a-z]+:/i.test(d))fs.mkdirSync(d,{recursive:true})}catch{}'`;
 const withDist = (command: string): string => `${TAURI_DIST}; ${command}`;
 
+const SWIFT_PACKAGE = { file: ["Package.swift"] } as const;
+
+/**
+ * Xcode/XcodeGen fallback for Swift targets that are not SwiftPM packages. XcodeGen runs
+ * first when project.yml is present. The scheme defaults to the project name; a repo whose
+ * scheme differs sets a gate override in factory.config.jsonc.
+ */
+const xcode = (action: "build" | "test"): string =>
+  [
+    "if [ -f project.yml ]; then xcodegen generate; fi",
+    'project="$(ls -d *.xcodeproj 2>/dev/null | head -n 1)"',
+    '[ -n "$project" ] || { echo "no .xcodeproj in the target directory" >&2; exit 1; }',
+    `xcodebuild -project "$project" -scheme "$(basename "$project" .xcodeproj)" ${action} CODE_SIGNING_ALLOWED=NO`,
+  ].join(" && ");
+
 export const PROFILES: Readonly<Record<Language, Profile>> = {
   typescript: { id: "typescript", title: "TypeScript / JavaScript", prose: typescript, ...TS_BASE },
   react: { id: "react", title: "React", prose: react, ...TS_BASE },
@@ -230,16 +245,16 @@ export const PROFILES: Readonly<Record<Language, Profile>> = {
     title: "Swift",
     prose: swift,
     testGlobs: ["*Tests.swift", "*/Tests/*", "Tests/*"],
-    markers: ["Package.swift"],
+    markers: ["Package.swift", "project.yml", "project.pbxproj"],
     targets: "dir",
     extensions: [".swift"],
     binDirs: [],
     gates: {
       format: [{ command: "swiftformat --lint .", scoped: "swiftformat --lint {files}" }],
       lint: [{ command: "swiftlint lint", scoped: "swiftlint lint --path {files}" }],
-      types: [{ command: "swift build" }],
-      test: [{ command: "swift test" }],
-      testAffected: [{ command: "swift test" }],
+      types: [{ when: SWIFT_PACKAGE, command: "swift build" }, { command: xcode("build") }],
+      test: [{ when: SWIFT_PACKAGE, command: "swift test" }, { command: xcode("test") }],
+      testAffected: [{ when: SWIFT_PACKAGE, command: "swift test" }, { command: xcode("test") }],
     },
     install: [{ lockfile: "Package.resolved", command: "swift package resolve" }],
   },

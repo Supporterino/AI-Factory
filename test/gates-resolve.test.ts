@@ -246,6 +246,56 @@ describe("task mode", () => {
   });
 });
 
+describe("swift gates", () => {
+  test("SwiftPM packages keep the swift toolchain", () => {
+    const p = plan(
+      {
+        "Package.swift": "// swift-tools-version: 6.0\n",
+        "Sources/App/App.swift": "struct App {}\n",
+      },
+      { languages: ["swift"], mode: "task", changed: ["Sources/App/App.swift"] },
+    );
+    expect(commands(p)).toEqual([
+      "format@.: swiftformat --lint Sources/App/App.swift (profile)",
+      "lint@.: swiftlint lint --path Sources/App/App.swift (profile)",
+      "types@.: swift build (profile)",
+      "testAffected@.: swift test (profile)",
+    ]);
+  });
+
+  test("XcodeGen projects fall back to xcodegen + xcodebuild, including affected tests", () => {
+    const p = plan(
+      { "project.yml": "name: App\n", "App/App.swift": "struct App {}\n" },
+      { languages: ["swift"], mode: "task", changed: ["App/App.swift"] },
+    );
+    const types = p.gates.find((g) => g.type === "types");
+    const affected = p.gates.find((g) => g.type === "testAffected");
+    expect(types?.cwd).toBe(".");
+    expect(types?.command).toContain("xcodegen generate");
+    expect(types?.command).toContain("xcodebuild");
+    expect(types?.command).toEndWith("build CODE_SIGNING_ALLOWED=NO");
+    expect(affected?.command).toEndWith("test CODE_SIGNING_ALLOWED=NO");
+    expect(p.missing).toEqual([]);
+  });
+
+  test("a bare .xcodeproj marks its parent and resolves xcodebuild", () => {
+    const p = plan(
+      { "App.xcodeproj/project.pbxproj": "", "App/App.swift": "struct App {}\n" },
+      { languages: ["swift"], mode: "task", changed: ["App/App.swift"] },
+    );
+    expect(p.gates.map((g) => `${g.type}@${g.cwd}`)).toEqual([
+      "format@.",
+      "lint@.",
+      "types@.",
+      "testAffected@.",
+    ]);
+    expect(p.gates.find((g) => g.type === "types")?.command).toContain(
+      'project="$(ls -d *.xcodeproj',
+    );
+    expect(p.missing).toEqual([]);
+  });
+});
+
 describe("tauri gates", () => {
   const app: Files = {
     "package.json": "{}",
