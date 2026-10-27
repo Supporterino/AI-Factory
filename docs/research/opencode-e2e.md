@@ -1,5 +1,7 @@
 # opencode 2.1.2 end-to-end spike (slice 6)
 
+> Re-verified against 2.2.0 on 2026-10-27: see [`notes/opencode-2.2.0.md`](notes/opencode-2.2.0.md). The runtime E2E test passes on both versions.
+
 Run on 2026-10-23 against the real `opencode` 2.1.2 binary, with a stub model server and a sandboxed private server (isolated XDG dirs, HOME, TMPDIR, `OPENCODE_DB`; outbound network denied except localhost). The workspace was produced by `ai-factory init` on the single-repo fixture.
 
 ## Setup that worked

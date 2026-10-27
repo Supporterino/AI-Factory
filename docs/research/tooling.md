@@ -1,23 +1,32 @@
 # Tooling research (Phase 0)
 
-Checked on 2026-10-23 on macOS (arm64). Each fact is tagged with how it was verified:
+Phase 0 checked on 2026-10-23 on macOS (arm64); opencode was re-checked against 2.2.0 on
+2026-10-27. Each fact is tagged with how it was verified:
 **[S]** source code at the given tag, **[D]** official docs, **[H]** local `--help`, **[X]** tested in a spike.
 Raw notes with more detail are in [`notes/`](notes/). Pinned versions live in [`src/versions.ts`](../../src/versions.ts).
 
-| Tool        | Installed | Latest             | Factory pin                           | Primary sources                                                          |
-| ----------- | --------- | ------------------ | ------------------------------------- | ------------------------------------------------------------------------ |
-| opencode v2 | 2.1.2     | 2.1.3 (2026-10-23) | `>=2.1.2 <2.2.0`, tested 2.1.2        | github.com/anomalyco/opencode @ `v2.1.2` (a517687f), opencode.ai/v2/docs |
-| OpenSpec    | 1.10.0    | 1.14.3             | `>=1.10.0 <2`, tested 1.10.0 + 1.14.3 | github.com/Fission-AI/OpenSpec @ `v1.10.0`, npm `@fission-ai/openspec`   |
-| Graphify    | 0.9.93    | 0.9.94             | `>=0.9.93 <0.10`, tested 0.9.93       | PyPI `graphifyy`, github.com/Graphify-Labs/graphify, docs.graphify.com   |
-| Ponytail    | n/a       | v5.3.2             | `v5.3.2` @ `16352ac2…`                | github.com/DietrichGebert/ponytail, npm `@dietrichgebert/ponytail`       |
-| git         | 2.54.0    |                    | `>=2.31` (needs `GIT_CONFIG_COUNT`)   | git-scm docs, spikes                                                     |
-| Bun         | 1.3.11    |                    | `>=1.3.0`                             |                                                                          |
+| Tool        | Installed | Latest             | Factory pin                            | Primary sources                                                          |
+| ----------- | --------- | ------------------ | -------------------------------------- | ------------------------------------------------------------------------ |
+| opencode v2 | 2.2.0     | 2.2.0 (2026-10-27) | `>=2.1.2 <2.3.0`, tested 2.1.2 + 2.2.0 | github.com/anomalyco/opencode @ `v2.2.0` (1097e266), opencode.ai/v2/docs |
+| OpenSpec    | 1.10.0    | 1.14.3             | `>=1.10.0 <2`, tested 1.10.0 + 1.14.3  | github.com/Fission-AI/OpenSpec @ `v1.10.0`, npm `@fission-ai/openspec`   |
+| Graphify    | 0.9.93    | 0.9.94             | `>=0.9.93 <0.10`, tested 0.9.93        | PyPI `graphifyy`, github.com/Graphify-Labs/graphify, docs.graphify.com   |
+| Ponytail    | n/a       | v5.3.2             | `v5.3.2` @ `16352ac2…`                 | github.com/DietrichGebert/ponytail, npm `@dietrichgebert/ponytail`       |
+| git         | 2.54.0    |                    | `>=2.31` (needs `GIT_CONFIG_COUNT`)    | git-scm docs, spikes                                                     |
+| Bun         | 1.3.11    |                    | `>=1.3.0`                              |                                                                          |
 
 > **opencode.ai/docs is still the V1 documentation.** V2 docs live at **opencode.ai/v2/docs**. V1 plugins do not load in V2 [X].
 
+### opencode 2.2.0 delta (2026-10-27) [S, X]
+
+- **No removed API.** The 2.2.0 OpenAPI surface has no removed paths: every route, request and response schema the factory uses (`/api/plugin`, `/api/agent`, session create/prompt/message, permission reply, `/api/experimental/session/{id}/wait`) is unchanged from 2.1.2. New routes are additive: `/api/plugin/gui`, experimental generate/media/voice/client-MCP/fs-watch/usage-limit endpoints, and `types` filters on `/api/event` and `/api/model`.
+- **Agent readiness.** `/api/agent` can now return `503` while plugins reload. The runtime already retries any non-array response in `#awaitAgent`.
+- **Breaking changes elsewhere.** `@opencode/ai`'s root became the Promise API, TUI plugins require OpenTUI 0.7, and the GitHub Action was removed. The factory imports no opencode package; the `@opencode/ai/providers/anthropic-compatible` subpath used by the stub provider still resolves [X].
+- **Direct tool exposure.** When `execute` is wholly denied (every factory agent denies it), 2.2.0 now exposes non-`codemode:false` tools directly instead of hiding them. Each tool's own permission still applies. This makes `mcp.roles` work as documented, but a global `allow` for an MCP action can now expose a tool the role did not list. The factory keeps its existing rules (no catch-all deny); the risk is recorded in the 2.2.0 changeset.
+- **Verified end to end.** The stub-model runtime E2E passes on 2.1.2 and 2.2.0. On 2.2.0, the plugin loads for nested worktree directories and the nearest `.opencode/agents` wins over a parent copy [X].
+
 ---
 
-## 1. opencode v2 (2.1.2)
+## 1. opencode v2 (2.1.2 baseline)
 
 ### Install
 

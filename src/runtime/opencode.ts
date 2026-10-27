@@ -335,7 +335,10 @@ export class OpencodeRuntime implements AgentRuntime {
     if (reply.status >= 400) await this.#api("POST", `/api/session/${sessionID}/interrupt`);
   }
 
-  /** opencode loads agents per directory asynchronously; wait until ours is visible. */
+  /**
+   * opencode loads agents per directory asynchronously; wait until ours is visible. 2.2.0 can
+   * return 503 while plugins settle, so any non-array response is treated as "not yet".
+   */
   async #awaitAgent(directory: string, agent: string): Promise<void> {
     const key = `${directory}\0${agent}`;
     if (this.#loaded.has(key)) return;

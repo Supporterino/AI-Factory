@@ -10,11 +10,14 @@ export interface VersionRange {
   readonly tested: string;
 }
 
-/** opencode v2 runtime. 2.1.0 broke plugin/SDK contracts on purpose, so stay within one minor. */
+/**
+ * opencode v2 runtime. 2.1.0 broke plugin/SDK contracts on purpose; 2.1.2 and 2.2.0 were
+ * verified end to end, so support that range and re-check every new minor before widening it.
+ */
 export const OPENCODE: VersionRange & { readonly npmCli: string } = {
   min: "2.1.2",
-  maxExclusive: "2.2.0",
-  tested: "2.1.2",
+  maxExclusive: "2.3.0",
+  tested: "2.2.0",
   npmCli: "@opencode/cli",
 };
 

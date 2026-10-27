@@ -1,6 +1,6 @@
 #!/bin/sh
-# Test stand-in for opencode 2.1.2: `--version`, and `models` listing the default models.
+# Test stand-in for opencode 2.2.0: `--version`, and `models` listing the default models.
 case "$1" in
   models) printf '%s\n' anthropic/claude-haiku-5-5 anthropic/claude-opus-5-5 anthropic/claude-sonnet-5-5 ;;
-  *) echo "opencode v2.1.2" ;;
+  *) echo "opencode v2.2.0" ;;
 esac

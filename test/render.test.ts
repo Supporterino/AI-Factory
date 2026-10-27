@@ -125,7 +125,36 @@ describe("renderWorkspace", () => {
     };
     expect(front.model).toBe("anthropic/claude-opus-5-5");
     expect(front.mode).toBe("primary");
-    expect(front.permissions).toEqual(agentRules("architect"));
+    expect(front.permissions).toEqual(agentRules("architect", [], { web: true }));
+  });
+
+  test("every tool-using agent may research the web; the orchestrator may not", () => {
+    const permissions = (path: string) => {
+      const text = byPath.get(path)?.content ?? "";
+      return (
+        parseYaml(text.split("---\n")[1] ?? "") as {
+          permissions: Parameters<typeof ruleEffect>[0];
+        }
+      ).permissions;
+    };
+    for (const path of [
+      ".opencode/agents/architect.md",
+      ".opencode/agents/explorer.md",
+      ".opencode/agents/reviewer.md",
+      ".opencode/agents/contract-reviewer.md",
+      ".opencode/agents/tester.md",
+      ".opencode/agents/implementer-web.md",
+    ]) {
+      expect(ruleEffect(permissions(path), "webfetch", "https://example.com")).toBe("allow");
+      expect(ruleEffect(permissions(path), "websearch", "query")).toBe("allow");
+    }
+    expect(
+      ruleEffect(
+        permissions(".opencode/agents/orchestrator.md"),
+        "webfetch",
+        "https://example.com",
+      ),
+    ).toBe("deny");
   });
 
   test("static prompt order: role, standards, shared rules", () => {

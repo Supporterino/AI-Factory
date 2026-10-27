@@ -4,7 +4,7 @@
  * Guards every tool call of a factory agent before it runs (`tool.execute.before`; a thrown
  * error rejects that call only) and logs every call. Nothing is imported from an opencode
  * package: a plain file in .opencode/plugins/ cannot resolve one, so the hook shapes below
- * mirror @opencode/plugin 2.1.2 (promise API: `ctx.tool.hook(name, callback)`).
+ * mirror @opencode/plugin 2.2.0 (promise API: `ctx.tool.hook(name, callback)`).
  *
  * The CLI starts the opencode server with AI_FACTORY_WORKSPACE set and writes a session
  * context file per session. Without the variable (a human's own opencode) the plugin does

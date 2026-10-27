@@ -9,8 +9,8 @@ import { writeJsonAtomic } from "../state/files.ts";
  * an `update --force` while it waits or runs does not change them (audit P18). Agents are also
  * fixed by the change's own branch, which `update` never commits to (audit P17).
  * - Agents: copied into `.factory/worktrees/<id>/.opencode/agents/`. opencode prefers the
- *   closest `.opencode/agents` to a session's directory (verified with 2.1.2), so every task
- *   session in the change's worktrees keeps its original prompts and permissions.
+ *   closest `.opencode/agents` to a session's directory (verified with 2.1.2 and 2.2.0), so
+ *   every task session in the change's worktrees keeps its original prompts and permissions.
  * - Gates: the config's gate settings and every profile's gate table, in the run folder.
  */
 
