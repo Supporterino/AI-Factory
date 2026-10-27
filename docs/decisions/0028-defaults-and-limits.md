@@ -24,7 +24,7 @@
   | Any other child process                        | 2 min                                       | `exec`                              |
   | Run-state lock                                 | waits 10 s, breaks a dead or 60 s old owner | `withFileLock`                      |
 
-  A timed-out gate fails its attempt (it spends budget like a failure); a timed-out turn is a failed session. Infrastructure failures never spend budget (ADR-0017).
+  A timed-out gate fails its attempt (it spends budget like a failure); a timed-out turn is a failed session. Infrastructure failures never spend budget (ADR-0017). The turn limit is not capped by the HTTP client: the runtime polls opencode's `/wait` in 60 s slices (a slice expiring just polls again), so Node's 300 s `fetch` headers timeout cannot end a healthy turn.
 - **Rate limits.** A 429/overload error makes every session of that provider wait: 2 s, doubling to at most 120 s, up to 8 waits per prompt (about 6 minutes in all). After that the prompt fails as an infrastructure failure: no budget is spent, and three in a row pause the change (audit P16). Waits end early when the change is interrupted.
 - **`.opencode/opencode.jsonc`** holds only `$schema` and `update: "disable"`. Agents, models and permissions live in `.opencode/agents/*.md` (one file per role, with its own permission rules, ADR-0011); the model is also passed on every session (ADR-0001), so nothing in the config could change what a factory session uses. Provider credentials stay in the user's environment or `opencode auth`, never in the workspace.
 

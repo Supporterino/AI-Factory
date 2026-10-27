@@ -2,6 +2,12 @@
 
 All notable changes per release. `ai-factory update` applies them to an installed workspace (see [docs/cli.md](docs/cli.md#update)).
 
+## 0.3.1
+
+### Patch Changes
+
+- 4ba83db: Keep polling opencode's `/wait` in 60 s slices so an agent turn longer than 5 minutes no longer fails with "opencode server unreachable" (Node's `fetch` headers timeout), and report client-side timeouts as such instead.
+
 ## 0.3.0
 
 ### Minor Changes
