@@ -133,6 +133,28 @@ const minus = (a: Usage, b: Usage): Usage => ({
   cost: a.cost - b.cost,
 });
 
+/**
+ * Upper bound on one `/wait` long-poll. That request sends no response headers until the
+ * turn goes idle, and Node's fetch defaults to a 300 s headers timeout, so an agent turn
+ * longer than 5 minutes used to fail with a bogus "server unreachable". A poll that runs
+ * out is simply retried; the turn limit itself stays `turnTimeoutMs`.
+ */
+const WAIT_POLL_MS = 60_000;
+
+/** True for the timeouts thrown by `AbortSignal.timeout` and by undici's fetch. */
+function isTimeout(err: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = err;
+  while (current !== null && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const { name, cause } = current as { name?: unknown; cause?: unknown };
+    if (name === "TimeoutError" || name === "HeadersTimeoutError" || name === "BodyTimeoutError")
+      return true;
+    current = cause;
+  }
+  return false;
+}
+
 export interface OpencodeRuntimeOptions {
   readonly root: string;
   readonly config: FactoryConfig;
@@ -141,6 +163,8 @@ export interface OpencodeRuntimeOptions {
   /** Per prompt wall-clock limit. */
   readonly turnTimeoutMs?: number;
   readonly startTimeoutMs?: number;
+  /** Bound on one `/wait` long-poll (tests shorten it); expiry retries the poll. */
+  readonly waitPollMs?: number;
   /** Base environment the curated server env is taken from (default: process.env). */
   readonly baseEnv?: NodeJS.ProcessEnv;
 }
@@ -176,9 +200,16 @@ export class OpencodeRuntime implements AgentRuntime {
       });
     } catch (err) {
       if (signal?.aborted) throw err;
+      const detail = err instanceof Error ? err.message : String(err);
+      // A client-side limit, not a dead server: saying "unreachable" sends readers to the
+      // wrong layer. (The bounded /wait poll makes this rare; see WAIT_POLL_MS.)
+      if (isTimeout(err))
+        throw new TransientError(
+          `opencode client timed out during ${method} ${path}${this.#alive() ? "" : " (the server exited)"}: ${detail}`,
+        );
       // Connection refused or reset: the server is gone, which is not the agent's fault.
       throw new TransientError(
-        `opencode server unreachable${this.#alive() ? "" : " (it exited)"}: ${err instanceof Error ? err.message : String(err)}`,
+        `opencode server unreachable${this.#alive() ? "" : " (it exited)"}: ${detail}`,
       );
     }
     const text = await res.text();
@@ -373,14 +404,26 @@ export class OpencodeRuntime implements AgentRuntime {
    * Waits until the turn started by our prompt finished: the newest message is an `idle`
    * entry newer than our user message. (`/wait` alone can return before the queued prompt
    * starts executing.)
+   *
+   * `/wait` is polled in short slices so no single request outlives the HTTP client's
+   * 300 s headers timeout (see WAIT_POLL_MS). Only `stop` ends the turn; a slice expiring
+   * just means "still working".
    */
   async #awaitTurn(
     id: string,
     marker: string | undefined,
     stop: AbortSignal,
   ): Promise<ServerMessage[]> {
+    const pollMs = this.#opts.waitPollMs ?? WAIT_POLL_MS;
     for (;;) {
-      await this.#api("POST", `/api/experimental/session/${id}/wait`, undefined, stop);
+      const poll = AbortSignal.any([stop, AbortSignal.timeout(pollMs)]);
+      try {
+        await this.#api("POST", `/api/experimental/session/${id}/wait`, undefined, poll);
+      } catch (err) {
+        // Our slice ran out mid-turn: inspect the messages, then poll again. A stop or a
+        // genuine connection failure is the real end of the turn (or of the run).
+        if (stop.aborted || !poll.aborted) throw err;
+      }
       const all = await this.#recent(id);
       const fresh = this.#since(all, marker);
       const markerSeen = marker === undefined || all.some((m) => m.id === marker);
@@ -408,7 +451,16 @@ export class OpencodeRuntime implements AgentRuntime {
       if (err instanceof TransientError) throw err; // the server died mid-turn
       interrupted = true;
       await this.#api("POST", `/api/session/${id}/interrupt`);
-      await this.#api("POST", `/api/experimental/session/${id}/wait`);
+      try {
+        await this.#api(
+          "POST",
+          `/api/experimental/session/${id}/wait`,
+          undefined,
+          AbortSignal.timeout(this.#opts.waitPollMs ?? WAIT_POLL_MS),
+        );
+      } catch {
+        // Best effort: the message list below shows whatever the turn produced.
+      }
       messages = this.#since(await this.#recent(id), marker);
     }
 
