@@ -11,6 +11,7 @@ import { doctorCommand } from "./commands/doctor.ts";
 import { gateCommand } from "./commands/gate.ts";
 import { graphCommand } from "./commands/graph.ts";
 import { initCommand } from "./commands/init.ts";
+import { landCommand } from "./commands/land.ts";
 import { approveCommand, resumeCommand, runCommand } from "./commands/pipeline-commands.ts";
 import { quickCommand } from "./commands/quick.ts";
 import { refineCommand } from "./commands/refine.ts";
@@ -40,6 +41,7 @@ export const COMMANDS: readonly Command[] = [
   retryCommand,
   abortCommand,
   repointCommand,
+  landCommand,
   benchCommand((argv, io) => runCli(argv, io)),
   completeCommand,
 ];

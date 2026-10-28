@@ -162,6 +162,26 @@ Run this after the submodule MRs of a change have merged upstream.
 
 Pointers whose MR has not merged stay provisional, and the command exits with 4. Run it again later. Nothing is ever pushed.
 
+## land
+
+```
+ai-factory land <change-id> [--dry-run] [--json]
+```
+
+Merges a finished (`done`) change back into its base branches and removes what it no longer needs. It never pushes.
+1. Each touched submodule's `change/<id>` is merged into its tracked branch (`.gitmodules`), `defaultBranch`, or `main`.
+2. If a submodule produced a merge commit, the AI repo's `change/<id>` gets a `chore(submodules): point to landed <id>` commit before it is merged.
+3. The AI repo's `change/<id>` is merged into its default branch (or `main`).
+4. The change branch and leftover `change/<id>--<task>` branches are deleted in every touched repo. Worktrees, drafts, context packs, paused reports, approvals and run state are removed.
+
+Kept as the record: `.factory/reports/<id>.md`, `.factory/usage/<id>.json` and `.factory/logs/<id>/`.
+
+This is the local-only path. If the submodule MRs already merged upstream, use `repoint` instead; `land` merges the local change branches into the local base branches.
+
+The command requires a `done` change, clean repo checkouts and clean change worktrees. A merge conflict aborts that repo's merge and leaves all change branches in place. A branch that cannot be deleted (for example because it is checked out) is reported and the run/approval are kept so `land` can be retried; it then exits with 4. In the submodule layout a conflict after earlier submodules merged leaves those submodules landed on their local base branches.
+
+`--dry-run` prints the planned merges and cleanup paths without changing anything. `--json` prints the same outcome as JSON.
+
 ## status
 
 ```

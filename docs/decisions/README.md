@@ -37,3 +37,4 @@ Short ADRs for every choice the build prompt did not lock. Format: Context / Dec
 | [0031](0031-progress-reporting.md)              | Progress output during implementation and `status --watch`         |
 | [0032](0032-shell-completion.md)                | Shell completion from command metadata                             |
 | [0033](0033-workspace-usage-reporting.md)       | Workspace-wide usage reporting                                     |
+| [0034](0034-landing-a-change.md)                | Land a finished change and clean up                                |

@@ -4,7 +4,7 @@
 
 A repo-local AI software factory. You describe a change; the factory writes an [OpenSpec](https://github.com/Fission-AI/OpenSpec) spec, waits for your approval, then has [opencode](https://opencode.ai) agents implement, test and review it across your repos, guided by one [Graphify](https://pypi.org/project/graphifyy/) knowledge graph of the workspace.
 - **One human gate:** the spec approval. Everything after it runs on its own, and pauses with a report when it cannot finish.
-- **Local commits only.** Nothing is pushed and no merge request is opened. You review the `change/<id>` branches and push them yourself.
+- **Local commits only.** Nothing is pushed and no merge request is opened. You review the `change/<id>` branches and push them yourself. When a change is done, `ai-factory land <id>` merges it into the local base branches and cleans up.
 - **Two layouts:** a single repo, or an "AI repo" that holds your code repos as git submodules.
 - **Language profiles** (stackable per repo): TypeScript/JavaScript, React, Python, Go, Rust, Swift, Helm, Tauri v2.
 
@@ -98,6 +98,7 @@ While it runs, or after it stops:
 | Stop it safely (branches and worktrees stay, the lock is released)                                    | `ai-factory abort <id>`                                      |
 | Run the gates by hand                                                                                 | `ai-factory gate <id> [--task <n>] [--repo <name>] [--full]` |
 | Your submodule MRs were merged upstream: replace the provisional pointers                             | `ai-factory repoint <id>`                                    |
+| The change is reviewed: merge it locally into the base branches and clean up                          | `ai-factory land <id> [--dry-run]`                           |
 
 Exit codes: 0 ok, 3 config invalid, 4 precondition, 5 gate failed, 6 paused/aborted, 10 detection drift ([full table](docs/cli.md#exit-codes)).
 
