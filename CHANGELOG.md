@@ -2,6 +2,12 @@
 
 All notable changes per release. `ai-factory update` applies them to an installed workspace (see [docs/cli.md](docs/cli.md#update)).
 
+## 0.5.0
+
+### Minor Changes
+
+- 94f34f1: Add bash, zsh and fish shell completion for commands, optional flags and workspace values, and add `ai-factory usage` for repo-wide AI token and cost reporting across changes and quick tasks.
+
 ## 0.4.2
 
 ### Patch Changes
