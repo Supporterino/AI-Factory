@@ -39,6 +39,16 @@ ai-factory doctor
 
 `doctor` prints the resolved gate command per repo and flags anything a run would trip over: a missing toolchain, a model your credentials can't reach, a missing hook, an uninitialised submodule.
 
+### Shell completion
+
+`ai-factory` completes commands, flags and values (change and task ids, repos, agents, models, files and bench levels) in bash, zsh and fish:
+
+```bash
+ai-factory completion zsh            # print the script
+ai-factory completion zsh --install  # add an idempotent block to ~/.zshrc
+ai-factory completion --install      # detect the shell from $SHELL
+```
+
 ## Layouts
 
 **Single repo.** The factory lives in the repo itself (`repos: [{ "path": "." }]`). Agents may never edit the factory's own files (`.opencode/`, `.factory/`, `openspec/specs/`, the config, the lock, `AGENTS.md`), even though they sit in the same tree.
@@ -81,6 +91,7 @@ While it runs, or after it stops:
 | Situation                                                                                             | Command                                                      |
 | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | See what is happening: phase, task DAG, worktrees, gate results, token usage                          | `ai-factory status [<id>] [--json]`                          |
+| See AI usage across every change and quick task in the workspace                                      | `ai-factory usage [--json]`                                  |
 | Watch it from a second terminal (refreshes every 2 s until Ctrl-C)                                    | `ai-factory status <id> --watch`                             |
 | It paused because a task failed three times: fix it in the task's worktree (path in the report), then | `ai-factory retry <id> --task <n>`                           |
 | It paused, was aborted, or the process died: continue from the last consistent state                  | `ai-factory resume <id>`                                     |
