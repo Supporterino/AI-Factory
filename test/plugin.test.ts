@@ -83,13 +83,19 @@ beforeAll(async () => {
     [`openspec/changes/${ID}/tasks.md`]: TASKS,
     [`openspec/changes/${ID}/specs/health/spec.md`]: "## ADDED Requirements\n",
   });
-  writeFiles(wt, { "src/sum.ts": "x", "src/sum.test.ts": "y", "factory.config.jsonc": "{}" });
+  writeFiles(wt, {
+    "src/sum.ts": "x",
+    "src/sum.test.ts": "y",
+    "tests/other.test.ts": "z",
+    "factory.config.jsonc": "{}",
+  });
   session("impl", {
     role: "implementer",
     directory: wt,
     repo: "app",
     task: "1.1",
     touches: ["src/**"],
+    testGlobs: ["tests/*.test.ts"],
   });
   session("tester", { role: "tester", directory: wt, repo: "app", testGlobs: ["*.test.ts"] });
   session("arch", { role: "architect", directory: ws });
@@ -199,6 +205,16 @@ describe("plugin guards", () => {
       "changed after approval",
     );
     writeFileSync(tasks, TASKS);
+  });
+
+  test("implementers may edit the repo's test files outside touches", async () => {
+    approve();
+    expect(
+      await call("impl", "implementer-app", "edit", { path: "tests/other.test.ts" }),
+    ).toBeUndefined();
+    expect(await call("impl", "implementer-app", "edit", { path: "README.md" })).toContain(
+      "outside this task's touches",
+    );
   });
 
   test("a session context rewritten mid-session is refused", async () => {

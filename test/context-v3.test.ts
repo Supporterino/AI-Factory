@@ -42,6 +42,8 @@ describe("v3 context config", () => {
     expect(cfg.commits).toEqual({ style: "conventional", scopes: false });
     expect(cfg.workflow).toEqual({ refine: true, quick: { enabled: true, branchPrefix: "task/" } });
     expect(cfg.release).toEqual({ detect: true });
+    expect(cfg.websearch).toEqual({ provider: "random" });
+    expect(cfg.runtime).toEqual({ turnTimeoutMinutes: 60 });
   });
 
   test("models resolve agent > repo > role > flat", () => {
@@ -93,6 +95,8 @@ describe("v3 context config", () => {
     const byPath = new Map(files.map((f) => [f.path, f.content]));
     expect(byPath.get(".opencode/opencode.jsonc")).toContain("docs/security.md");
     expect(byPath.get(".opencode/opencode.jsonc")).toContain("AGENTS.md");
+    expect(byPath.get(".opencode/opencode.jsonc")).toContain('"websearch": {');
+    expect(byPath.get(".opencode/opencode.jsonc")).toContain('"provider": "random"');
     const implementer = byPath.get(".opencode/agents/implementer-app.md") ?? "";
     expect(implementer).toContain("Load these skills first");
     expect(implementer).toContain("working-agreement");
@@ -101,6 +105,14 @@ describe("v3 context config", () => {
     expect(ui).toContain("You build the UI.");
     expect(ui).toContain("design-system");
     expect(ui).toContain("resource: src/ui/**");
+  });
+
+  test("websearch can be disabled in the rendered opencode config", () => {
+    const opencode =
+      renderWorkspace(config({ websearch: false })).find(
+        (f) => f.path === ".opencode/opencode.jsonc",
+      )?.content ?? "";
+    expect(opencode).toContain('"websearch": false');
   });
 
   test("submodule instructions are prefixed with the repo path", () => {

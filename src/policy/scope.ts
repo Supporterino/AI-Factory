@@ -20,7 +20,10 @@ export interface SessionContext {
   readonly task?: string;
   /** Implementer: the task's `touches` globs (standard globs, relative to the worktree). */
   readonly touches?: readonly string[];
-  /** Tester: test-path globs (opencode semantics, `*` matches `/`). */
+  /**
+   * Tester and implementer: test-path globs (opencode semantics, `*` matches `/`). An
+   * implementer may always add or update the repo's tests, even when `touches` omits them.
+   */
   readonly testGlobs?: readonly string[];
 }
 
@@ -111,7 +114,8 @@ export function checkEdit(
       reason: `the tester may only edit test files (${globs.join(", ")}), not \`${rel}\``,
     };
   }
-  if (ctx.touches !== undefined && !matchesAny(ctx.touches, rel)) {
+  const inTests = (ctx.testGlobs ?? []).some((g) => opencodeGlobRegExp(g).test(rel));
+  if (ctx.touches !== undefined && !matchesAny(ctx.touches, rel) && !inTests) {
     return {
       allowed: false,
       reason: `\`${rel}\` is outside this task's touches (${ctx.touches.join(", ")}); if you need it, stop with status "blocked"`,

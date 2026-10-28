@@ -127,6 +127,43 @@ function checkSetEnv(name: string): void {
 const SAFE_WRITE_TARGETS = /^\/dev\/(null|stdout|stderr|tty|fd\/\d+)$/;
 
 /**
+ * OS-managed read-only trees. Recursive searches there are read-only queries, and the few
+ * secret-looking files inside them (certificates, editor configs) are not the user's
+ * credentials. Explicit secret paths are still blocked by name.
+ */
+const SYSTEM_READ_ROOTS = ["/Applications", "/Library", "/System", "/usr", "/opt"] as const;
+const isSystemReadRoot = (abs: string): boolean =>
+  SYSTEM_READ_ROOTS.some((root) => abs === root || abs.startsWith(`${root}/`));
+
+/** Homebrew commands that inspect installed state or formula metadata only. */
+const BREW_READ_ONLY_FLAGS = new Set([
+  "--prefix",
+  "--cellar",
+  "--repository",
+  "--cache",
+  "--env",
+  "--version",
+  "--help",
+]);
+const BREW_READ_ONLY_SUBCOMMANDS = new Set([
+  "info",
+  "list",
+  "ls",
+  "search",
+  "deps",
+  "uses",
+  "leaves",
+  "outdated",
+  "config",
+  "commands",
+  "desc",
+  "cat",
+  "log",
+  "tap-info",
+]);
+const BREW_GLOBAL_FLAGS = new Set(["-v", "--verbose", "-d", "--debug", "-q", "--quiet"]);
+
+/**
  * Literal text checks for code we cannot parse (inline Python/Node, interpreter scripts).
  * Adjacent string literals joined with `+` are joined first (`'git pu'+'sh'`, audit S14).
  */
@@ -304,6 +341,9 @@ function checkRecursiveSearch(state: State, base: string, args: readonly string[
   for (const root of roots.length > 0 ? roots : ["."]) {
     const abs = resolvePath(state, root);
     if (abs === undefined) continue;
+    // A read-only query over an OS tree: skip the secret walk, but explicit secret args
+    // (`grep TOKEN ~/.ssh/id_rsa`) are still blocked before this point.
+    if (isSystemReadRoot(abs)) continue;
     const found = findSecretUnder(abs, readdir);
     if (found !== undefined)
       block(
@@ -1456,7 +1496,16 @@ function checkSimple(
       if (args.includes("--user") || args.includes("--break-system-packages"))
         return block(`${base} install outside the project environment is not allowed`);
       return;
-    case "brew":
+    case "brew": {
+      let i = 0;
+      while (i < args.length && BREW_GLOBAL_FLAGS.has(args[i] ?? "")) i++;
+      const first = args[i] ?? "";
+      const readOnly = first.startsWith("-")
+        ? BREW_READ_ONLY_FLAGS.has(first.split("=")[0] ?? "")
+        : BREW_READ_ONLY_SUBCOMMANDS.has(first);
+      if (readOnly) return;
+      return block(`${base} changes the machine, not the worktree`);
+    }
     case "port":
     case "apt":
     case "apt-get":

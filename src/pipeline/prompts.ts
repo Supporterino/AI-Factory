@@ -95,14 +95,17 @@ export function taskPrompt(input: {
   task: TaskState;
   pack: string;
   gates: readonly string[];
+  testGlobs?: readonly string[];
   feedback?: string;
 }): string {
   const { task } = input;
+  const tests = input.testGlobs ?? [];
+  const testNote = tests.length > 0 ? ` or the repository's test files (${tests.join(", ")})` : "";
   const retry = input.feedback
     ? `\n\nThis is attempt ${task.failures + 1}. The previous attempt failed with (compacted):\n${fence(input.feedback)}\nFix exactly what this reports. Your earlier changes are still in the worktree.`
     : "";
   return `Task ${task.id}: ${task.title}
-Repo: ${task.repo}. You may change only files matching: ${task.touches.join(", ")}.
+Repo: ${task.repo}. You may change only files matching: ${task.touches.join(", ")}${testNote}.
 
 ${input.pack.trim()}
 
