@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, renameSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { artifactDir, artifactFile } from "../artifacts/paths.ts";
 import { addUsage, type Usage, ZERO_USAGE } from "../runtime/types.ts";
 import { factoryDir, readJson, withFileLock, writeJsonAtomic } from "../state/files.ts";
 
@@ -26,6 +27,8 @@ export interface UsageLedger {
   readonly version: 1;
   readonly changeId: string;
   readonly entries: UsageEntry[];
+  /** Present only in the committed snapshot: logs stay local, so the count travels with it. */
+  readonly wastedReads?: number;
 }
 
 const usageFile = (root: string, id: string): string => factoryDir(root, "usage", `${id}.json`);
@@ -79,16 +82,27 @@ const bump = (map: Record<string, Usage>, key: string, u: Usage): void => {
   map[key] = addUsage(map[key] ?? ZERO_USAGE, u);
 };
 
-/** Counts the plugin's `waste` log lines for a change. */
+/**
+ * Counts the plugin's `waste` log lines for a change. Logs never leave the machine, so when
+ * they are gone (fresh clone, `land` cleanup) the committed snapshot's own count is used.
+ */
 export function wastedReads(root: string, id: string): number {
   const dir = factoryDir(root, "logs", id);
-  if (!existsSync(dir)) return 0;
+  if (!existsSync(dir)) return snapshotWastedReads(root, id);
   let n = 0;
   for (const f of readdirSync(dir)) {
     for (const line of readFileSync(join(dir, f), "utf8").split("\n"))
       if (line.includes('"kind":"waste"')) n++;
   }
   return n;
+}
+
+/** The `wastedReads` recorded in the committed snapshot, if there is one. */
+function snapshotWastedReads(root: string, id: string): number {
+  const file = artifactFile(root, "usage", `${id}.json`);
+  if (!existsSync(file)) return 0;
+  const value = readLedger(file)?.wastedReads;
+  return typeof value === "number" ? value : 0;
 }
 
 export function summarizeUsage(root: string, id: string): UsageSummary {
@@ -155,19 +169,24 @@ export interface WorkspaceUsageSummary {
 
 interface UsageFile {
   readonly id: string;
+  readonly file: string;
   readonly ledger: UsageLedger | undefined;
 }
 
 function usageFiles(root: string): UsageFile[] {
-  const dir = factoryDir(root, "usage");
-  if (!existsSync(dir)) return [];
-  const files: UsageFile[] = [];
-  for (const name of readdirSync(dir)) {
-    if (!name.endsWith(".json")) continue;
-    const id = name.slice(0, -".json".length);
-    files.push({ id, ledger: readLedger(join(dir, name)) });
+  const files = new Map<string, UsageFile>();
+  for (const dir of [factoryDir(root, "usage"), artifactDir(root, "usage")]) {
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".json")) continue;
+      const id = name.slice(0, -".json".length);
+      // The live local ledger wins; the committed snapshot covers ids that are gone.
+      if (files.has(id)) continue;
+      const file = join(dir, name);
+      files.set(id, { id, file, ledger: readLedger(file) });
+    }
   }
-  return files;
+  return [...files.values()];
 }
 
 const matches = (entry: UsageEntry, filter: WorkspaceUsageFilter, id: string): boolean => {
@@ -181,8 +200,9 @@ const matches = (entry: UsageEntry, filter: WorkspaceUsageFilter, id: string): b
 };
 
 /**
- * Aggregates every `.factory/usage/<id>.json` (changes, quick tasks, intake) with optional
- * filters. Read-only: a corrupt ledger is listed and skipped, never fatal.
+ * Aggregates every ledger (changes, quick tasks, intake): the live `.factory/usage/<id>.json`
+ * and, when artifacts are tracked, the committed `factory-records/usage/<id>.json`. Read-only:
+ * a corrupt ledger is listed and skipped, never fatal.
  */
 export function summarizeWorkspaceUsage(
   root: string,
@@ -204,7 +224,7 @@ export function summarizeWorkspaceUsage(
 
   for (const file of usageFiles(root)) {
     if (file.ledger === undefined) {
-      corrupt.push(join(".factory", "usage", `${file.id}.json`));
+      corrupt.push(relative(root, file.file));
       continue;
     }
     for (const entry of file.ledger.entries) {

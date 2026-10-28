@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { changeShortcuts } from "../addons/shortcuts.ts";
+import { maybeExport } from "../artifacts/export.ts";
 import { sessionInstructionPaths } from "../config/instructions.ts";
 import { repoLanguages } from "../config/schema.ts";
 import { PreconditionError } from "../errors.ts";
@@ -388,6 +389,17 @@ export async function close(p: Pipeline, id: string): Promise<string> {
     d.phase = "done";
     d.reportPath = file;
   });
+  // A record is a copy, never a precondition: a failure here leaves the run closed and the
+  // local files intact, and `ai-factory artifacts sync <id>` can retry.
+  try {
+    const recorded = await maybeExport(p.root, p.config, id);
+    if (recorded !== undefined && recorded.written.length > 0)
+      p.out(`  ⚙ recorded ${recorded.written.join(", ")}`);
+  } catch (err) {
+    p.out(
+      `warning: could not record artifacts (${err instanceof Error ? err.message : String(err)}); run \`ai-factory artifacts sync ${id}\``,
+    );
+  }
   dropAgentSnapshot(p.root, id);
   await releaseActive(p.root, id);
   p.out(`✓ ${id} done — report: ${file}`);

@@ -192,6 +192,7 @@ export function protectedInWorktree(worktree: string): string[] {
     ".git",
     ".opencode",
     ".factory",
+    "factory-records",
     "AGENTS.md",
     "factory.config.jsonc",
     "factory.lock.json",

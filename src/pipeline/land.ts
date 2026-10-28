@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { maybeExport } from "../artifacts/export.ts";
 import type { FactoryConfig, RepoConfig } from "../config/schema.ts";
 import { PreconditionError } from "../errors.ts";
 import { git, gitOk } from "../exec.ts";
@@ -38,6 +39,10 @@ export interface LandOutcome {
   readonly keptBranches: readonly string[];
   readonly cleaned: readonly string[];
   readonly kept: readonly string[];
+  /** Committed artifact copies written for this change (`artifacts.mode: "git"`). */
+  readonly recorded?: readonly string[];
+  /** Why recording failed; the cleanup still proceeds. */
+  readonly recordError?: string;
 }
 
 export interface LandOptions {
@@ -419,6 +424,7 @@ export async function landChange(
       `.factory/sessions/ (this change)`,
       `.factory/reports/${id}-paused.md`,
     ];
+    const recorded = await maybeExport(root, config, id, { dryRun: true });
     return {
       id,
       dryRun,
@@ -427,7 +433,20 @@ export async function landChange(
       keptBranches: [],
       cleaned,
       kept: [`.factory/reports/${id}.md`, `.factory/usage/${id}.json`, `.factory/logs/${id}`],
+      ...(recorded === undefined || recorded.written.length === 0
+        ? {}
+        : { recorded: recorded.written }),
     };
+  }
+
+  // Record before cleanup removes the local approval, report and ledger.
+  let recorded: readonly string[] = [];
+  let recordError: string | undefined;
+  try {
+    const result = await maybeExport(root, config, id);
+    if (result !== undefined) recorded = result.written;
+  } catch (err) {
+    recordError = err instanceof Error ? err.message : String(err);
   }
 
   const worktrees = await removeWorktrees(root, id, config);
@@ -464,6 +483,8 @@ export async function landChange(
       ...worktrees.kept,
       ...(incomplete ? [`.factory/runs/${id}.json`, `.factory/approvals/${id}.json`] : []),
     ],
+    ...(recorded.length === 0 ? {} : { recorded }),
+    ...(recordError === undefined ? {} : { recordError }),
   };
 }
 

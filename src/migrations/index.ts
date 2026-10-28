@@ -3,10 +3,11 @@ import { CONFIG_SCHEMA_VERSION } from "../config/schema.ts";
 import { ConfigError } from "../errors.ts";
 import { graphExcludeDefaults } from "./001-graph-exclude-defaults.ts";
 import { configV3 } from "./002-config-v3.ts";
+import { artifactsV4 } from "./003-artifacts.ts";
 import type { Migration } from "./types.ts";
 
 /** Every config migration, in order. Add new ones as `NNN-<name>.ts` and list them here. */
-export const MIGRATIONS: readonly Migration[] = [graphExcludeDefaults, configV3];
+export const MIGRATIONS: readonly Migration[] = [graphExcludeDefaults, configV3, artifactsV4];
 
 export function schemaVersionOf(text: string): number | undefined {
   const { value } = parseJsonc(text);
