@@ -2,6 +2,12 @@
 
 All notable changes per release. `ai-factory update` applies them to an installed workspace (see [docs/cli.md](docs/cli.md#update)).
 
+## 0.6.0
+
+### Minor Changes
+
+- 824ef91: Add `ai-factory land <change-id>`: merge a finished change into its local base branches, update submodule pointers, delete change and task branches, and remove worktrees, drafts, context, approvals and run state while keeping reports, usage and logs.
+
 ## 0.5.0
 
 ### Minor Changes
