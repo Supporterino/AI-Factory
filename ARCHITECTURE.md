@@ -59,25 +59,26 @@ flowchart LR
 
 ### Files in a workspace
 
-| Path                                                       | Committed | Written by                                                                                            |
-| ---------------------------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------- |
-| `factory.config.jsonc`                                     | yes       | `init`; you; `detect --apply`; `update` (migrations)                                                  |
-| `factory.lock.json`                                        | yes       | `init`, `update`, `detect --apply` only                                                               |
-| `.opencode/` (agents, plugin, standards, schemas, add-ons) | yes       | managed files, including OpenSpec's generated commands and skills                                     |
-| `AGENTS.md`, `.gitignore`                                  | yes       | your text plus a managed block between `ai-factory` markers                                           |
-| `openspec/changes/<id>/`                                   | yes       | architect (spec), CLI (checkbox mirror, archive)                                                      |
-| `.factory/runs/<id>.json`                                  | no        | CLI only: phase, tasks, attempts, history                                                             |
-| `.factory/runs/<id>/snapshot/gates.json`                   | no        | `approve`: gate config + profile tables the change keeps                                              |
-| `.factory/active.lock`, `.factory/queue.json`              | no        | the one active change and the approval-ordered queue                                                  |
-| `.factory/approvals/<id>.json`                             | no        | `approve`: approver, spec commit, spec hash                                                           |
-| `.factory/worktrees/<id>/<repo>/<task>/`                   | no        | task worktrees (and `.factory/worktrees/<id>/.opencode/{agents,skills}`, the snapshotted definitions) |
-| `.factory/drafts/<id>/`                                    | no        | AI-repo worktree for a change designed while another one is active                                    |
-| `.factory/context/<id>/`                                   | no        | context packs (architect)                                                                             |
-| `.factory/sessions/`                                       | no        | one file per agent session: role, scope, worktree; the plugin reads it                                |
-| `.factory/logs/`, `.factory/usage/`, `.factory/reports/`   | no        | redacted tool and gate logs, the token ledger, final and pause reports                                |
-| `.factory/cache/`                                          | no        | shared package stores and build caches for worktree installs                                          |
-| `.factory/backups/<ts>/`                                   | no        | `update` backups for `rollback`                                                                       |
-| `graphify-out/`                                            | no        | the workspace graph                                                                                   |
+| Path                                                       | Committed    | Written by                                                                                            |
+| ---------------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------- |
+| `factory.config.jsonc`                                     | yes          | `init`; you; `detect --apply`; `update` (migrations)                                                  |
+| `factory.lock.json`                                        | yes          | `init`, `update`, `detect --apply` only                                                               |
+| `.opencode/` (agents, plugin, standards, schemas, add-ons) | yes          | managed files, including OpenSpec's generated commands and skills                                     |
+| `AGENTS.md`, `.gitignore`                                  | yes          | your text plus a managed block between `ai-factory` markers                                           |
+| `openspec/changes/<id>/`                                   | yes          | architect (spec), CLI (checkbox mirror, archive)                                                      |
+| `.factory/runs/<id>.json`                                  | no           | CLI only: phase, tasks, attempts, history                                                             |
+| `.factory/runs/<id>/snapshot/gates.json`                   | no           | `approve`: gate config + profile tables the change keeps                                              |
+| `.factory/active.lock`, `.factory/queue.json`              | no           | the one active change and the approval-ordered queue                                                  |
+| `.factory/approvals/<id>.json`                             | no           | `approve`: approver, spec commit, spec hash                                                           |
+| `.factory/worktrees/<id>/<repo>/<task>/`                   | no           | task worktrees (and `.factory/worktrees/<id>/.opencode/{agents,skills}`, the snapshotted definitions) |
+| `.factory/drafts/<id>/`                                    | no           | AI-repo worktree for a change designed while another one is active                                    |
+| `.factory/context/<id>/`                                   | no           | context packs (architect)                                                                             |
+| `.factory/sessions/`                                       | no           | one file per agent session: role, scope, worktree; the plugin reads it                                |
+| `.factory/logs/`, `.factory/usage/`, `.factory/reports/`   | no           | redacted tool and gate logs, the live token ledger, final and pause reports                           |
+| `factory-records/{reports,approvals,usage}/`               | yes (opt-in) | `close`, `land`, `quick` and `artifacts sync` snapshot a finished change (ADR-0035); logs never       |
+| `.factory/cache/`                                          | no           | shared package stores and build caches for worktree installs                                          |
+| `.factory/backups/<ts>/`                                   | no           | `update` backups for `rollback`                                                                       |
+| `graphify-out/`                                            | no           | the workspace graph                                                                                   |
 
 ## Pipeline state machine
 
