@@ -14,6 +14,8 @@ export const refineCommand: Command = {
   name: "refine",
   summary: "Clarify a vague request before it becomes a spec",
   help: HELP,
+  options: {},
+  positionals: [{ name: "request", variadic: true }],
   async run(args, io) {
     const { positionals } = parseCommandArgs("refine", args, {}, true);
     const request = positionals.join(" ").trim();

@@ -99,6 +99,28 @@ A read-only health check. It looks at:
 
 It exits 4 when any check fails. Warnings exit 0.
 
+## completion
+
+```
+ai-factory completion [<bash|zsh|fish>] [--install] [--rc <file>]
+```
+
+Prints a completion script, or with `--install` adds a marked, idempotent block to the shell's rc file. Completion covers:
+- every visible command;
+- every optional flag of the selected command, skipping non-repeatable flags already used;
+- values: change ids and task ids from the workspace state, repo and agent names from the config, configured model ids, bench cases and levels, shells, and file/directory paths;
+- comma-list values (`--levels lite,f`, `--by change,agent`).
+
+```bash
+ai-factory completion zsh            # print it
+ai-factory completion zsh --install  # add to ~/.zshrc
+ai-factory completion --install      # detect from $SHELL
+```
+
+The rc file is `~/.bashrc`, `${ZDOTDIR:-$HOME}/.zshrc` or `${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish`. `--rc` overrides it and requires `--install`. A malformed existing block stops the install instead of overwriting it; running it again is a no-op. The zsh script uses `compdef`, so load it after `compinit` (the normal zsh setup).
+
+Completing values never writes, never calls a model and exits 0 even if the workspace is not initialised: a missing or corrupt file simply produces no candidates.
+
 ## detect
 
 ```
@@ -155,6 +177,26 @@ Shows the active change and its driver, the queue, and each change's details, in
 - corrupt run files, `active.lock` or `queue.json`, with how to recover (other changes still show)
 
 `--watch` reprints the same view every `--interval` seconds (default 2) until Ctrl-C. It clears the screen on a terminal and prints a separator between frames when piped, so a second terminal can watch a long run. `--watch` and `--json` exclude each other.
+
+Without an id, `status` also prints one workspace-wide usage line and `--json` includes `workspaceUsage` (the same totals as `ai-factory usage`).
+
+## usage
+
+```
+ai-factory usage [--since <date>] [--until <date>]
+                 [--change <id>]... [--agent <id>]... [--model <id>]...
+                 [--by <list>] [--json]
+```
+
+Reports every token and cost the factory has spent in this workspace, across all changes, quick tasks and archived runs. The source is every `.factory/usage/<id>.json` ledger; nothing is enforced.
+- `--since` / `--until` are inclusive UTC days (`YYYY-MM-DD`).
+- `--change`, `--agent` and `--model` accept a repeatable flag or a comma list.
+- `--by` selects the tables: `change`, `agent`, `model` and `day`. The default is `change,agent,model`; `--json` always includes every dimension.
+- The human report shows the total (tokens, cache reads, output, cost), sessions, changes, the period, retry overhead and wasted re-reads.
+- A corrupt ledger is listed on stderr and skipped; the rest still aggregates. Missing usage is not an error: `usage` prints `no usage recorded yet`.
+- `usage` reads state only. It works without a valid config and never blocks a run.
+
+The JSON shape is versioned (`version: 1`) with `totalTokens`, `sessions`, `changes`, `byChange`, `sessionsByChange`, `byAgent`, `byModel`, `byDay`, `retryOverhead`, `wastedReads`, `filters` and `corrupt`.
 
 ## retry
 

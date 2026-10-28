@@ -5,6 +5,7 @@ import { FactoryError } from "../errors.ts";
 import { FACTORY_VERSION } from "../version.ts";
 import type { Command, Io } from "./command.ts";
 import { benchCommand } from "./commands/bench.ts";
+import { completeCommand, completionCommand } from "./commands/completion.ts";
 import { detectCommand } from "./commands/detect.ts";
 import { doctorCommand } from "./commands/doctor.ts";
 import { gateCommand } from "./commands/gate.ts";
@@ -16,6 +17,8 @@ import { refineCommand } from "./commands/refine.ts";
 import { repointCommand } from "./commands/repoint.ts";
 import { abortCommand, retryCommand, statusCommand } from "./commands/state-commands.ts";
 import { rollbackCommand, updateCommand } from "./commands/update.ts";
+import { usageCommand } from "./commands/usage.ts";
+import { setCompletionCommands } from "./completion/registry.ts";
 import { ExitCode } from "./exit-codes.ts";
 
 export const COMMANDS: readonly Command[] = [
@@ -23,6 +26,7 @@ export const COMMANDS: readonly Command[] = [
   updateCommand,
   rollbackCommand,
   doctorCommand,
+  completionCommand,
   detectCommand,
   refineCommand,
   runCommand,
@@ -30,21 +34,26 @@ export const COMMANDS: readonly Command[] = [
   approveCommand,
   resumeCommand,
   statusCommand,
+  usageCommand,
   gateCommand,
   graphCommand,
   retryCommand,
   abortCommand,
   repointCommand,
   benchCommand((argv, io) => runCli(argv, io)),
+  completeCommand,
 ];
 
+setCompletionCommands(COMMANDS);
+
 function usage(): string {
-  const width = Math.max(...COMMANDS.map((c) => c.name.length));
+  const visible = COMMANDS.filter((command) => command.hidden !== true);
+  const width = Math.max(...visible.map((c) => c.name.length));
   return [
     "Usage: ai-factory [-C <dir>] <command> [options]",
     "",
     "Commands:",
-    ...COMMANDS.map((c) => `  ${c.name.padEnd(width)}  ${c.summary}`),
+    ...visible.map((c) => `  ${c.name.padEnd(width)}  ${c.summary}`),
     "",
     "Global options:",
     "  -C <dir>        Run as if started in <dir>",
@@ -121,7 +130,8 @@ export async function runCli(argv: readonly string[], io: Io): Promise<ExitCode>
     return ExitCode.Usage;
   }
   const rest = argv.slice(i + 1);
-  if (rest.includes("-h") || rest.includes("--help")) {
+  // Hidden commands own their arguments: `__complete` must see a literal `--help` as a word.
+  if (command.hidden !== true && (rest.includes("-h") || rest.includes("--help"))) {
     io.out(command.help);
     return ExitCode.Ok;
   }

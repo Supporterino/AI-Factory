@@ -2,7 +2,7 @@ import { findWorkspaceRoot, loadConfig } from "../../config/load.ts";
 import { PreconditionError, UsageError } from "../../errors.ts";
 import { repoint } from "../../git/pointers.ts";
 import { CHANGE_ID } from "../../git/repo.ts";
-import { type Command, parseCommandArgs } from "../command.ts";
+import { type Command, type CommandOptions, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
 
 const HELP = `Usage: ai-factory repoint <change-id> [--json]
@@ -14,17 +14,18 @@ Pointers whose MR has not merged yet stay provisional; run repoint again later.
 
 Exits ${ExitCode.Precondition} when any pointer is still provisional.`;
 
+const OPTIONS = {
+  json: { type: "boolean", default: false, description: "Print the result as JSON" },
+} satisfies CommandOptions;
+
 export const repointCommand: Command = {
   name: "repoint",
   summary: "Replace provisional submodule pointers after the MRs merged",
   help: HELP,
+  options: OPTIONS,
+  positionals: [{ name: "change-id", complete: "change" }],
   async run(args, io) {
-    const { values, positionals } = parseCommandArgs(
-      "repoint",
-      args,
-      { json: { type: "boolean", default: false } },
-      true,
-    );
+    const { values, positionals } = parseCommandArgs("repoint", args, OPTIONS, true);
     const id = positionals[0];
     if (id === undefined || positionals.length > 1)
       throw new UsageError("repoint: expected exactly one <change-id>");

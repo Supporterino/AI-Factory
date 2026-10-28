@@ -12,7 +12,7 @@ import {
 import { findWorkspaceRoot, loadConfig } from "../../config/load.ts";
 import { PreconditionError, UsageError } from "../../errors.ts";
 import { formatTokens } from "../../usage/usage.ts";
-import { type Command, type Io, parseCommandArgs } from "../command.ts";
+import { type Command, type CommandOptions, type Io, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
 
 const HELP = `Usage: ai-factory bench ponytail [--runs N] [--case ID] [--levels L,…] [--yes] [--json]
@@ -28,24 +28,32 @@ Real model calls: it prints an estimate and asks before running.
 
 const LEVELS = ["lite", "full", "ultra"] as const;
 
+const OPTIONS = {
+  runs: { type: "string", default: "3", description: "Runs per case (1-20)" },
+  case: {
+    type: "string",
+    choices: BENCH_CASES.map((c) => c.id),
+    description: "Only this bench case (comma list)",
+  },
+  levels: {
+    type: "string",
+    default: "full",
+    choices: LEVELS,
+    description: "Ponytail levels to compare (comma list)",
+  },
+  yes: { type: "boolean", default: false, description: "Confirm the real model calls" },
+  json: { type: "boolean", default: false, description: "Print the results as JSON" },
+} satisfies CommandOptions;
+
 export function benchCommand(cli: (argv: readonly string[], io: Io) => Promise<number>): Command {
   return {
     name: "bench",
     summary: "Measure the Ponytail add-on on real models (A/B)",
     help: HELP,
+    options: OPTIONS,
+    subcommands: ["ponytail"],
     async run(args, io) {
-      const { values, positionals } = parseCommandArgs(
-        "bench",
-        args,
-        {
-          runs: { type: "string", default: "3" },
-          case: { type: "string" },
-          levels: { type: "string", default: "full" },
-          yes: { type: "boolean", default: false },
-          json: { type: "boolean", default: false },
-        },
-        true,
-      );
+      const { values, positionals } = parseCommandArgs("bench", args, OPTIONS, true);
       if (positionals[0] !== "ponytail" || positionals.length > 1)
         throw new UsageError("bench: the only benchmark is `ponytail`");
       const runs = Number.parseInt(values.runs, 10);

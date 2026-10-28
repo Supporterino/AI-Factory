@@ -1,6 +1,6 @@
 import { UsageError } from "../../errors.ts";
 import { quickTask } from "../../pipeline/quick.ts";
-import { type Command, parseCommandArgs } from "../command.ts";
+import { type Command, type CommandOptions, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
 import { PROGRESS_OPTIONS, verbosityOf, withPipeline } from "./pipeline-commands.ts";
 
@@ -14,22 +14,25 @@ inspect or amend it.
   --verbose         Also print one line per agent tool call and per gate
   --quiet           Only banners, commits, failures and the summary`;
 
+const OPTIONS = {
+  repo: {
+    type: "string",
+    complete: "repo",
+    description: "Repo to change (when there are several)",
+  },
+  agent: { type: "string", complete: "agent", description: "Configured custom implementer" },
+  "no-review": { type: "boolean", default: false, description: "Skip the review pass" },
+  ...PROGRESS_OPTIONS,
+} satisfies CommandOptions;
+
 export const quickCommand: Command = {
   name: "quick",
   summary: "Implement a small task on a branch without an OpenSpec change",
   help: HELP,
+  options: OPTIONS,
+  positionals: [{ name: "task", variadic: true }],
   async run(args, io) {
-    const { values, positionals } = parseCommandArgs(
-      "quick",
-      args,
-      {
-        repo: { type: "string" },
-        agent: { type: "string" },
-        "no-review": { type: "boolean", default: false },
-        ...PROGRESS_OPTIONS,
-      },
-      true,
-    );
+    const { values, positionals } = parseCommandArgs("quick", args, OPTIONS, true);
     const task = positionals.join(" ").trim();
     if (task === "") throw new UsageError('quick: expected a task, e.g. "fix the login typo"');
     const verbosity = verbosityOf(values);

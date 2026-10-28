@@ -14,8 +14,14 @@ import {
 } from "../../state/active.ts";
 import { factoryDir, readOrCorrupt } from "../../state/files.ts";
 import { loadRun, type RunState, scanRuns, type TaskState, updateRun } from "../../state/run.ts";
-import { formatTokens, summarizeUsage, totalTokens, usageLine } from "../../usage/usage.ts";
-import { type Command, type Io, parseCommandArgs } from "../command.ts";
+import {
+  formatTokens,
+  summarizeUsage,
+  summarizeWorkspaceUsage,
+  totalTokens,
+  usageLine,
+} from "../../usage/usage.ts";
+import { type Command, type CommandOptions, type Io, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
 
 async function workspace(io: Io): Promise<string> {
@@ -102,6 +108,11 @@ function renderStatus(io: Io, root: string, positionals: readonly string[]): voi
         ? `queue: unreadable: ${queued.corrupt.message}\n  ${queued.corrupt.fix}`
         : `queue: ${queue.length > 0 ? queue.join(", ") : "empty"}`,
     );
+    const workspaceUsage = summarizeWorkspaceUsage(root);
+    if (workspaceUsage.sessions > 0)
+      io.out(
+        `usage: ${usageLine(workspaceUsage.total)} across ${workspaceUsage.changes} change${workspaceUsage.changes === 1 ? "" : "s"}, ${workspaceUsage.sessions} session${workspaceUsage.sessions === 1 ? "" : "s"}`,
+      );
     if (runs.length === 0 && corrupt.length === 0)
       io.out('no changes yet (start one with `ai-factory run "<request>"`)');
   }
@@ -180,9 +191,17 @@ function printRun(
   }
 }
 
+const STATUS_OPTIONS = {
+  json: { type: "boolean", default: false, description: "Print the state as JSON" },
+  watch: { type: "boolean", default: false, description: "Reprint the view until Ctrl-C" },
+  interval: { type: "string", description: "Seconds between --watch frames (default 2)" },
+} satisfies CommandOptions;
+
 export const statusCommand: Command = {
   name: "status",
   summary: "Show the active change, the queue, task states and branches",
+  options: STATUS_OPTIONS,
+  positionals: [{ name: "change-id", optional: true, complete: "change" }],
   help: `Usage: ai-factory status [<change-id>] [--json] [--watch [--interval <seconds>]]
 
 Without an id: the active change (if any), the queue and every known change.
@@ -192,16 +211,7 @@ With an id: that change's phase, branches, task DAG with states, retries and wor
                      terminal is the easiest way to watch a long run)
   --interval <s>     Seconds between frames with --watch (default 2)`,
   async run(args, io) {
-    const { values, positionals } = parseCommandArgs(
-      "status",
-      args,
-      {
-        json: { type: "boolean", default: false },
-        watch: { type: "boolean", default: false },
-        interval: { type: "string" },
-      },
-      true,
-    );
+    const { values, positionals } = parseCommandArgs("status", args, STATUS_OPTIONS, true);
     if (values.watch && values.json)
       throw new UsageError("status: --watch and --json exclude each other");
     const root = await workspace(io);
@@ -232,6 +242,7 @@ With an id: that change's phase, branches, task DAG with states, retries and wor
           active: active ?? null,
           driverAlive: active ? driverAlive(active) : false,
           queue,
+          ...(positionals.length === 0 ? { workspaceUsage: summarizeWorkspaceUsage(root) } : {}),
           runs: runs.map((r) => ({ ...r, usage: summarizeUsage(root, r.id) })),
           corrupt: [
             ...[lock.corrupt, queued.corrupt]
@@ -288,6 +299,8 @@ async function watchStatus(
 export const abortCommand: Command = {
   name: "abort",
   summary: "Stop a change safely; keep branches and worktrees",
+  options: {},
+  positionals: [{ name: "change-id", complete: "change" }],
   help: `Usage: ai-factory abort <change-id>
 
 Marks the change aborted and removes it from the queue. A process driving it stops at its
@@ -331,20 +344,21 @@ the aborted change (or another one) when you are ready.`,
   },
 };
 
+const RETRY_OPTIONS = {
+  task: { type: "string", complete: "task", description: "The failed task id to requeue" },
+} satisfies CommandOptions;
+
 export const retryCommand: Command = {
   name: "retry",
   summary: "Reset a failed task's retry budget after a human fix",
+  options: RETRY_OPTIONS,
+  positionals: [{ name: "change-id", complete: "change" }],
   help: `Usage: ai-factory retry <change-id> --task <id>
 
 Puts a failed task back in the queue with a fresh retry budget and un-cancels the tasks
 that were cancelled because of it. Continue the change with \`ai-factory resume <id>\`.`,
   async run(args, io) {
-    const { values, positionals } = parseCommandArgs(
-      "retry",
-      args,
-      { task: { type: "string" } },
-      true,
-    );
+    const { values, positionals } = parseCommandArgs("retry", args, RETRY_OPTIONS, true);
     const id = changeId("retry", positionals);
     if (values.task === undefined) throw new UsageError("retry: --task <id> is required");
     const root = await workspace(io);

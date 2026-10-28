@@ -22,7 +22,7 @@ import {
 } from "../../update/update.ts";
 import { FACTORY_VERSION } from "../../version.ts";
 import { commitInstall, syncWorkspace } from "../../workspace/sync.ts";
-import { type Command, type Io, parseCommandArgs } from "../command.ts";
+import { type Command, type CommandOptions, type Io, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
 
 async function workspaceRoot(io: Io): Promise<string> {
@@ -31,9 +31,35 @@ async function workspaceRoot(io: Io): Promise<string> {
   return root;
 }
 
+const OPTIONS = {
+  "dry-run": { type: "boolean", default: false, description: "Print the plan and stop" },
+  tools: {
+    type: "boolean",
+    default: false,
+    description: "Refresh OpenSpec files and rebuild a changed graph",
+  },
+  restore: {
+    type: "boolean",
+    default: false,
+    description: "Recreate managed files you deleted",
+  },
+  force: {
+    type: "boolean",
+    default: false,
+    description: "Update although a change is active (it keeps its snapshot)",
+  },
+  "allow-downgrade": {
+    type: "boolean",
+    default: false,
+    description: "Let an older factory rewrite a newer install",
+  },
+  json: { type: "boolean", default: false, description: "Print the result as JSON" },
+} satisfies CommandOptions;
+
 export const updateCommand: Command = {
   name: "update",
   summary: "Upgrade an installed workspace (templates, config, tools)",
+  options: OPTIONS,
   help: `Usage: ai-factory update [--dry-run] [--tools] [--restore] [--force] [--allow-downgrade] [--json]
 
 Upgrades this workspace to the installed factory version, as one local commit
@@ -51,14 +77,7 @@ Upgrades this workspace to the installed factory version, as one local commit
   --allow-downgrade  Let this (older) version rewrite a workspace a newer one installed
   --json      Machine-readable result`,
   async run(args, io) {
-    const { values } = parseCommandArgs("update", args, {
-      "dry-run": { type: "boolean", default: false },
-      tools: { type: "boolean", default: false },
-      restore: { type: "boolean", default: false },
-      force: { type: "boolean", default: false },
-      "allow-downgrade": { type: "boolean", default: false },
-      json: { type: "boolean", default: false },
-    });
+    const { values } = parseCommandArgs("update", args, OPTIONS);
     const root = await workspaceRoot(io);
     const lock = requireInstalled(root);
     ensureNotNewer(lock, values["allow-downgrade"]);
@@ -169,6 +188,7 @@ Upgrades this workspace to the installed factory version, as one local commit
 export const rollbackCommand: Command = {
   name: "rollback",
   summary: "Restore the workspace from the latest update backup",
+  options: {},
   help: `Usage: ai-factory rollback
 
 Restores every file the latest \`ai-factory update\` touched (including the lock file) from
