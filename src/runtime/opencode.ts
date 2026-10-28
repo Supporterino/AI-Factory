@@ -211,7 +211,7 @@ export interface OpencodeRuntimeOptions {
   readonly config: FactoryConfig;
   /** Change id for logs. */
   readonly changeId: string;
-  /** Per prompt wall-clock limit. */
+  /** Per prompt wall-clock limit (default 60 minutes; `runtime.turnTimeoutMinutes`). */
   readonly turnTimeoutMs?: number;
   readonly startTimeoutMs?: number;
   /** Bound on one `/wait` long-poll (tests shorten it); expiry retries the poll. */
@@ -579,7 +579,7 @@ export class OpencodeRuntime implements AgentRuntime {
     if (sent.status >= 400)
       throw new Error(`opencode prompt failed (${sent.status}): ${JSON.stringify(sent.data)}`);
 
-    const timeout = AbortSignal.timeout(this.#opts.turnTimeoutMs ?? 30 * 60_000);
+    const timeout = AbortSignal.timeout(this.#opts.turnTimeoutMs ?? 60 * 60_000);
     const stop = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let interrupted = false;
     let messages: ServerMessage[];

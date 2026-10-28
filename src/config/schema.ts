@@ -244,6 +244,15 @@ const ParallelConfig = z.strictObject({
   withinRepo: z.enum(["worktrees", "serial"]).default("worktrees"),
 });
 
+const RuntimeConfig = z.strictObject({
+  /** Per agent turn wall-clock limit in minutes; a timed-out turn is retried. */
+  turnTimeoutMinutes: z
+    .int()
+    .min(1)
+    .max(24 * 60)
+    .default(60),
+});
+
 const TokensConfig = z.strictObject({
   mode: z.literal("report").default("report"),
   contextPackMaxTokens: z.int().min(500).default(8000),
@@ -289,6 +298,18 @@ const SecurityConfig = z.strictObject({
   sandbox: z.enum(["auto", "off"]).default("auto"),
 });
 
+const WebSearchConfig = z.union([
+  z.literal(false),
+  z.strictObject({
+    /**
+     * opencode web search provider id, or "random" to reuse an available provider until it
+     * is rate limited. A provider must be set: without one opencode asks interactively, and
+     * a headless factory run waits a minute and cancels the search.
+     */
+    provider: z.string().min(1).default("random"),
+  }),
+]);
+
 const GraphConfig = z.strictObject({
   exclude: z.array(z.string().min(1)).default([...DEFAULT_GRAPH_EXCLUDE]),
 });
@@ -331,11 +352,13 @@ const FactoryConfigBase = z.strictObject({
   gates: GatesConfig.prefault({}),
   contracts: z.array(ContractConfig).default([]),
   parallel: ParallelConfig.prefault({}),
+  runtime: RuntimeConfig.prefault({}),
   tokens: TokensConfig.prefault({}),
   addons: z.strictObject({ ponytail: PonytailConfig.prefault({}) }).prefault({}),
   logs: LogsConfig.prefault({}),
   graph: GraphConfig.prefault({}),
   security: SecurityConfig.prefault({}),
+  websearch: WebSearchConfig.default({ provider: "random" }),
   commits: CommitsConfig.prefault({}),
   workflow: WorkflowConfig.prefault({}),
   release: ReleaseConfig.prefault({}),

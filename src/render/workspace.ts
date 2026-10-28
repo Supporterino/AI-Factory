@@ -356,6 +356,7 @@ function renderOpencodeConfig(factory: FactoryConfig): string {
   const config = {
     $schema: "https://opencode.ai/config.json",
     update: "disable",
+    websearch: factory.websearch,
     ...(instructions.length > 0 ? { instructions } : {}),
   };
   return `// ${MANAGED_HEADER}\n// Agents and their permissions are in .opencode/agents/.\n${JSON.stringify(config, null, 2)}\n`;

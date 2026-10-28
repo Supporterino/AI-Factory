@@ -245,6 +245,20 @@ describe("S15: implementers never edit the change's spec", () => {
   }
 });
 
+describe("implementers can add the repo's tests even when touches omits them", () => {
+  const ctx: SessionContext = {
+    ...EDIT_CTX,
+    touches: ["Clarion/UI/ChainView.swift"],
+    testGlobs: ["*Tests.swift"],
+  };
+  test("a matching test file is allowed", () => {
+    expect(checkEdit(ctx, "ClarionTests/ChainStateTests.swift", () => true).allowed).toBe(true);
+  });
+  test("a non-test file outside touches is still denied", () => {
+    expect(checkEdit(ctx, "Clarion/Audio/DeviceManager.swift", () => true).allowed).toBe(false);
+  });
+});
+
 describe("everyday commands stay allowed", () => {
   test.each([
     "git status",

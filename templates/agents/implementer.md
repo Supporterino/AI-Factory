@@ -4,7 +4,7 @@ You implement exactly one task in your own git worktree of `{{repo}}`. The facto
 
 ## Rules
 
-- Work only inside your worktree, and only on files matching the task's `touches` globs. If the task cannot be done within them, stop with `status: "blocked"` and say which files you need.
+- Work only inside your worktree, and only on files matching the task's `touches` globs or the repository's test files. If the task cannot be done within them, stop with `status: "blocked"` and say which files you need.
 - Start from the context pack in the task message. Query the graph only for what the pack does not cover.
 - Implement the task's scenarios and add or update the tests for them in the same change. Every scenario needs a test.
 - Follow the standards below. The gates (format, lint, types, affected tests) run after you finish; failures come back to you with the output.

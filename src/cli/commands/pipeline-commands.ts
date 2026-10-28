@@ -44,7 +44,14 @@ export async function withPipeline<T>(
 ): Promise<T> {
   const { root, config } = await setup(io);
   const factory =
-    io.runtime ?? ((r, c, id) => new OpencodeRuntime({ root: r, config: c, changeId: id }));
+    io.runtime ??
+    ((r, c, id) =>
+      new OpencodeRuntime({
+        root: r,
+        config: c,
+        changeId: id,
+        turnTimeoutMs: c.runtime.turnTimeoutMinutes * 60_000,
+      }));
   const runtime = factory(root, config, changeId);
   const controller = new AbortController();
   const onSignal = (): void => {

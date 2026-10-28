@@ -135,6 +135,8 @@ ${contracts}
   ],
 
   "parallel": { "maxAgents": 4, "maxGateProcesses": 2, "withinRepo": "worktrees" },
+  // Per agent turn wall-clock limit in minutes; a timed-out turn is retried.
+  "runtime": { "turnTimeoutMinutes": 60 },
   "tokens": { "mode": "report", "contextPackMaxTokens": 8000, "gateOutputMaxLines": 80 },
   "addons": {
     "ponytail": {
@@ -149,6 +151,8 @@ ${contracts}
   "graph": { "exclude": ${json(DEFAULT_GRAPH_EXCLUDE)} },
   // Agent shells and gates run in an OS sandbox where available ("auto"; macOS sandbox-exec).
   "security": { "sandbox": "auto" },
+  // Web search provider for agents ("random" reuses an available provider) or false to disable it.
+  "websearch": { "provider": "random" },
   // Task commits: "conventional" or "gitmoji"; scopes prefixes the repo name.
   "commits": { "style": "conventional", "scopes": false },
   // Clarification before design and the no-spec quick task.

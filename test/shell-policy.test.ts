@@ -49,7 +49,40 @@ describe("allowed", () => {
     "command -v golangci-lint",
     "python3 -c 'print(1+1)'",
     "npm run lint",
+    "brew --prefix xcodegen",
+    "brew --prefix=xcodegen",
+    "brew -v --prefix xcodegen",
+    "brew info xcodegen",
+    "brew list --versions",
+    "brew search xcodegen",
   ])("%s", (cmd) => expect(verdict(cmd)).toEqual({ allowed: true }));
+});
+
+describe("read-only system queries", () => {
+  const secretCtx: ShellContext = {
+    ...ctx,
+    readdir: (abs) => {
+      if (abs === "/Applications") return ["Visual Studio Code.app"];
+      if (abs === "/Applications/Visual Studio Code.app") return [".npmrc"];
+      if (abs === "/System/Library/Frameworks") return ["Ruby.framework"];
+      if (abs === "/System/Library/Frameworks/Ruby.framework") return ["GlobalSignRootCA.pem"];
+      if (abs === "/Users/dev/project") return [".env"];
+      return undefined;
+    },
+  };
+
+  test("recursive searches over system trees skip false-positive secrets", () => {
+    expect(checkShell("grep -rl Foo /Applications", secretCtx)).toEqual({ allowed: true });
+    expect(checkShell("grep -rl Foo /System/Library/Frameworks", secretCtx)).toEqual({
+      allowed: true,
+    });
+  });
+
+  test("recursive searches over project trees still block secret files", () => {
+    const v = checkShell("grep -rl TOKEN /Users/dev/project", secretCtx);
+    expect(v.allowed).toBe(false);
+    if (!v.allowed) expect(v.reason).toContain("contains secret file");
+  });
 });
 
 describe("blocked", () => {
@@ -92,6 +125,10 @@ describe("blocked", () => {
     ["sed -i s/a/b/ factory.config.jsonc", "protected path"],
     ["graphify update .", "updates the graph"],
     ["npm publish", "publishing"],
+    ["brew install xcodegen", "changes the machine"],
+    ["brew upgrade", "changes the machine"],
+    ["brew tap homebrew/cask", "changes the machine"],
+    ["brew --verbose install xcodegen", "changes the machine"],
     ["gh pr create", "not available"],
     ["git commit -m 'wip'", "the factory commits"],
     ["export AI_FACTORY_AGENT=", "factory's environment"],

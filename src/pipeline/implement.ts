@@ -326,6 +326,7 @@ export class PipelineTaskRunner implements TaskRunner {
       repo: repo.name,
       task: task.id,
       touches: [...task.touches],
+      testGlobs: profilesFor(repoLanguages(repo)).flatMap((pr) => [...pr.testGlobs]),
     };
   }
 
@@ -419,6 +420,7 @@ export class PipelineTaskRunner implements TaskRunner {
           task,
           pack,
           gates,
+          testGlobs: this.#context(task, dir).testGlobs ?? [],
           ...(ctx.feedback === undefined ? {} : { feedback: ctx.feedback }),
         });
 

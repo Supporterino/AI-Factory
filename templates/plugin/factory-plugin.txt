@@ -490,7 +490,8 @@ function checkEdit(ctx, path, approval) {
       reason: `the tester may only edit test files (${globs.join(", ")}), not \`${rel}\``
     };
   }
-  if (ctx.touches !== undefined && !matchesAny(ctx.touches, rel)) {
+  const inTests = (ctx.testGlobs ?? []).some((g) => opencodeGlobRegExp(g).test(rel));
+  if (ctx.touches !== undefined && !matchesAny(ctx.touches, rel) && !inTests) {
     return {
       allowed: false,
       reason: `\`${rel}\` is outside this task's touches (${ctx.touches.join(", ")}); if you need it, stop with status "blocked"`
@@ -1082,6 +1083,34 @@ function checkSetEnv(name) {
     block(`setting ${name} is not allowed (it changes what tools run)`);
 }
 var SAFE_WRITE_TARGETS = /^\/dev\/(null|stdout|stderr|tty|fd\/\d+)$/;
+var SYSTEM_READ_ROOTS = ["/Applications", "/Library", "/System", "/usr", "/opt"];
+var isSystemReadRoot = (abs) => SYSTEM_READ_ROOTS.some((root) => abs === root || abs.startsWith(`${root}/`));
+var BREW_READ_ONLY_FLAGS = new Set([
+  "--prefix",
+  "--cellar",
+  "--repository",
+  "--cache",
+  "--env",
+  "--version",
+  "--help"
+]);
+var BREW_READ_ONLY_SUBCOMMANDS = new Set([
+  "info",
+  "list",
+  "ls",
+  "search",
+  "deps",
+  "uses",
+  "leaves",
+  "outdated",
+  "config",
+  "commands",
+  "desc",
+  "cat",
+  "log",
+  "tap-info"
+]);
+var BREW_GLOBAL_FLAGS = new Set(["-v", "--verbose", "-d", "--debug", "-q", "--quiet"]);
 function scanText(text) {
   for (const t of [text, text.replace(/(['"`])\s*\+\s*\1/g, "")]) {
     if (/\bgit\b[\s"',[\]()]+push\b/.test(t))
@@ -1236,6 +1265,8 @@ function checkRecursiveSearch(state, base, args) {
   for (const root of roots.length > 0 ? roots : ["."]) {
     const abs = resolvePath(state, root);
     if (abs === undefined)
+      continue;
+    if (isSystemReadRoot(abs))
       continue;
     const found = findSecretUnder(abs, readdir);
     if (found !== undefined)
@@ -2330,7 +2361,16 @@ function checkSimple(state, cmd, stdin) {
       if (args.includes("--user") || args.includes("--break-system-packages"))
         return block(`${base} install outside the project environment is not allowed`);
       return;
-    case "brew":
+    case "brew": {
+      let i = 0;
+      while (i < args.length && BREW_GLOBAL_FLAGS.has(args[i] ?? ""))
+        i++;
+      const first = args[i] ?? "";
+      const readOnly = first.startsWith("-") ? BREW_READ_ONLY_FLAGS.has(first.split("=")[0] ?? "") : BREW_READ_ONLY_SUBCOMMANDS.has(first);
+      if (readOnly)
+        return;
+      return block(`${base} changes the machine, not the worktree`);
+    }
     case "port":
     case "apt":
     case "apt-get":
