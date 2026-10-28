@@ -106,6 +106,10 @@ export const PROGRESS_OPTIONS = {
 
 function report(io: Io, outcome: DriveOutcome): ExitCode {
   io.out(`${outcome.id}: ${outcome.phase}${outcome.detail ? ` — ${outcome.detail}` : ""}`);
+  if (outcome.phase === "done")
+    io.out(
+      `next: \`ai-factory land ${outcome.id}\` merges the finished change into its base branches`,
+    );
   return outcome.phase === "paused" || outcome.phase === "aborted" ? ExitCode.Paused : ExitCode.Ok;
 }
 
@@ -239,6 +243,7 @@ kept worktrees, finished ones stay; a queued change starts when the workspace is
       if (run === undefined) throw new PreconditionError(`no change ${id}`);
       if (run.phase === "done") {
         io.out(`${id} is already done`);
+        io.out(`next: \`ai-factory land ${id}\` merges the finished change into its base branches`);
         return ExitCode.Ok;
       }
       return report(io, await drive(p, id));

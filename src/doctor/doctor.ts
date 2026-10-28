@@ -1,6 +1,8 @@
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, extname, join } from "node:path";
+import { committedRecords } from "../artifacts/export.ts";
+import { ARTIFACTS_DIR } from "../artifacts/paths.ts";
 import { allInstructionPaths } from "../config/instructions.ts";
 
 import { parseJsonc } from "../config/jsonc.ts";
@@ -553,6 +555,54 @@ function checkRelease(c: Checks, root: string, config: FactoryConfig): void {
     );
 }
 
+async function checkArtifacts(c: Checks, root: string, config: FactoryConfig): Promise<void> {
+  c.in("artifacts");
+  if (config.artifacts.mode === "local") {
+    c.add("ok", "records", "local (reports, approvals and usage stay in .factory/)");
+    return;
+  }
+  const kinds = (["reports", "approvals", "usage"] as const).filter((k) => config.artifacts[k]);
+  if (kinds.length === 0) {
+    c.add("warn", "records", "artifacts.mode is git but every kind is disabled");
+    return;
+  }
+  if (!existsSync(join(root, ARTIFACTS_DIR))) {
+    c.add(
+      "warn",
+      "records",
+      `${ARTIFACTS_DIR}/ does not exist yet`,
+      "ai-factory artifacts sync --all",
+    );
+    return;
+  }
+  // --no-index: a tracked record must not hide an ignore rule that would drop new ones.
+  const ignored =
+    (await git(["check-ignore", "-q", "--no-index", ARTIFACTS_DIR], { cwd: root })).code === 0;
+  if (ignored) {
+    c.add(
+      "warn",
+      "records",
+      `${ARTIFACTS_DIR}/ is gitignored, so records will not travel`,
+      `remove the ignore rule or set artifacts.mode to "local"`,
+    );
+    return;
+  }
+  const count = committedRecords(root);
+  const dirty = (
+    await git(["status", "--porcelain", "--", ARTIFACTS_DIR], { cwd: root })
+  ).stdout.trim();
+  if (dirty !== "") {
+    c.add(
+      "warn",
+      "records",
+      `${count} file(s) in ${ARTIFACTS_DIR}/, some uncommitted`,
+      "commit them, or run `ai-factory artifacts sync <id>`",
+    );
+    return;
+  }
+  c.add("ok", "records", `${count} file(s) in ${ARTIFACTS_DIR}/ (${kinds.join(", ")})`);
+}
+
 function checkCaches(c: Checks, root: string): void {
   c.in("caches");
   const factory = join(root, ".factory");
@@ -777,6 +827,7 @@ export async function runDoctor(root: string): Promise<DoctorReport> {
   const gates = checkGates(c, root, config, repos);
   checkContext(c, root, config);
   checkRelease(c, root, config);
+  await checkArtifacts(c, root, config);
   checkCaches(c, root);
   await checkModels(c, root, config);
   await checkGraph(c, root, config, lock);

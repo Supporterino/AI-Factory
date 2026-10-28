@@ -20,6 +20,9 @@ export interface QuickResult {
   readonly detail: string;
 }
 
+/** The usage-ledger id of a quick task; also `land`/artifact names, so keep it stable. */
+export const quickChangeId = (task: string): string => `quick-${requestSlug(task)}`;
+
 async function revert(dir: string, paths: readonly string[]): Promise<void> {
   for (const path of paths) {
     const inHead = (await git(["cat-file", "-e", `HEAD:${path}`], { cwd: dir })).code === 0;
@@ -72,6 +75,7 @@ export async function quickTask(
   const dir = p.repoDir(repo);
   await ensureClean(dir, repo.name);
   const slug = requestSlug(input.task);
+  const changeId = quickChangeId(input.task);
   const branch = `${p.config.workflow.quick.branchPrefix}${slug}`;
   if ((await currentBranch(dir)) === branch) {
     throw new PreconditionError(`already on ${branch}`);
@@ -134,7 +138,7 @@ export async function quickTask(
   };
   for (let attempt = 1; attempt <= 3 && !passed; attempt++) {
     const res = await p.call({
-      changeId: `quick-${slug}`,
+      changeId: changeId,
       agent: routed.agent,
       role: "implementer",
       modelRole: "implementer",
@@ -161,7 +165,7 @@ export async function quickTask(
     const violations = auditChanges(
       {
         sessionId: "quick-audit",
-        changeId: `quick-${slug}`,
+        changeId: changeId,
         role: "implementer",
         ...context,
       },
@@ -196,7 +200,7 @@ export async function quickTask(
     let findings: string[] = [];
     for (let round = 1; round <= 3; round++) {
       const review = await p.call({
-        changeId: `quick-${slug}`,
+        changeId: changeId,
         agent: "reviewer",
         role: "reviewer",
         modelRole: "reviewer",
@@ -222,7 +226,7 @@ export async function quickTask(
         );
       if (findings.length === 0) break;
       const fix = await p.call({
-        changeId: `quick-${slug}`,
+        changeId: changeId,
         agent: routed.agent,
         role: "implementer",
         modelRole: "implementer",
@@ -261,7 +265,7 @@ export async function quickTask(
     style: p.config.commits.style,
     ...(p.config.commits.scopes ? { scope: repo.name } : {}),
   });
-  const commit = await commitAll(dir, subject, { "Change-Id": `quick-${slug}` });
+  const commit = await commitAll(dir, subject, { "Change-Id": changeId });
   return {
     repo: repo.name,
     branch,

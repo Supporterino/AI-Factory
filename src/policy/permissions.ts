@@ -34,6 +34,8 @@ export const PROTECTED_PATHS = [
   "openspec/specs/*",
   ".opencode/*",
   ".factory/*",
+  "factory-records",
+  "factory-records/*",
   "factory.config.jsonc",
   "factory.lock.json",
   "AGENTS.md",

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { PONYTAIL } from "../versions.ts";
 
 /** Current `factory.config.jsonc` schema version. Bump only together with a migration. */
-export const CONFIG_SCHEMA_VERSION = 3;
+export const CONFIG_SCHEMA_VERSION = 4;
 
 export const CONFIG_FILE = "factory.config.jsonc";
 
@@ -278,6 +278,18 @@ const LogsConfig = z.strictObject({
   redact: z.boolean().default(true),
 });
 
+/**
+ * Per-change records (final report, approval, usage ledger). "local" keeps them in the
+ * gitignored `.factory/`; "git" snapshots them into the committed `factory-records/` tree so
+ * they survive a machine switch and a fresh clone. Logs are never snapshotted.
+ */
+const ArtifactsConfig = z.strictObject({
+  mode: z.enum(["local", "git"]).default("local"),
+  reports: z.boolean().default(true),
+  approvals: z.boolean().default(true),
+  usage: z.boolean().default(true),
+});
+
 /** v2 default: also vendored deps, build caches and coverage output (migration 001). */
 export const DEFAULT_GRAPH_EXCLUDE = [
   "**/node_modules/**",
@@ -290,6 +302,7 @@ export const DEFAULT_GRAPH_EXCLUDE = [
   "**/__pycache__/**",
   "**/.venv/**",
   ".factory/**",
+  "factory-records/**",
   "graphify-out/**",
 ] as const;
 
@@ -339,8 +352,8 @@ const ReleaseConfig = z.strictObject({
 
 const FactoryConfigBase = z.strictObject({
   $schema: z.string().optional(),
-  /** v2 is accepted at runtime so an existing workspace keeps working until `update`. */
-  schemaVersion: z.union([z.literal(2), z.literal(CONFIG_SCHEMA_VERSION)]),
+  /** Older versions are accepted at runtime so an existing workspace keeps working until `update`. */
+  schemaVersion: z.int().min(2).max(CONFIG_SCHEMA_VERSION),
   layout: z.enum(["single", "submodules"]),
   repos: z.array(RepoConfig).min(1),
   models: ModelsConfig,
@@ -356,6 +369,7 @@ const FactoryConfigBase = z.strictObject({
   tokens: TokensConfig.prefault({}),
   addons: z.strictObject({ ponytail: PonytailConfig.prefault({}) }).prefault({}),
   logs: LogsConfig.prefault({}),
+  artifacts: ArtifactsConfig.prefault({}),
   graph: GraphConfig.prefault({}),
   security: SecurityConfig.prefault({}),
   websearch: WebSearchConfig.default({ provider: "random" }),

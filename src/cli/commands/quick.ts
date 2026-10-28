@@ -1,5 +1,6 @@
+import { maybeExport } from "../../artifacts/export.ts";
 import { UsageError } from "../../errors.ts";
-import { quickTask } from "../../pipeline/quick.ts";
+import { quickChangeId, quickTask } from "../../pipeline/quick.ts";
 import { type Command, type CommandOptions, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
 import { PROGRESS_OPTIONS, verbosityOf, withPipeline } from "./pipeline-commands.ts";
@@ -44,6 +45,16 @@ export const quickCommand: Command = {
         review: !values["no-review"],
       });
       io.out(`${result.ok ? "✓" : "✗"} ${result.repo} ${result.branch}: ${result.detail}`);
+      // The ledger exists even when the task failed: the tokens were still spent.
+      try {
+        const recorded = await maybeExport(p.root, p.config, quickChangeId(task));
+        if (recorded !== undefined && recorded.written.length > 0)
+          io.out(`  recorded ${recorded.written.join(", ")}`);
+      } catch (err) {
+        io.err(
+          `warning: could not record artifacts (${err instanceof Error ? err.message : String(err)}); run \`ai-factory artifacts sync ${quickChangeId(task)}\``,
+        );
+      }
       return result.ok ? ExitCode.Ok : ExitCode.GateFailed;
     });
   },

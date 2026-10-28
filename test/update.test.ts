@@ -11,6 +11,7 @@ import {
   graphExcludeDefaults,
   V1_GRAPH_EXCLUDE,
 } from "../src/migrations/001-graph-exclude-defaults.ts";
+import { artifactsV4 } from "../src/migrations/003-artifacts.ts";
 import { migrateConfigText } from "../src/migrations/index.ts";
 import { claimActive, releaseActive } from "../src/state/active.ts";
 import { loadRun } from "../src/state/run.ts";
@@ -52,11 +53,42 @@ describe("config migrations", () => {
     ).toContain("legacy/**");
   });
 
+  test("003 adds the artifacts block and keeps records out of the graph", () => {
+    const v3 = `{
+  // keep this comment
+  "schemaVersion": 3,
+  "graph": { "exclude": ["**/node_modules/**"] }
+}
+`;
+    const out = artifactsV4.migrate(v3);
+    const value = parseJsonc(out).value as {
+      schemaVersion: number;
+      artifacts: Record<string, unknown>;
+      graph: { exclude: string[] };
+    };
+    expect(value.schemaVersion).toBe(4);
+    expect(value.artifacts).toEqual({
+      mode: "local",
+      reports: true,
+      approvals: true,
+      usage: true,
+    });
+    expect(value.graph.exclude).toEqual(["**/node_modules/**", "factory-records/**"]);
+    expect(out).toContain("// keep this comment");
+
+    const twice = artifactsV4.migrate(
+      `{"schemaVersion": 3, "graph": { "exclude": ["factory-records/**"] }}`,
+    );
+    expect((parseJsonc(twice).value as { graph: { exclude: string[] } }).graph.exclude).toEqual([
+      "factory-records/**",
+    ]);
+  });
+
   test("the runner applies pending migrations in order and refuses newer configs", () => {
     expect(migrateConfigText(v1)).toMatchObject({
       from: 1,
-      to: 3,
-      applied: ["001-graph-exclude-defaults", "002-config-v3"],
+      to: 4,
+      applied: ["001-graph-exclude-defaults", "002-config-v3", "003-artifacts"],
     });
     const current = migrateConfigText(migrateConfigText(v1).text);
     expect(current.applied).toEqual([]);
@@ -94,7 +126,7 @@ describe(`update from a ${SNAPSHOT.version} install`, () => {
   }
 
   test("the old config is refused until update migrates it", async () => {
-    expect(() => loadConfig(root)).toThrow("uses config schemaVersion 1; this factory needs 3");
+    expect(() => loadConfig(root)).toThrow("uses config schemaVersion 1; this factory needs 4");
     const res = await cli(root, "detect");
     expect(res.err).toContain("run `ai-factory update` to migrate it");
   });
@@ -150,7 +182,7 @@ describe(`update from a ${SNAPSHOT.version} install`, () => {
     // Config migrated with comments intact; lock rewritten for this version.
     expect(read("factory.config.jsonc")).toContain("// team note: models agreed on 2026-10-01");
     const config = loadConfig(root).config;
-    expect(config.schemaVersion).toBe(3);
+    expect(config.schemaVersion).toBe(4);
     expect(config.graph.exclude).toContain("**/vendor/**");
     const lock = readLock(root);
     expect(lock?.factoryVersion).toBe(FACTORY_VERSION);

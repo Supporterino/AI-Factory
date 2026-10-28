@@ -55,6 +55,7 @@ describe("FactoryConfig schema", () => {
       shortcutComments: "report",
     });
     expect(cfg.logs).toEqual({ retentionDays: 14, redact: true });
+    expect(cfg.artifacts).toEqual({ mode: "local", reports: true, approvals: true, usage: true });
     expect(cfg.graph.exclude).toContain("graphify-out/**");
     expect(cfg.repos[1]?.role).toBe("code");
     expect(cfg.unmanaged).toEqual([]);
@@ -73,7 +74,7 @@ describe("FactoryConfig schema", () => {
 
   test("rejects unknown keys and bad values", () => {
     expect(issues({ ...submodules(), extra: 1 })).toEqual([': Unrecognized key: "extra"']);
-    expect(issues({ ...submodules(), schemaVersion: 4 })[0]).toStartWith("schemaVersion:");
+    expect(issues({ ...submodules(), schemaVersion: 5 })[0]).toStartWith("schemaVersion:");
     expect(issues({ ...submodules(), models: { ...MODELS, implementer: "sonnet" } })).toEqual([
       'models.implementer: expected "provider/model"',
     ]);

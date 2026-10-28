@@ -8,6 +8,7 @@ const PROTECTED: readonly RegExp[] = [
   /^openspec\/specs(\/|$)/i,
   /^\.opencode(\/|$)/i,
   /^\.factory(\/|$)/i,
+  /^factory-records(\/|$)/i,
   /^factory\.config\.jsonc$/i,
   /^factory\.lock\.json$/i,
   /(^|\/)AGENTS\.md$/i,

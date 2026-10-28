@@ -9,7 +9,7 @@
 - **Same definitions as ADR-0021.** Tokens are input + cache reads + cache writes + output + reasoning. Retry overhead is attempts after the first plus conflict resolutions. Cost is the provider's figure. Wasted re-reads come from the plugin's `waste` log lines for included changes.
 - **Status summary.** `status` without an id prints one workspace-wide usage line, and `status --json` adds `workspaceUsage`. Per-change usage is unchanged.
 - **Corruption is reported, not fatal.** A ledger that does not parse is skipped and named on stderr (and in JSON `corrupt`); the rest still aggregates.
-- **Local by design.** The ledgers and report stay in gitignored `.factory/`; usage is never committed, enforced or used as a gate.
+- **Local by default.** The ledgers and report stay in gitignored `.factory/`; usage is never enforced or used as a gate. A workspace may opt into committing a snapshot of each finished change's ledger (ADR-0035); the live ledger still wins when both exist.
 
 **Consequences.**
 - One place answers "what has the factory cost in this repo"; `usage --json` can feed a dashboard or a release note.

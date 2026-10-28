@@ -24,7 +24,10 @@ updates the AI repo's submodule pointers, then merges the AI repo's \`change/<id
 base branch. It then deletes the change and leftover task branches and removes worktrees,
 context packs, approvals, session context and run state.
 
-Kept for the record: the final report, the token usage ledger and the redacted logs.
+Kept for the record: the final report, the token usage ledger and the redacted logs. With
+"artifacts": { "mode": "git" }, the report, approval and usage ledger are also committed
+under factory-records/ before cleanup; otherwise a successful land hints how to commit
+them later with \`ai-factory artifacts sync <id>\`.
 
   --dry-run   Print the plan only; merge and delete nothing
   --json      Machine-readable result
@@ -65,6 +68,7 @@ export const landCommand: Command = {
     if (outcome.pointerCommit !== undefined)
       io.out(`  ✓ submodule pointers: ${outcome.pointerCommit.slice(0, 12)}`);
     if (outcome.dryRun) {
+      if (outcome.recorded !== undefined) io.out(`  would record: ${outcome.recorded.join(", ")}`);
       io.out(`  would clean: ${outcome.cleaned.join(", ")}`);
       io.out(`  would keep: ${outcome.kept.join(", ")}`);
       io.out("dry run: nothing was merged or deleted");
@@ -75,7 +79,16 @@ export const landCommand: Command = {
     if (outcome.keptBranches.length > 0)
       io.err(`  ! kept branches (not merged): ${outcome.keptBranches.join(", ")}`);
     if (outcome.cleaned.length > 0) io.out(`  ✓ cleaned: ${outcome.cleaned.join(", ")}`);
+    if (outcome.recorded !== undefined) io.out(`  ✓ recorded: ${outcome.recorded.join(", ")}`);
+    if (outcome.recordError !== undefined)
+      io.err(
+        `  ! could not record artifacts: ${outcome.recordError}; run \`ai-factory artifacts sync ${id}\``,
+      );
     if (outcome.kept.length > 0) io.out(`  kept: ${outcome.kept.join(", ")}`);
+    if (outcome.keptBranches.length === 0 && config.artifacts.mode === "local")
+      io.out(
+        `  hint: records stay in .factory/; set "artifacts": { "mode": "git" } and run \`ai-factory artifacts sync ${id}\` to commit them`,
+      );
     return outcome.keptBranches.length > 0 ? ExitCode.Precondition : ExitCode.Ok;
   },
 };

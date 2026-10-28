@@ -148,6 +148,9 @@ ${contracts}
     }
   },
   "logs": { "retentionDays": 14, "redact": true },
+  // Per-change records. "local" keeps them in .factory/; "git" commits them under
+  // factory-records/ so reports, approvals and usage survive a machine switch.
+  "artifacts": { "mode": "local", "reports": true, "approvals": true, "usage": true },
   "graph": { "exclude": ${json(DEFAULT_GRAPH_EXCLUDE)} },
   // Agent shells and gates run in an OS sandbox where available ("auto"; macOS sandbox-exec).
   "security": { "sandbox": "auto" },

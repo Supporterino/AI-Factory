@@ -48,6 +48,15 @@ How it treats files that already exist:
 
 Tool binaries can be overridden with `AI_FACTORY_<TOOL>_BIN`, e.g. `AI_FACTORY_OPENSPEC_BIN`.
 
+### Moving to another machine
+
+Everything needed to run the factory is in git; the runtime state is not.
+1. Clone the workspace (with submodules: `git clone --recurse-submodules`, or `git submodule update --init --recursive` afterwards) and install the tools `git`, `opencode`, `openspec` and `graphify` plus the repos' own toolchains.
+2. Run `ai-factory init`. On an unchanged workspace it writes nothing and makes no commit, but it re-installs the `pre-push` hooks (they live in `.git/hooks`, which a clone does not carry) and rebuilds `graphify-out/` (gitignored).
+3. Run `ai-factory doctor` to check the tools, lock version, hooks and gates.
+
+What does not travel: worktrees, run state, session context, opencode's database, caches, logs, backups and legacy archives under `.factory/`. Finish an in-flight change (`land`) or `abort` it before switching machines; there is no mid-change handoff. With `"artifacts": { "mode": "git" }`, each finished change's report, approval and usage ledger are committed under `factory-records/` and do arrive with the clone.
+
 ## update
 
 ```
@@ -174,7 +183,7 @@ Merges a finished (`done`) change back into its base branches and removes what i
 3. The AI repo's `change/<id>` is merged into its default branch (or `main`).
 4. The change branch and leftover `change/<id>--<task>` branches are deleted in every touched repo. Worktrees, drafts, context packs, paused reports, approvals and run state are removed.
 
-Kept as the record: `.factory/reports/<id>.md`, `.factory/usage/<id>.json` and `.factory/logs/<id>/`.
+Kept as the record: `.factory/reports/<id>.md`, `.factory/usage/<id>.json` and `.factory/logs/<id>/`. With `"artifacts": { "mode": "git" }`, the report, approval and usage ledger are also committed under `factory-records/` before cleanup; `--dry-run` lists that as `would record`. With the default `"local"`, a successful land ends with a hint pointing at `artifacts sync <id>` so the records are not silently left behind.
 
 This is the local-only path. If the submodule MRs already merged upstream, use `repoint` instead; `land` merges the local change branches into the local base branches.
 
@@ -208,7 +217,7 @@ ai-factory usage [--since <date>] [--until <date>]
                  [--by <list>] [--json]
 ```
 
-Reports every token and cost the factory has spent in this workspace, across all changes, quick tasks and archived runs. The source is every `.factory/usage/<id>.json` ledger; nothing is enforced.
+Reports every token and cost the factory has spent in this workspace, across all changes, quick tasks and archived runs. The source is every ledger: the live `.factory/usage/<id>.json` and, when artifacts are tracked, the committed `factory-records/usage/<id>.json` (the live ledger wins for an id). Nothing is enforced.
 - `--since` / `--until` are inclusive UTC days (`YYYY-MM-DD`).
 - `--change`, `--agent` and `--model` accept a repeatable flag or a comma list.
 - `--by` selects the tables: `change`, `agent`, `model` and `day`. The default is `change,agent,model`; `--json` always includes every dimension.
@@ -217,6 +226,24 @@ Reports every token and cost the factory has spent in this workspace, across all
 - `usage` reads state only. It works without a valid config and never blocks a run.
 
 The JSON shape is versioned (`version: 1`) with `totalTokens`, `sessions`, `changes`, `byChange`, `sessionsByChange`, `byAgent`, `byModel`, `byDay`, `retryOverhead`, `wastedReads`, `filters` and `corrupt`.
+
+## artifacts
+
+```
+ai-factory artifacts sync <change-id>
+ai-factory artifacts sync --all [--dry-run] [--json]
+```
+
+Copies a finished change's records out of the gitignored `.factory/` into the committed `factory-records/` tree, so they survive a fresh clone and another machine:
+- `factory-records/reports/<id>.md` — the final close report;
+- `factory-records/approvals/<id>.json` — approver, spec commit and pass count;
+- `factory-records/usage/<id>.json` — the token/cost ledger, with `wastedReads` stored in it because the logs it comes from stay local.
+
+It requires `"artifacts": { "mode": "git" }` in `factory.config.jsonc`; the default `"local"` keeps everything in `.factory/` and `sync` exits 4. `--all` backfills every id that still has local records in one commit. `--dry-run` writes and commits nothing.
+- `close`, `land` and `quick` call it automatically; `land` records before its cleanup deletes the local approval.
+- Content is compared first, so re-running writes nothing and makes no commit. Each changed record is committed as `docs(factory): record <id>` with a `Change-Id` trailer, in its own commit, so unrelated staged work is untouched.
+- Logs, paused reports (they embed gate output), context packs, drafts, snapshots and run state are never copied.
+- `doctor` reports the record count and warns when the mode is `git` but the directory is gitignored or missing.
 
 ## retry
 
@@ -279,7 +306,7 @@ Every agent call prints when it starts (step, agent, model) and ends (outcome, d
 ai-factory approve <change-id> [--no-continue] [--verbose|--quiet]
 ```
 
-Validates the change and commits the spec (`docs(spec): <id>`). Records the approval in `.factory/approvals/<id>.json`: the approver (git `user.email`), the spec commit and a content hash with task checkboxes normalised out. Then it continues automatically: activation, implementation, review and tests, contracts, full suite, close. If another change is active, this one is queued and starts when that one closes.
+Validates the change and commits the spec (`docs(spec): <id>`). Records the approval in `.factory/approvals/<id>.json`: the approver (git `user.email`), the spec commit and a content hash with task checkboxes normalised out. Then it continues automatically: activation, implementation, review and tests, contracts, full suite, close. If another change is active, this one is queued and starts when that one closes. When the pipeline finishes the change, the output ends with `next: ai-factory land <id>`.
 
 ## resume
 
@@ -287,7 +314,7 @@ Validates the change and commits the spec (`docs(spec): <id>`). Records the appr
 ai-factory resume <change-id> [--verbose|--quiet]
 ```
 
-Continues a paused, aborted, interrupted or queued change from its last consistent state. The spec is re-checked against its approval first, and any edit other than a task checkbox voids the approval.
+Continues a paused, aborted, interrupted or queued change from its last consistent state. The spec is re-checked against its approval first, and any edit other than a task checkbox voids the approval. A run that reaches `done` ends with `next: ai-factory land <id>`. A change that is already done prints the same hint: `land` deletes the run state, so a `done` state means it has not been landed yet.
 
 ## graph
 
