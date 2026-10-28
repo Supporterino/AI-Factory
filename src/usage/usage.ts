@@ -122,6 +122,192 @@ export function summarizeUsage(root: string, id: string): UsageSummary {
   };
 }
 
+export interface WorkspaceUsageFilter {
+  /** Inclusive UTC day, `YYYY-MM-DD`. */
+  readonly since?: string;
+  /** Inclusive UTC day, `YYYY-MM-DD`. */
+  readonly until?: string;
+  readonly changes?: readonly string[];
+  readonly agents?: readonly string[];
+  readonly models?: readonly string[];
+}
+
+export type UsageDimension = "change" | "agent" | "model" | "day";
+
+/** Everything the factory spent in one workspace, across every change and quick task. */
+export interface WorkspaceUsageSummary {
+  readonly total: Usage;
+  readonly sessions: number;
+  readonly changes: number;
+  readonly entries: number;
+  readonly first?: string;
+  readonly last?: string;
+  readonly retryOverhead: Usage;
+  readonly wastedReads: number;
+  readonly byChange: Record<string, Usage>;
+  readonly sessionsByChange: Record<string, number>;
+  readonly byAgent: Record<string, Usage>;
+  readonly byModel: Record<string, Usage>;
+  readonly byDay: Record<string, Usage>;
+  /** Ledger files that could not be read; the report still covers the rest. */
+  readonly corrupt: string[];
+}
+
+interface UsageFile {
+  readonly id: string;
+  readonly ledger: UsageLedger | undefined;
+}
+
+function usageFiles(root: string): UsageFile[] {
+  const dir = factoryDir(root, "usage");
+  if (!existsSync(dir)) return [];
+  const files: UsageFile[] = [];
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith(".json")) continue;
+    const id = name.slice(0, -".json".length);
+    files.push({ id, ledger: readLedger(join(dir, name)) });
+  }
+  return files;
+}
+
+const matches = (entry: UsageEntry, filter: WorkspaceUsageFilter, id: string): boolean => {
+  if (filter.changes !== undefined && !filter.changes.includes(id)) return false;
+  if (filter.agents !== undefined && !filter.agents.includes(entry.agent)) return false;
+  if (filter.models !== undefined && !filter.models.includes(entry.model)) return false;
+  const day = entry.at.slice(0, 10);
+  if (filter.since !== undefined && day < filter.since) return false;
+  if (filter.until !== undefined && day > filter.until) return false;
+  return true;
+};
+
+/**
+ * Aggregates every `.factory/usage/<id>.json` (changes, quick tasks, intake) with optional
+ * filters. Read-only: a corrupt ledger is listed and skipped, never fatal.
+ */
+export function summarizeWorkspaceUsage(
+  root: string,
+  filter: WorkspaceUsageFilter = {},
+): WorkspaceUsageSummary {
+  let total = ZERO_USAGE;
+  let retryOverhead = ZERO_USAGE;
+  let sessions = 0;
+  let entries = 0;
+  let first: string | undefined;
+  let last: string | undefined;
+  const byChange: Record<string, Usage> = {};
+  const sessionsByChange: Record<string, number> = {};
+  const byAgent: Record<string, Usage> = {};
+  const byModel: Record<string, Usage> = {};
+  const byDay: Record<string, Usage> = {};
+  const included = new Set<string>();
+  const corrupt: string[] = [];
+
+  for (const file of usageFiles(root)) {
+    if (file.ledger === undefined) {
+      corrupt.push(join(".factory", "usage", `${file.id}.json`));
+      continue;
+    }
+    for (const entry of file.ledger.entries) {
+      if (!matches(entry, filter, file.id)) continue;
+      included.add(file.id);
+      total = addUsage(total, entry.usage);
+      sessions += 1;
+      entries += 1;
+      bump(byChange, file.id, entry.usage);
+      sessionsByChange[file.id] = (sessionsByChange[file.id] ?? 0) + 1;
+      bump(byAgent, entry.agent, entry.usage);
+      bump(byModel, entry.model, entry.usage);
+      bump(byDay, entry.at.slice(0, 10), entry.usage);
+      if (entry.kind === "conflict" || (entry.kind === "attempt" && (entry.attempt ?? 1) > 1))
+        retryOverhead = addUsage(retryOverhead, entry.usage);
+      if (first === undefined || entry.at < first) first = entry.at;
+      if (last === undefined || entry.at > last) last = entry.at;
+    }
+  }
+
+  let wasted = 0;
+  for (const id of included) wasted += wastedReads(root, id);
+  return {
+    total,
+    sessions,
+    changes: included.size,
+    entries,
+    ...(first === undefined ? {} : { first }),
+    ...(last === undefined ? {} : { last }),
+    retryOverhead,
+    wastedReads: wasted,
+    byChange,
+    sessionsByChange,
+    byAgent,
+    byModel,
+    byDay,
+    corrupt,
+  };
+}
+
+const sortedUsage = (map: Record<string, Usage>): [string, Usage][] =>
+  Object.entries(map).sort((a, b) => totalTokens(b[1]) - totalTokens(a[1]));
+
+/** The `usage` command's tables; `dimensions` selects which ones to print. */
+export function workspaceUsageReport(
+  summary: WorkspaceUsageSummary,
+  dimensions: readonly UsageDimension[] = ["change", "agent", "model"],
+): string[] {
+  const total = totalTokens(summary.total);
+  const share = (u: Usage): string =>
+    total === 0 ? "0%" : `${Math.round((totalTokens(u) / total) * 100)}%`;
+  const lines = [
+    `Total: ${usageLine(summary.total)} over ${summary.sessions} session${summary.sessions === 1 ? "" : "s"} in ${summary.changes} change${summary.changes === 1 ? "" : "s"}.`,
+  ];
+  if (summary.first !== undefined)
+    lines.push(`Period: ${summary.first.slice(0, 10)} → ${summary.last?.slice(0, 10) ?? ""}`);
+  lines.push(
+    `Retry overhead: ${formatTokens(totalTokens(summary.retryOverhead))} tokens (${share(summary.retryOverhead)}) · wasted re-reads: ${summary.wastedReads}`,
+    "",
+  );
+  for (const dimension of dimensions) {
+    if (dimension === "change") {
+      lines.push(
+        "By change",
+        "| Change | Tokens | Share | Cost | Sessions |",
+        "|---|---|---|---|---|",
+        ...sortedUsage(summary.byChange).map(
+          ([id, u]) =>
+            `| ${id} | ${formatTokens(totalTokens(u))} | ${share(u)} | ${formatCost(u.cost)} | ${summary.sessionsByChange[id] ?? 0} |`,
+        ),
+        "",
+      );
+    } else if (dimension === "day") {
+      lines.push(
+        "By day",
+        "| Day | Tokens | Share | Cost |",
+        "|---|---|---|---|",
+        ...Object.entries(summary.byDay)
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(
+            ([day, u]) =>
+              `| ${day} | ${formatTokens(totalTokens(u))} | ${share(u)} | ${formatCost(u.cost)} |`,
+          ),
+        "",
+      );
+    } else {
+      const title = dimension === "agent" ? "Agent" : "Model";
+      const map = dimension === "agent" ? summary.byAgent : summary.byModel;
+      lines.push(
+        `By ${dimension}`,
+        `| ${title} | Tokens | Share | Cost |`,
+        "|---|---|---|---|",
+        ...sortedUsage(map).map(
+          ([name, u]) =>
+            `| ${name} | ${formatTokens(totalTokens(u))} | ${share(u)} | ${formatCost(u.cost)} |`,
+        ),
+        "",
+      );
+    }
+  }
+  return lines;
+}
+
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;

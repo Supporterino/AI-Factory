@@ -14,7 +14,7 @@ import {
   planWorkspace,
   syncWorkspace,
 } from "../../workspace/sync.ts";
-import { type Command, parseCommandArgs } from "../command.ts";
+import { type Command, type CommandOptions, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
 
 const HELP = `Usage: ai-factory detect [--apply [--no-commit] [--allow-downgrade]] [--check] [--json]
@@ -31,18 +31,33 @@ Options:
   --json    Print the detection and the changes as JSON
   -h, --help`;
 
+const OPTIONS = {
+  apply: { type: "boolean", default: false, description: "Write the detected changes and commit" },
+  check: {
+    type: "boolean",
+    default: false,
+    description: "Exit 10 when detection differs from the config",
+  },
+  json: { type: "boolean", default: false, description: "Print the result as JSON" },
+  "no-commit": {
+    type: "boolean",
+    default: false,
+    description: "With --apply: leave it uncommitted",
+  },
+  "allow-downgrade": {
+    type: "boolean",
+    default: false,
+    description: "Let an older factory rewrite a newer install",
+  },
+} satisfies CommandOptions;
+
 export const detectCommand: Command = {
   name: "detect",
   summary: "Re-detect repos, languages and contracts; diff against the config",
   help: HELP,
+  options: OPTIONS,
   async run(args, io) {
-    const { values } = parseCommandArgs("detect", args, {
-      apply: { type: "boolean", default: false },
-      check: { type: "boolean", default: false },
-      json: { type: "boolean", default: false },
-      "no-commit": { type: "boolean", default: false },
-      "allow-downgrade": { type: "boolean", default: false },
-    });
+    const { values } = parseCommandArgs("detect", args, OPTIONS);
 
     const root = await findWorkspaceRoot(io.cwd);
     if (root === undefined) {

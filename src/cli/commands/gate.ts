@@ -10,7 +10,7 @@ import { CHANGE_ID, resolveBranchRef } from "../../git/repo.ts";
 import { worktreePath } from "../../git/worktrees.ts";
 import { loadGateSnapshot } from "../../update/snapshot.ts";
 import { Semaphore } from "../../util/semaphore.ts";
-import { type Command, type Io, parseCommandArgs } from "../command.ts";
+import { type Command, type CommandOptions, type Io, parseCommandArgs } from "../command.ts";
 import { ExitCode } from "../exit-codes.ts";
 
 const HELP = `Usage: ai-factory gate <change-id> [--task <id>] [--repo <name>] [--full] [--json]
@@ -90,22 +90,21 @@ function printReport(io: Io, report: GateReport): void {
   }
 }
 
+const OPTIONS = {
+  task: { type: "string", complete: "task", description: "Gate one task worktree by its id" },
+  repo: { type: "string", complete: "repo", description: "Limit to one repo" },
+  full: { type: "boolean", default: false, description: "Whole-repo gates with the full suite" },
+  json: { type: "boolean", default: false, description: "Print the reports as JSON" },
+} satisfies CommandOptions;
+
 export const gateCommand: Command = {
   name: "gate",
   summary: "Run the quality gates for a change, a task or a repo",
   help: HELP,
+  options: OPTIONS,
+  positionals: [{ name: "change-id", complete: "change" }],
   async run(args, io) {
-    const { values, positionals } = parseCommandArgs(
-      "gate",
-      args,
-      {
-        task: { type: "string" },
-        repo: { type: "string" },
-        full: { type: "boolean", default: false },
-        json: { type: "boolean", default: false },
-      },
-      true,
-    );
+    const { values, positionals } = parseCommandArgs("gate", args, OPTIONS, true);
     const id = positionals[0];
     if (id === undefined || positionals.length > 1)
       throw new UsageError("gate: expected exactly one <change-id>");

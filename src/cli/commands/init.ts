@@ -22,7 +22,7 @@ import {
   planWorkspace,
   syncWorkspace,
 } from "../../workspace/sync.ts";
-import { type Command, parseCommandArgs } from "../command.ts";
+import { type Command, type CommandOptions, parseCommandArgs } from "../command.ts";
 
 const OPENSPEC_CONFIG = "openspec/config.yaml";
 
@@ -57,19 +57,34 @@ const REPORTED: Partial<Record<SyncAction, string>> = {
   "keep-removed-edit": "no longer managed; kept your edited copy",
 };
 
+const OPTIONS = {
+  force: {
+    type: "boolean",
+    default: false,
+    description: "Overwrite files ai-factory did not create",
+  },
+  "allow-downgrade": {
+    type: "boolean",
+    default: false,
+    description: "Let an older factory rewrite a newer install",
+  },
+  "no-commit": { type: "boolean", default: false, description: "Leave the changes uncommitted" },
+  "no-graph": { type: "boolean", default: false, description: "Skip building the workspace graph" },
+  plan: {
+    type: "boolean",
+    default: false,
+    description: "Show what would change; write nothing",
+  },
+  json: { type: "boolean", default: false, description: "Print the result as JSON" },
+} satisfies CommandOptions;
+
 export const initCommand: Command = {
   name: "init",
   summary: "Install or refresh the factory in this workspace (idempotent)",
   help: HELP,
+  options: OPTIONS,
   async run(args, io) {
-    const { values } = parseCommandArgs("init", args, {
-      force: { type: "boolean", default: false },
-      "allow-downgrade": { type: "boolean", default: false },
-      "no-commit": { type: "boolean", default: false },
-      "no-graph": { type: "boolean", default: false },
-      plan: { type: "boolean", default: false },
-      json: { type: "boolean", default: false },
-    });
+    const { values } = parseCommandArgs("init", args, OPTIONS);
 
     const root = await findWorkspaceRoot(io.cwd);
     if (root === undefined) {
