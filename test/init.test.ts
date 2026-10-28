@@ -61,6 +61,7 @@ describe("init: AI repo with submodules", () => {
 
     const cfg = parseConfigText(read(fx.root, "factory.config.jsonc"), "f");
     expect(cfg.layout).toBe("submodules");
+    expect(cfg.artifacts.mode).toBe("local");
     expect(cfg.contracts.map((c) => c.kind)).toEqual(["helm-values", "openapi"]);
 
     // Implementers stack their repo's profiles.

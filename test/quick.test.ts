@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ExitCode } from "../src/cli/exit-codes.ts";
 import { ScriptedRuntime } from "./fixtures/scripted-runtime.ts";
@@ -100,5 +100,30 @@ describe("quick task", () => {
     expect(res.code).toBe(ExitCode.Ok);
     expect(reviews).toBe(2);
     expect(readFileSync(join(fx.root, "src/quick.ts"), "utf8")).toContain("quick = 2");
+  });
+
+  test("artifacts.mode: git commits the quick task's usage ledger", async () => {
+    const config = JSON.parse(readFileSync(join(fx.root, "factory.config.jsonc"), "utf8"));
+    writeFileSync(
+      join(fx.root, "factory.config.jsonc"),
+      JSON.stringify({ ...config, artifacts: { mode: "git" } }),
+    );
+    await fixtureGit(fx.root, "add", "-A");
+    await fixtureGit(fx.root, "commit", "-q", "-m", "chore: record artifacts");
+
+    const runtime = new ScriptedRuntime((call) =>
+      call.agent === "reviewer"
+        ? { handoff: { task: "quick-review", findings: [] } }
+        : { edits: { "src/quick.ts": "export const quick = 1;\n" }, handoff: { task: "quick" } },
+    );
+    const res = await cliWith(runtime, fx.root, "quick", "add tracked file", "--repo", "app");
+    expect(res.code).toBe(ExitCode.Ok);
+    expect(existsSync(join(fx.root, "factory-records/usage/quick-add-tracked-file.json"))).toBe(
+      true,
+    );
+    expect(await gitOut(fx.root, "log", "-1", "--format=%s")).toBe(
+      "docs(factory): record quick-add-tracked-file",
+    );
+    expect(await gitOut(fx.root, "status", "--porcelain", "--", "factory-records")).toBe("");
   });
 });

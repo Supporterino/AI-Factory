@@ -122,6 +122,32 @@ describe("doctor", () => {
     expect(json.checks.filter((c) => c.status === "fail")).toEqual([]);
   });
 
+  test("reports committed records and warns when the directory is gitignored", async () => {
+    const root = await installed(createSingleRepoFixture, { app: passAll });
+    expect(find(await report(root), "records")?.detail).toContain("local");
+
+    const file = join(root, "factory.config.jsonc");
+    writeFileSync(file, readFileSync(file, "utf8").replace('"mode": "local"', '"mode": "git"'));
+    await fixtureGit(root, "commit", "-q", "-am", "chore: artifacts git");
+    expect(find(await report(root), "records")?.status).toBe("warn"); // directory missing
+
+    mkdirSync(join(root, "factory-records/reports"), { recursive: true });
+    writeFileSync(join(root, "factory-records/reports/add-x.md"), "# add-x\n");
+    await fixtureGit(root, "add", "-A");
+    await fixtureGit(root, "commit", "-q", "-m", "docs(factory): record add-x");
+    const ok = find(await report(root), "records");
+    expect(ok?.status).toBe("ok");
+    expect(ok?.detail).toContain("1 file(s)");
+
+    writeFileSync(
+      join(root, ".gitignore"),
+      `${readFileSync(join(root, ".gitignore"), "utf8")}factory-records/\n`,
+    );
+    const ignored = find(await report(root), "records");
+    expect(ignored?.status).toBe("warn");
+    expect(ignored?.detail).toContain("gitignored");
+  });
+
   test("reports missing gates, toolchains, hooks, models, drift and stale state", async () => {
     const root = await installed(createSingleRepoFixture, {
       app: { ...passAll, lint: "not-a-real-linter-xyz .", format: "skip" },

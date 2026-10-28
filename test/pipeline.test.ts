@@ -158,6 +158,7 @@ describe("pipeline: AI repo with submodules", () => {
     const approve = await cliWith(runtime, fx.root, "approve", ID);
     expect(approve.err).toBe("");
     expect(approve.out).toContain(`${ID}: done`);
+    expect(approve.out).toContain(`next: \`ai-factory land ${ID}\``);
     expect(approve.code).toBe(ExitCode.Ok);
 
     // 1.2, 1.3 (backend) and 2.1 (frontend) ran at the same time, within maxAgents (4).
@@ -226,6 +227,17 @@ describe("pipeline: AI repo with submodules", () => {
     );
     expect(remotesAfter).toEqual(remotesBefore);
     expect(runtime.closed).toBe(true);
+
+    // The state survives until land, so resuming a done change points at the next step.
+    const again = await cliWith(
+      new ScriptedRuntime(() => ({ handoff: { task: "unused" } })),
+      fx.root,
+      "resume",
+      ID,
+    );
+    expect(again.code).toBe(ExitCode.Ok);
+    expect(again.out).toContain(`${ID} is already done`);
+    expect(again.out).toContain(`next: \`ai-factory land ${ID}\``);
   });
 });
 
@@ -281,6 +293,31 @@ describe("pipeline: single repo", () => {
         }),
       }),
     );
+
+  test("close records the report, approval and usage when artifacts.mode is git", async () => {
+    await configure(fx.root, (t) =>
+      t
+        .replace('"overrides": {}', `"overrides": ${JSON.stringify({ app: passAll })}`)
+        .replace('"mode": "local"', '"mode": "git"'),
+    );
+    const runtime = progressRuntime();
+    await cliWith(runtime, fx.root, "run", "Add math helpers");
+    const approve = await cliWith(runtime, fx.root, "approve", ID);
+    expect(approve.code).toBe(ExitCode.Ok);
+
+    for (const rel of [
+      `factory-records/reports/${ID}.md`,
+      `factory-records/approvals/${ID}.json`,
+      `factory-records/usage/${ID}.json`,
+    ])
+      expect(existsSync(join(fx.root, rel))).toBe(true);
+    expect(readFileSync(join(fx.root, `factory-records/reports/${ID}.md`), "utf8")).toContain(
+      `# ${ID}: done`,
+    );
+    expect(await gitOut(fx.root, "log", "--format=%s", "--max-count=5")).toContain(
+      `docs(factory): record ${ID}`,
+    );
+  });
 
   test("implementation prints task, gate, merge and summary progress", async () => {
     await withGates(passAll);
@@ -340,6 +377,7 @@ describe("pipeline: single repo", () => {
     expect(approve.code).toBe(ExitCode.Paused);
     expect(approve.out).toContain("failed: 1.1");
     expect(approve.out).toContain(`${ID}-paused.md`);
+    expect(approve.out).not.toContain("ai-factory land");
     const state = loadRun(fx.root, ID);
     expect(state?.tasks.map((t) => [t.id, t.status, t.failures])).toEqual([
       ["1.1", "failed", 4],
@@ -362,6 +400,7 @@ describe("pipeline: single repo", () => {
     expect((await cli(fx.root, "retry", ID, "--task", "1.1")).code).toBe(ExitCode.Ok);
     const resume = await cliWith(runtime, fx.root, "resume", ID);
     expect(resume.out).toContain(`${ID}: done`);
+    expect(resume.out).toContain(`next: \`ai-factory land ${ID}\``);
     expect(resume.code).toBe(ExitCode.Ok);
     expect(await gitOut(fx.root, "log", "-1", "--format=%s")).toBe(`chore(spec): archive ${ID}`);
     expect(await gitOut(fx.root, "show", `change/${ID}:src/mul.ts`)).toContain("mul");
