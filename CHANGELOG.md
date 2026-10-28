@@ -2,6 +2,13 @@
 
 All notable changes per release. `ai-factory update` applies them to an installed workspace (see [docs/cli.md](docs/cli.md#update)).
 
+## 0.7.0
+
+### Minor Changes
+
+- 23422bb: Add opt-in committed change records. `"artifacts": { "mode": "git" }` snapshots a finished change's final report, approval and usage ledger into `factory-records/`, so a clone or another machine keeps them. `close`, `land` and `quick` record automatically; `ai-factory artifacts sync <id>|--all` backfills and retries. `usage` and `doctor` read both the local ledger and the committed snapshot. Config schema v4 adds the block with `"mode": "local"`, which keeps today's behaviour.
+- 23d5d6b: Print `next: ai-factory land <id>` when `approve` or `resume` finishes a change; `land` hints at `artifacts sync <id>` when the records stay local.
+
 ## 0.6.0
 
 ### Minor Changes
