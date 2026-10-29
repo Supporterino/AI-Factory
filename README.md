@@ -21,7 +21,7 @@ Requirements: macOS or Linux, Node ≥ 20 or Bun ≥ 1.3, and these tools on `PA
 | OpenSpec | 1.x (≥ 1.10)                        | `npm install --global @fission-ai/openspec@1.14.3` |
 | Graphify | 0.9.x (≥ 0.9.93)                    | `uv tool install graphifyy==0.9.93`                |
 
-Plus credentials for the model providers you configure, either exported (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …) or stored with `opencode auth login`.
+Plus credentials for the model providers you configure, either exported (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …) or stored with `opencode auth login`. The factory copies the configured providers' stored credentials into its private runtime database at startup, so they never enter your config or git.
 
 Run the CLI without installing it:
 
@@ -178,7 +178,7 @@ bunx @supporterino/ai-factory@<new> rollback           # undo it
 | Symptom                                                                    | Fix                                                                                                                                                                                                                                   |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `uses config schemaVersion 1; this factory needs 4`                        | `ai-factory update` (it migrates v1 → v4 and keeps comments).                                                                                                                                                                         |
-| `doctor`: `model … is not available to opencode`                           | The server only sees the credentials of providers named in `models`. Export the provider's key (e.g. `ANTHROPIC_API_KEY`) or run `opencode auth login`, or change the model.                                                          |
+| `doctor`: `model … is not available to opencode`                           | Run `opencode auth login <provider>` (imported on the next run) or export the key (e.g. `ANTHROPIC_API_KEY`), or change the model. `doctor` lists the stored credentials without their values.                                        |
 | `doctor` / `gate`: `no format gate` or `not found: golangci-lint`          | Install the tool, add a script under the name in `gates.scripts`, or set `gates.overrides.<repo>.<gate>` (`"skip"` to turn it off).                                                                                                   |
 | `gate is not check-only`                                                   | Your format or lint script writes files. Point the gate at the check variant (e.g. `prettier --check`, `biome check`).                                                                                                                |
 | The change paused                                                          | Read `.factory/reports/<id>.md`. Fix the code in the named worktree, then run `retry <id> --task <n>`; or run `resume <id>` after a transient failure.                                                                                |
