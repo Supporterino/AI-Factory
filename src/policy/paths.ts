@@ -46,6 +46,9 @@ const SECRET_SEGMENTS: readonly RegExp[] = [
   /(^|\/)\.docker\/config\.json$/i,
   /(^|\/)\.config\/gh\/hosts\.ya?ml$/i,
   /(^|\/)\.ssh(\/|$)/i,
+  // The factory's private opencode DB holds the provider credentials copied from `opencode
+  // auth login`. Never let an agent read it through a file, glob, grep or shell argument.
+  /(^|\/)\.factory\/opencode(\/|$)/i,
 ];
 
 /** Secret files: never read or written by an agent (§8). `.env.example` and friends are fine. */

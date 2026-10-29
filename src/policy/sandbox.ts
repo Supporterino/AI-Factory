@@ -55,6 +55,8 @@ function secretReadRules(workspace: string): string[] {
     "id_(rsa|dsa|ecdsa|ed25519)[^/]*",
     "[^/]*kubeconfig[^/]*",
     "[^/]*\\.tfstate(\\.backup)?",
+    // The private opencode DB holds copies of the user's provider credentials.
+    "\\.factory/opencode(/.*)?",
   ];
   return [
     `(deny file-read-data ${secret.map((s) => `(regex #"${under}${s}$")`).join(" ")})`,

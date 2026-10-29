@@ -37,6 +37,7 @@ export function scrubList(): string[] {
     ...new Set([
       "OPENCODE_PASSWORD",
       "OPENCODE_SERVER_PASSWORD",
+      "OPENCODE_DB",
       ...Object.values(PROVIDER_ENV).flat(),
       ...FORGE_TOKENS,
     ]),

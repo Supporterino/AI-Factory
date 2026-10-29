@@ -10,6 +10,12 @@ import { appendLog } from "../logs/log.ts";
 import { sandboxEnabled } from "../policy/sandbox.ts";
 import { sessionContextFile } from "../policy/session-files.ts";
 import { toolBin } from "../tools.ts";
+import {
+  credentialProviders,
+  readStoredCredentials,
+  scopeCredentials,
+  syncCredentials,
+} from "./auth.ts";
 import { PROVIDER_ENV, scrubList } from "./credentials.ts";
 import type {
   AgentRuntime,
@@ -333,7 +339,47 @@ export class OpencodeRuntime implements AgentRuntime {
         throw new TransientError(`opencode serve did not start: ${stderr}`);
       await new Promise((r) => setTimeout(r, 200));
     }
+    await this.#syncCredentials();
     void this.#watchEvents();
+  }
+
+  /**
+   * Copy the user's `opencode auth login` credentials into the private server. Best effort:
+   * a missing or older opencode, or a failed export, leaves the server on env credentials and
+   * never blocks a run. The private DB is the only place these secrets are written.
+   */
+  async #syncCredentials(): Promise<void> {
+    try {
+      const exported = await readStoredCredentials(
+        this.#opts.root,
+        this.#opts.baseEnv ?? process.env,
+      );
+      if (exported === undefined) {
+        appendLog(this.#opts.root, this.#opts.changeId, {
+          kind: "auth",
+          ok: false,
+          error: "opencode auth export failed; using environment credentials only",
+        });
+        return;
+      }
+      const scoped = scopeCredentials(exported, credentialProviders(this.#opts.config));
+      const summary = await syncCredentials(
+        { request: (method, path, body) => this.#api(method, path, body) },
+        scoped,
+      );
+      appendLog(this.#opts.root, this.#opts.changeId, {
+        kind: "auth",
+        ok: true,
+        ...summary,
+        providers: [...new Set(scoped.map((entry) => entry.integrationID))],
+      });
+    } catch (err) {
+      appendLog(this.#opts.root, this.#opts.changeId, {
+        kind: "auth",
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /** Rejects every permission prompt (allow/deny-only rule sets should never produce one). */
