@@ -16,6 +16,6 @@ End your final message with exactly one fenced `json` block and nothing after it
 - `filesChanged`: repo-relative paths you created, changed or deleted.
 - `decisions`: short statements of choices you made that a reviewer should know.
 - `risks`: what you skipped or did not check, and anything a human must know.
-- `openQuestions`: questions only a human can answer. Do not guess answers to them.
+- `openQuestions`: questions only a human can answer. Do not guess answers to them. The factory may ask them during intake/design and send the answers back in the same session.
 - `findings` (reviewers only): `{severity: must|should|nice, file, line, what, problem, fix, impact}`.
   Keep it short (about 300 tokens). It must validate against `.opencode/schemas/handoff.schema.json`.

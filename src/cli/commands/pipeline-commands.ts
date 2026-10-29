@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { findWorkspaceRoot, loadConfig } from "../../config/load.ts";
 import { PreconditionError, UsageError } from "../../errors.ts";
 import { CHANGE_ID } from "../../git/repo.ts";
@@ -11,7 +11,6 @@ import { design, intake } from "../../pipeline/design.ts";
 import type { DriveOutcome } from "../../pipeline/drive.ts";
 import { drive } from "../../pipeline/drive.ts";
 import type { Verbosity } from "../../pipeline/progress.ts";
-import { refineRequest } from "../../pipeline/refine.ts";
 import { OpencodeRuntime } from "../../runtime/opencode.ts";
 import { readActive, releaseDriver } from "../../state/active.ts";
 import { readOrCorrupt } from "../../state/files.ts";
@@ -39,7 +38,7 @@ async function setup(
 export async function withPipeline<T>(
   io: Io,
   changeId: string,
-  options: { readonly verbosity?: Verbosity },
+  options: { readonly verbosity?: Verbosity; readonly clarify?: boolean },
   work: (p: Pipeline) => Promise<T>,
 ): Promise<T> {
   const { root, config } = await setup(io);
@@ -65,6 +64,8 @@ export async function withPipeline<T>(
     out: (l) => io.out(l),
     signal: controller.signal,
     ...(options.verbosity === undefined ? {} : { verbosity: options.verbosity }),
+    ...(io.ask === undefined ? {} : { ask: io.ask }),
+    clarify: options.clarify ?? true,
   });
   try {
     return await work(p);
@@ -127,10 +128,10 @@ const RUN_OPTIONS = {
     complete: "file",
     description: "Read the request from a file",
   },
-  interactive: {
+  "no-interactive": {
     type: "boolean",
     default: false,
-    description: "Ask refinement questions before intake",
+    description: "Record agent-raised questions without asking them",
   },
   ...PROGRESS_OPTIONS,
 } satisfies CommandOptions;
@@ -140,18 +141,29 @@ export const runCommand: Command = {
   summary: "Start a change from a request and run it up to spec approval",
   options: RUN_OPTIONS,
   positionals: [{ name: "request", variadic: true }],
-  help: `Usage: ai-factory run "<request>" [--request <file>] [--interactive] [--verbose|--quiet]
+  help: `Usage: ai-factory run "<request>" [--request <file>] [--no-interactive] [--verbose|--quiet]
 
 Intake (change id and summary), a change branch in the AI repo, explorers per likely repo,
 then the architect writes the OpenSpec change. Stops at spec approval: review
 openspec/changes/<id>/ and run \`ai-factory approve <id>\`. If another change is active, the
 new one is drafted in .factory/drafts/<id> and queued after approval.
 
-  --request <file>  Read the request from a file (e.g. one written by \`ai-factory refine\`)
-  --interactive     Ask scope/verification questions before intake
-  --verbose         Also print one line per agent tool call and per gate
-  --quiet           Only phase banners, merges, failures and the summary`,
+The intake orchestrator and architect may raise questions in their handoffs. When stdin is a
+terminal, the CLI asks them, sends the answers back to the same session, and records the Q&A
+in openspec/changes/<id>/questions.md and .factory/clarifications/<id>.md.
+
+  --request <file>   Read the request from a file (e.g. one written by \`ai-factory refine\`)
+  --no-interactive   Do not ask; record the questions and continue
+  --verbose          Also print one line per agent tool call and per gate
+  --quiet            Only phase banners, merges, failures and the summary`,
   async run(args, io) {
+    const removed = args.find((arg) => arg === "--interactive" || arg.startsWith("--interactive="));
+    if (removed !== undefined) {
+      throw new UsageError("run: --interactive was removed", [
+        'use `ai-factory refine "<request>"` and `ai-factory run --request <file>` for a pre-run interview',
+        "`run` now asks agent-raised questions automatically; pass --no-interactive to record them without asking",
+      ]);
+    }
     const { values, positionals } = parseCommandArgs("run", args, RUN_OPTIONS, true);
     let request = positionals.join(" ").trim();
     if (values.request !== undefined) {
@@ -160,30 +172,38 @@ new one is drafted in .factory/drafts/<id> and queued after approval.
     if (request === "")
       throw new UsageError('run: expected a request, e.g. ai-factory run "add a health endpoint"');
     const verbosity = verbosityOf(values);
-    return withPipeline(io, "intake", { verbosity }, async (p) => {
-      if (values.interactive) {
-        if (!p.config.workflow.refine) {
-          throw new PreconditionError("workflow.refine is disabled");
+    return withPipeline(
+      io,
+      "intake",
+      { verbosity, clarify: values["no-interactive"] !== true },
+      async (p) => {
+        const id = await intake(p, request);
+        const result = await design(p, id);
+        const run = p.run(id);
+        if (run.clarifications.length > 0) {
+          const questions = join(
+            run.draft === undefined ? p.root : join(p.root, run.draft),
+            "openspec",
+            "changes",
+            id,
+            "questions.md",
+          );
+          if (existsSync(questions)) io.out(`questions: ${relative(p.root, questions)}`);
         }
-        const refined = await refineRequest(io, request);
-        request = refined.text;
-        io.out(`refined request: ${refined.path}`);
-      }
-      const id = await intake(p, request);
-      const result = await design(p, id);
-      if (!result.ok) {
-        io.out(`${id}: the spec does not validate yet:`);
-        for (const issue of result.issues) io.out(`  - ${issue}`);
+        if (!result.ok) {
+          io.out(`${id}: the spec does not validate yet:`);
+          for (const issue of result.issues) io.out(`  - ${issue}`);
+          io.out(
+            `fix openspec/changes/${id}/ and run \`ai-factory approve ${id}\`, or \`ai-factory resume ${id}\` to let the architect repair it`,
+          );
+          return ExitCode.Paused;
+        }
         io.out(
-          `fix openspec/changes/${id}/ and run \`ai-factory approve ${id}\`, or \`ai-factory resume ${id}\` to let the architect repair it`,
+          `${id}: awaiting approval — review openspec/changes/${id}/ then run \`ai-factory approve ${id}\``,
         );
-        return ExitCode.Paused;
-      }
-      io.out(
-        `${id}: awaiting approval — review openspec/changes/${id}/ then run \`ai-factory approve ${id}\``,
-      );
-      return ExitCode.Ok;
-    });
+        return ExitCode.Ok;
+      },
+    );
   },
 };
 

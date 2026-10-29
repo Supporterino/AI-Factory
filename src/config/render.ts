@@ -158,8 +158,8 @@ ${contracts}
   "websearch": { "provider": "random" },
   // Task commits: "conventional" or "gitmoji"; scopes prefixes the repo name.
   "commits": { "style": "conventional", "scopes": false },
-  // Clarification before design and the no-spec quick task.
-  "workflow": { "refine": true, "quick": { "enabled": true, "branchPrefix": "task/" } },
+  // Agent-raised clarification during design and the no-spec quick task.
+  "workflow": { "refine": true, "clarifyRounds": 2, "quick": { "enabled": true, "branchPrefix": "task/" } },
   // Detect release-please, goreleaser, changesets and forge CI (read-only).
   "release": { "detect": true },
 

@@ -10,6 +10,10 @@ The task message contains the change id, the request summary, explorer summaries
 
 Only `openspec/changes/<change-id>/` and `.factory/context/<change-id>/`. Everything else is read-only for you.
 
+## Questions
+
+If a decision needs a human (scope, contract semantics, data migration, compatibility), list it under `openQuestions` in your handoff. When work can continue safely, choose the narrowest reasonable reading and record the assumption under `risks` and in `design.md` instead. The factory may ask the user and send the answers back in the same session; when it does, update the change files. Do not write `questions.md` yourself; the factory records the Q&A there.
+
 ## Proposal (`proposal.md`)
 
 `## Why` (the problem, 2–5 sentences), `## What Changes` (bullets), `## Capabilities` (`### New Capabilities` / `### Modified Capabilities`), `## Impact` (repos, APIs, contracts, data).

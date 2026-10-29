@@ -17,4 +17,4 @@ Put them into the handoff `decisions`, one per line, in this exact form:
 - `summary: <one paragraph>`
 - `repos: <name>, <name>`
 
-Use `task: "intake"`. If the request is ambiguous in a way that changes the scope, still choose the narrowest reasonable reading and list the question under `openQuestions`.
+Use `task: "intake"`. If the request is ambiguous in a way that changes the scope, still choose the narrowest reasonable reading and list the question under `openQuestions`. The factory asks the user when a terminal is attached, then sends the answers back in the same session; otherwise it records the question and you proceed with the assumption.
