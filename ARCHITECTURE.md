@@ -65,13 +65,14 @@ flowchart LR
 | `factory.lock.json`                                        | yes          | `init`, `update`, `detect --apply` only                                                               |
 | `.opencode/` (agents, plugin, standards, schemas, add-ons) | yes          | managed files, including OpenSpec's generated commands and skills                                     |
 | `AGENTS.md`, `.gitignore`                                  | yes          | your text plus a managed block between `ai-factory` markers                                           |
-| `openspec/changes/<id>/`                                   | yes          | architect (spec), CLI (checkbox mirror, archive)                                                      |
+| `openspec/changes/<id>/`                                   | yes          | architect (spec), CLI (checkbox mirror, questions.md, archive)                                        |
 | `.factory/runs/<id>.json`                                  | no           | CLI only: phase, tasks, attempts, history                                                             |
 | `.factory/runs/<id>/snapshot/gates.json`                   | no           | `approve`: gate config + profile tables the change keeps                                              |
 | `.factory/active.lock`, `.factory/queue.json`              | no           | the one active change and the approval-ordered queue                                                  |
 | `.factory/approvals/<id>.json`                             | no           | `approve`: approver, spec commit, spec hash                                                           |
 | `.factory/worktrees/<id>/<repo>/<task>/`                   | no           | task worktrees (and `.factory/worktrees/<id>/.opencode/{agents,skills}`, the snapshotted definitions) |
 | `.factory/drafts/<id>/`                                    | no           | AI-repo worktree for a change designed while another one is active                                    |
+| `.factory/clarifications/<id>.md`                          | no           | questions the intake orchestrator and architect raised, and the user's answers                        |
 | `.factory/context/<id>/`                                   | no           | context packs (architect)                                                                             |
 | `.factory/sessions/`                                       | no           | one file per agent session: role, scope, worktree; the plugin reads it                                |
 | `.factory/logs/`, `.factory/usage/`, `.factory/reports/`   | no           | redacted tool and gate logs, the live token ledger, final and pause reports                           |
@@ -84,7 +85,7 @@ flowchart LR
 
 The phase lives in `.factory/runs/<id>.json`. `resume` re-enters at the recorded phase. Pauses (gate budget exhausted, a blocked task, design not converging, an interrupt) keep everything on disk.
 
-`refine` and `run --interactive` are a pre-intake clarification step: they ask the user a few questions and turn the answers into a request file, then the normal intake→design flow starts. `quick` is a separate, deliberately small path: a `task/<slug>` branch, one implementer session, the task gates, one reviewer pass, and one local commit. It does not create a run state, approval or OpenSpec change.
+`refine` is a pre-intake interview: it asks a few questions and turns the answers into a request file for `run --request`. During `run`, the intake orchestrator and architect can raise questions in their handoffs; the CLI asks them in the terminal, sends the answers back to the same session, and records the Q&A in `openspec/changes/<id>/questions.md` and `.factory/clarifications/<id>.md`. `workflow.clarifyRounds` caps the rounds; a non-interactive run records the questions and continues. `quick` is a separate, deliberately small path: a `task/<slug>` branch, one implementer session, the task gates, one reviewer pass, and one local commit. It does not create a run state, approval or OpenSpec change.
 
 ```mermaid
 stateDiagram-v2

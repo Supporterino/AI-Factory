@@ -1,6 +1,6 @@
 import type { ContractConfig, RepoConfig } from "../config/schema.ts";
 import type { Finding } from "../handoff/schema.ts";
-import type { TaskState } from "../state/run.ts";
+import type { Clarification, TaskState } from "../state/run.ts";
 import { fence } from "../util/fence.ts";
 
 /**
@@ -33,6 +33,17 @@ ${summary}
 Use \`task: "explore:${repo.name}"\`. Put your summary (≤ 40 lines) in \`decisions\`.`;
 }
 
+const clarificationAnswer = (record: Clarification): string => {
+  if (record.status === "answered") return record.answer ?? "";
+  return record.status === "skipped" ? "(skipped)" : "(not answered)";
+};
+
+function clarificationLines(answers: readonly Clarification[]): string {
+  return answers
+    .map((record) => `- Q: ${record.question}\n  A: ${clarificationAnswer(record)}`)
+    .join("\n");
+}
+
 export function designPrompt(input: {
   id: string;
   summary: string;
@@ -41,6 +52,7 @@ export function designPrompt(input: {
   repos: readonly RepoConfig[];
   contracts: readonly ContractConfig[];
   instructions?: readonly string[];
+  clarifications?: readonly Clarification[];
 }): string {
   const explored = Object.entries(input.explorations)
     .map(([repo, text]) => `### ${repo}\n${text}`)
@@ -52,13 +64,18 @@ export function designPrompt(input: {
     input.instructions === undefined || input.instructions.length === 0
       ? "- none configured"
       : input.instructions.map((p) => `- \`${p}\``).join("\n");
+  const clarifications = input.clarifications ?? [];
+  const clarified =
+    clarifications.length === 0
+      ? "- none"
+      : `\n\nClarifications already given by the user:\n${clarificationLines(clarifications)}`;
   return `Write the OpenSpec change \`${input.id}\` in \`openspec/changes/${input.id}/\` (the folder exists; fill proposal.md, specs/<capability>/spec.md, design.md and tasks.md).
 
 Request:
 """
 ${input.request}
 """
-Summary: ${input.summary}
+Summary: ${input.summary}${clarified}
 
 Code repos (the only valid \`repo:\` values):
 ${repoLines(input.repos)}
@@ -78,6 +95,21 @@ Use \`task: "design"\` in your handoff and list every file you wrote.`;
 export function designRepairPrompt(issues: readonly string[]): string {
   return `The change does not validate yet. Fix exactly these problems in the change files, then end with a new handoff:
 ${issues.map((i) => `- ${i}`).join("\n")}`;
+}
+
+/** Follow-up after the CLI asked the user the questions from an intake or architect handoff. */
+export function clarifyPrompt(
+  step: "intake" | "design",
+  answers: readonly Clarification[],
+): string {
+  const target =
+    step === "intake"
+      ? "Update your intake decisions (change-id, summary, repos) if the answers change them."
+      : "Update the change files so the spec reflects the answers.";
+  return `The user answered the open questions from your ${step} handoff:
+${clarificationLines(answers)}
+
+Treat the answers as part of the request. ${target} For skipped or unanswered questions, choose the narrowest reasonable reading and record the assumption under \`risks\`. End with a new handoff.`;
 }
 
 export function packsPrompt(id: string, tasks: readonly TaskState[], maxTokens: number): string {

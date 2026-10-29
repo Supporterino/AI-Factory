@@ -28,9 +28,9 @@ export function requestSlug(text: string): string {
 }
 
 /**
- * CLI-mediated clarification. This is deliberately not a model turn: the headless runtime
- * rejects `ask` permissions, so refinement must happen before a session starts. The result is
- * a normal request file that `run --request` consumes.
+ * CLI-mediated pre-run clarification. This is deliberately not a model turn: the headless
+ * runtime rejects `ask` permissions, so the questions are asked before any session starts.
+ * The result is a normal request file that `run --request` consumes.
  */
 export async function refineRequest(
   io: Io,
@@ -62,8 +62,9 @@ ${answers.map(([key, answer]) => `- **${key}**: ${answer}`).join("\n")}
 ## Instructions for the architect
 
 Treat the clarifications as part of the request. If they conflict with the original, the
-clarification wins. Keep anything not named here out of scope, and put open questions into
-\`openspec/changes/<id>/questions.md\` rather than guessing.
+clarification wins. Keep anything not named here out of scope. If a question only a human can
+answer remains, list it in the handoff \`openQuestions\`; the factory asks it and records the
+Q&A in \`openspec/changes/<id>/questions.md\`.
 `;
   const root = await findWorkspaceRoot(io.cwd);
   if (root === undefined) throw new PreconditionError("not inside a git repository");

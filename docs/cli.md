@@ -269,7 +269,7 @@ ai-factory refine "<request>"
 
 Asks a few scope, out-of-scope, verification and constraint questions, then writes a
 refined request to `.factory/requests/<slug>.md`. Nothing is designed or implemented.
-Feed it to `run --request`, or use `run --interactive` to refine in the same command.
+Feed it to `run --request`.
 
 ## quick
 
@@ -285,16 +285,24 @@ gates; only the spec and approval hash are skipped. The branch stays checked out
 ## run
 
 ```
-ai-factory run "<request>" [--request <file>] [--interactive] [--verbose|--quiet]
+ai-factory run "<request>" [--request <file>] [--no-interactive] [--verbose|--quiet]
 ```
 
 Starts a change and runs it up to spec approval. `--request` reads the request from a file
-(for example one written by `refine`); `--interactive` asks the refinement questions first.
+(for example one written by `refine`).
 1. Intake by the orchestrator: change id, summary and likely repos.
 2. `change/<id>` in the AI repo, created before design.
 3. Explorers per likely repo, in parallel.
 4. The architect writes `openspec/changes/<id>/`.
 5. The CLI validates the change, and the architect repairs it if needed.
+
+When the intake orchestrator or architect lists `openQuestions` in its handoff and stdin is a
+terminal, the CLI asks them, sends the answers back to the same session, and lets the agent
+update the request or spec. The Q&A is written to
+`openspec/changes/<id>/questions.md` and `.factory/clarifications/<id>.md`.
+`workflow.refine` gates asking; `workflow.clarifyRounds` (default 2) caps the rounds per
+phase, and questions beyond the cap are recorded unanswered. `--no-interactive`, or no TTY,
+records the questions without asking and continues. `run --interactive` was removed: use `refine` + `--request` for a pre-run interview.
 
 When another change occupies the AI-repo checkout, the new change is drafted in `.factory/drafts/<id>`. Exit 0 means it awaits approval; exit 6 means the spec does not validate yet.
 

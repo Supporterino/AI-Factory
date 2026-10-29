@@ -76,6 +76,17 @@ export const TaskState = z.strictObject({
 });
 export type TaskState = z.infer<typeof TaskState>;
 
+/** One question an agent raised, and what the user did with it. */
+export const Clarification = z.strictObject({
+  /** "intake" or "design". */
+  step: z.string(),
+  question: z.string(),
+  status: z.enum(["answered", "skipped", "unanswered"]),
+  answer: z.string().optional(),
+  at: z.string(),
+});
+export type Clarification = z.infer<typeof Clarification>;
+
 export const RunState = z.strictObject({
   version: z.literal(1),
   id: z.string(),
@@ -108,6 +119,8 @@ export const RunState = z.strictObject({
   suiteRounds: z.int().min(0).default(0),
   /** Latest handoff per task or step, for the report. */
   handoffs: z.record(z.string(), z.unknown()).default({}),
+  /** Questions the intake orchestrator and architect raised, and the user's answers. */
+  clarifications: z.array(Clarification).default([]),
   /** Gate summary of the last full-suite run per repo. */
   fullSuite: z
     .record(z.string(), z.strictObject({ passed: z.boolean(), output: z.string() }))

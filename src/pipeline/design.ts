@@ -8,15 +8,36 @@ import { graphStatus, updateGraph } from "../graph/graph.ts";
 import { checkDesign, newChange } from "../openspec/cli.ts";
 import { decisionValues } from "../runtime/handoff.ts";
 import { readActive } from "../state/active.ts";
-import { loadRun, newRun, saveRun } from "../state/run.ts";
+import { type Clarification, loadRun, newRun, saveRun } from "../state/run.ts";
 import { recordUsage } from "../usage/usage.ts";
+import {
+  type Ask,
+  askQuestions,
+  recordUnanswered,
+  unansweredQuestions,
+  upsertClarifications,
+  writeClarifications,
+} from "./clarify.ts";
 import { ChangeAborted, type Pipeline } from "./context.ts";
-import { designPrompt, designRepairPrompt, explorePrompt, intakePrompt } from "./prompts.ts";
+import {
+  clarifyPrompt,
+  designPrompt,
+  designRepairPrompt,
+  explorePrompt,
+  intakePrompt,
+} from "./prompts.ts";
 
 /** Directory holding the change's AI-repo checkout: a draft worktree or the workspace root. */
 export function specDir(p: Pipeline, draft: string | undefined): string {
   return draft === undefined ? p.root : join(p.root, draft);
 }
+
+/** The ask function, when clarification is enabled and somebody can answer. */
+function asker(p: Pipeline): Ask | undefined {
+  return p.config.workflow.refine && p.deps.clarify !== false ? p.deps.ask : undefined;
+}
+
+const questionsLabel = (count: number): string => `${count} question${count === 1 ? "" : "s"}`;
 
 function slug(text: string): string {
   const words = text
@@ -68,6 +89,7 @@ async function branchForDesign(p: Pipeline, id: string): Promise<{ base: string;
 export async function intake(p: Pipeline, request: string): Promise<string> {
   p.out("▶ intake");
   const repos = p.codeRepos();
+  const asked: Clarification[] = [];
   const result = await p.call({
     changeId: "intake",
     agent: "orchestrator",
@@ -77,6 +99,25 @@ export async function intake(p: Pipeline, request: string): Promise<string> {
     title: "intake",
     step: "intake",
     prompt: intakePrompt(request, repos),
+    clarify: async (handoff, round) => {
+      const questions = unansweredQuestions(handoff, asked, "intake");
+      if (questions.length === 0) return undefined;
+      const ask = asker(p);
+      if (ask === undefined || round > p.config.workflow.clarifyRounds) {
+        asked.push(...recordUnanswered("intake", questions));
+        return undefined;
+      }
+      p.out(`▶ clarify: ${questionsLabel(questions.length)} from intake`);
+      const records = await askQuestions({
+        ask,
+        step: "intake",
+        questions,
+        signal: p.deps.signal,
+      });
+      asked.push(...records);
+      if (!records.some((record) => record.status !== "unanswered")) return undefined;
+      return clarifyPrompt("intake", records);
+    },
   });
   const values = result.handoff ? decisionValues(result.handoff) : new Map<string, string>();
   const proposed = values.get("change-id") ?? "";
@@ -88,8 +129,12 @@ export async function intake(p: Pipeline, request: string): Promise<string> {
   const run = newRun(id, request, "design");
   run.summary = values.get("summary") ?? request;
   run.likelyRepos = likely;
+  run.clarifications = upsertClarifications([], asked);
   if (result.handoff) run.handoffs.intake = result.handoff;
   saveRun(p.root, run);
+  if (run.clarifications.length > 0) {
+    writeClarifications({ root: p.root, id, records: run.clarifications });
+  }
   await recordUsage(p.root, id, {
     at: new Date().toISOString(),
     sessionId: result.sessionId,
@@ -170,6 +215,9 @@ export async function design(p: Pipeline, id: string): Promise<{ ok: boolean; is
 
   p.out(`▶ design: openspec/changes/${id}`);
   await newChange(p.root, dir, id);
+  if (run.clarifications.length > 0) {
+    writeClarifications({ root: p.root, id, specDir: dir, records: run.clarifications });
+  }
   const names = p.codeRepos().map((r) => r.name);
   const result = await p.call({
     changeId: id,
@@ -187,7 +235,38 @@ export async function design(p: Pipeline, id: string): Promise<{ ok: boolean; is
       repos: p.codeRepos(),
       contracts: p.config.contracts,
       instructions: allInstructionPaths(p.config),
+      clarifications: run.clarifications,
     }),
+    clarify: async (handoff, round) => {
+      const current = p.run(id).clarifications;
+      const questions = unansweredQuestions(handoff, current, "design");
+      if (questions.length === 0) return undefined;
+      const ask = asker(p);
+      let records: Clarification[];
+      if (ask === undefined || round > p.config.workflow.clarifyRounds) {
+        records = recordUnanswered("design", questions);
+      } else {
+        p.out(`▶ clarify: ${questionsLabel(questions.length)} from design`);
+        records = await askQuestions({
+          ask,
+          step: "design",
+          questions,
+          signal: p.deps.signal,
+        });
+      }
+      const updated = await p.update(id, (d) => {
+        d.clarifications = upsertClarifications(d.clarifications, records);
+      });
+      writeClarifications({
+        root: p.root,
+        id,
+        specDir: dir,
+        records: updated.clarifications,
+      });
+      if (ask === undefined || !records.some((record) => record.status !== "unanswered"))
+        return undefined;
+      return clarifyPrompt("design", records);
+    },
     retry: async (_handoff, attempt) => {
       if (attempt > p.config.gates.maxRetries) return undefined;
       const { issues } = await checkDesign(p.root, dir, id, names, p.config.contracts);

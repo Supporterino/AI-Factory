@@ -40,10 +40,20 @@ describe("v3 context config", () => {
     expect(cfg.agents).toEqual([]);
     expect(cfg.routing).toEqual([]);
     expect(cfg.commits).toEqual({ style: "conventional", scopes: false });
-    expect(cfg.workflow).toEqual({ refine: true, quick: { enabled: true, branchPrefix: "task/" } });
+    expect(cfg.workflow).toEqual({
+      refine: true,
+      clarifyRounds: 2,
+      quick: { enabled: true, branchPrefix: "task/" },
+    });
     expect(cfg.release).toEqual({ detect: true });
     expect(cfg.websearch).toEqual({ provider: "random" });
     expect(cfg.runtime).toEqual({ turnTimeoutMinutes: 60 });
+  });
+
+  test("clarifyRounds is bounded", () => {
+    expect(() => config({ workflow: { clarifyRounds: 0 } })).toThrow();
+    expect(() => config({ workflow: { clarifyRounds: 11 } })).toThrow();
+    expect(config({ workflow: { clarifyRounds: 3 } }).workflow.clarifyRounds).toBe(3);
   });
 
   test("models resolve agent > repo > role > flat", () => {

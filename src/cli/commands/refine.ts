@@ -7,8 +7,7 @@ const HELP = `Usage: ai-factory refine "<request>"
 
 Ask a few scope, verification and constraint questions, then write a refined request to
 .factory/requests/<slug>.md. Nothing is designed or implemented. Feed it to the pipeline
-with \`ai-factory run --request .factory/requests/<slug>.md\`, or use \`run --interactive\`
-to refine in the same command.`;
+with \`ai-factory run --request .factory/requests/<slug>.md\`.`;
 
 export const refineCommand: Command = {
   name: "refine",

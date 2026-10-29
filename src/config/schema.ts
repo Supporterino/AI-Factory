@@ -340,8 +340,10 @@ const QuickConfig = z.strictObject({
 });
 
 const WorkflowConfig = z.strictObject({
-  /** Offer `ai-factory refine` / `run --interactive` clarification before design. */
+  /** Ask agent-raised `openQuestions` during intake/design; false records them and continues. */
   refine: z.boolean().default(true),
+  /** Clarification rounds per intake/design call; extra questions are recorded unanswered. */
+  clarifyRounds: z.int().min(1).max(10).default(2),
   quick: QuickConfig.prefault({}),
 });
 

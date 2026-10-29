@@ -16,6 +16,7 @@ import {
 import { loadRun, type RunState, updateRun } from "../state/run.ts";
 import { recordUsage, type UsageEntry } from "../usage/usage.ts";
 import { Semaphore } from "../util/semaphore.ts";
+import type { Ask } from "./clarify.ts";
 import { Progress, type Verbosity } from "./progress.ts";
 
 /** Everything a pipeline step needs; one per CLI command invocation. */
@@ -29,6 +30,10 @@ export interface PipelineDeps {
   /** Tests: 0 disables the heartbeat, `now` freezes elapsed time. */
   readonly heartbeatMs?: number;
   readonly now?: () => number;
+  /** Asks the user free text; undefined when nobody can answer (no TTY). */
+  readonly ask?: Ask;
+  /** Whether agent-raised questions may be asked; false records them and continues. */
+  readonly clarify?: boolean;
 }
 
 export interface AgentCall {
@@ -47,6 +52,11 @@ export interface AgentCall {
   readonly attempt?: number;
   /** Follow-up prompts in the same session when `retry` returns text (design repair). */
   readonly retry?: (handoff: Handoff | undefined, attempt: number) => Promise<string | undefined>;
+  /**
+   * Follow-up prompts for questions the CLI asked the user. Called after each successful
+   * handoff; returning undefined ends the clarification rounds.
+   */
+  readonly clarify?: (handoff: Handoff, round: number) => Promise<string | undefined>;
 }
 
 export interface AgentResult {
@@ -208,6 +218,12 @@ export class Pipeline {
       const session = limited(raw, this.limiter, provider);
       let turn = await promptForHandoff(session, call.prompt, signal);
       let usage = turn.usage;
+      for (let round = 1; call.clarify && turn.outcome === "succeeded" && turn.handoff; round++) {
+        const next = await call.clarify(turn.handoff, round);
+        if (next === undefined) break;
+        turn = await promptForHandoff(session, next, signal);
+        usage = addUsage(usage, turn.usage);
+      }
       for (let attempt = 1; call.retry && turn.outcome === "succeeded"; attempt++) {
         const next = await call.retry(turn.handoff, attempt);
         if (next === undefined) break;
