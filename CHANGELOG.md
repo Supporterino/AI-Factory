@@ -2,6 +2,14 @@
 
 All notable changes per release. `ai-factory update` applies them to an installed workspace (see [docs/cli.md](docs/cli.md#update)).
 
+## 0.8.0
+
+### Minor Changes
+
+- 7b6bdef: **Breaking:** `ai-factory run --interactive` was removed. Use `ai-factory refine "<request>"` and `ai-factory run --request <file>` for a pre-run interview.
+
+  `run` now asks the questions the intake orchestrator and architect raise in their handoffs when stdin is a terminal, sends the answers back to the same session, and records the Q&A in `openspec/changes/<id>/questions.md` and `.factory/clarifications/<id>.md`. `workflow.clarifyRounds` (default 2) caps the rounds per phase; questions beyond the cap are recorded unanswered. `--no-interactive`, or no TTY, records the questions without asking and continues.
+
 ## 0.7.0
 
 ### Minor Changes
