@@ -17,7 +17,7 @@ import { approve } from "../src/pipeline/approve.ts";
 import { Pipeline } from "../src/pipeline/context.ts";
 import { readActive, readQueue } from "../src/state/active.ts";
 import { loadRun, updateRun } from "../src/state/run.ts";
-import { factoryScript, type ScriptedTask } from "./fixtures/factory-script.ts";
+import { factoryScript, type ScriptedTask, specFiles } from "./fixtures/factory-script.ts";
 import { ScriptedRuntime } from "./fixtures/scripted-runtime.ts";
 import {
   BACKEND_FILES,
@@ -26,7 +26,7 @@ import {
   type Fixture,
   fixtureGit,
 } from "./fixtures/workspaces.ts";
-import { cli, cliWith, gitOut } from "./helpers.ts";
+import { cli, cliWith, cliWithAsk, gitOut } from "./helpers.ts";
 
 const ID = "add-health";
 
@@ -112,6 +112,163 @@ describe("pipeline: AI repo with submodules", () => {
       (c) => c.agent === "architect" && c.prompt.includes("explor"),
     );
     expect(design?.prompt).toContain("(explorer failed: explorer crashed)");
+  });
+
+  test("asks intake and architect questions and records the answers", async () => {
+    const team = factoryScript({
+      changeId: ID,
+      summary: "Add a health endpoint and show it in the UI",
+      repos: ["backend", "frontend"],
+      tasks: SUB_TASKS,
+    });
+    let intakeTurns = 0;
+    let designTurns = 0;
+    const runtime = new ScriptedRuntime(async (call) => {
+      if (call.agent === "orchestrator") {
+        intakeTurns++;
+        if (intakeTurns === 1) {
+          return {
+            handoff: {
+              task: "intake",
+              decisions: [
+                `change-id: ${ID}`,
+                "summary: Add a health endpoint and show it in the UI",
+                "repos: backend, frontend",
+              ],
+              openQuestions: ["Which repos should this touch?"],
+            },
+          };
+        }
+        return team(call);
+      }
+      if (call.agent === "architect") {
+        designTurns++;
+        return {
+          edits: specFiles(ID, SUB_TASKS),
+          handoff: {
+            task: "design",
+            ...(designTurns === 1
+              ? { openQuestions: ["Must the OpenAPI change stay backward compatible?"] }
+              : {}),
+          },
+        };
+      }
+      return team(call);
+    });
+    const answers = ["backend, frontend", "Yes, keep it backward compatible"];
+    let asked = 0;
+    const run = await cliWithAsk(
+      runtime,
+      fx.root,
+      async () => answers[asked++],
+      "run",
+      "Add a health endpoint and show it in the UI",
+    );
+
+    expect(run.code).toBe(ExitCode.Ok);
+    expect(run.out).toContain("clarify");
+    expect(intakeTurns).toBe(2);
+    expect(designTurns).toBe(2);
+    const orchestrator = runtime.calls.filter((c) => c.agent === "orchestrator");
+    expect(orchestrator[1]?.prompt).toContain("Which repos should this touch?");
+    expect(orchestrator[1]?.prompt).toContain("backend, frontend");
+    const architect = runtime.calls.filter((c) => c.agent === "architect");
+    expect(architect[1]?.prompt).toContain("Must the OpenAPI change stay backward compatible?");
+    expect(architect[1]?.prompt).toContain("Yes, keep it backward compatible");
+    expect(loadRun(fx.root, ID)?.clarifications.map((c) => [c.step, c.status, c.answer])).toEqual([
+      ["intake", "answered", "backend, frontend"],
+      ["design", "answered", "Yes, keep it backward compatible"],
+    ]);
+    const questions = readFileSync(
+      join(fx.root, "openspec", "changes", ID, "questions.md"),
+      "utf8",
+    );
+    expect(questions).toContain("Which repos should this touch?");
+    expect(questions).toContain("Must the OpenAPI change stay backward compatible?");
+    expect(existsSync(join(fx.root, ".factory", "clarifications", `${ID}.md`))).toBe(true);
+  });
+
+  test("--no-interactive records questions without asking", async () => {
+    const team = factoryScript({
+      changeId: ID,
+      summary: "Add a health endpoint and show it in the UI",
+      repos: ["backend", "frontend"],
+      tasks: SUB_TASKS,
+    });
+    const runtime = new ScriptedRuntime(async (call) => {
+      if (call.agent === "orchestrator") {
+        return {
+          handoff: {
+            task: "intake",
+            decisions: [
+              `change-id: ${ID}`,
+              "summary: Add a health endpoint and show it in the UI",
+              "repos: backend, frontend",
+            ],
+            openQuestions: ["Which repos should this touch?"],
+          },
+        };
+      }
+      return team(call);
+    });
+    let asked = 0;
+    const run = await cliWithAsk(
+      runtime,
+      fx.root,
+      async () => {
+        asked++;
+        return "should not be used";
+      },
+      "run",
+      "--no-interactive",
+      "Add a health endpoint and show it in the UI",
+    );
+
+    expect(run.code).toBe(ExitCode.Ok);
+    expect(asked).toBe(0);
+    expect(loadRun(fx.root, ID)?.clarifications[0]?.status).toBe("unanswered");
+    expect(
+      readFileSync(join(fx.root, "openspec", "changes", ID, "questions.md"), "utf8"),
+    ).toContain("_(not answered yet)_");
+  });
+
+  test("asks up to workflow.clarifyRounds rounds", async () => {
+    const team = factoryScript({
+      changeId: ID,
+      summary: "Add a health endpoint and show it in the UI",
+      repos: ["backend", "frontend"],
+      tasks: SUB_TASKS,
+    });
+    let designTurns = 0;
+    const runtime = new ScriptedRuntime(async (call) => {
+      if (call.agent === "architect") {
+        designTurns++;
+        const specs = specFiles(ID, SUB_TASKS);
+        if (designTurns === 1)
+          return { edits: specs, handoff: { task: "design", openQuestions: ["First question?"] } };
+        if (designTurns === 2)
+          return { edits: specs, handoff: { task: "design", openQuestions: ["Second question?"] } };
+        return { edits: specs, handoff: { task: "design" } };
+      }
+      return team(call);
+    });
+    const answers = ["First answer", "Second answer"];
+    let asked = 0;
+    const run = await cliWithAsk(
+      runtime,
+      fx.root,
+      async () => answers[asked++],
+      "run",
+      "Add a health endpoint and show it in the UI",
+    );
+
+    expect(run.code).toBe(ExitCode.Ok);
+    expect(designTurns).toBe(3);
+    expect(asked).toBe(2);
+    expect(loadRun(fx.root, ID)?.clarifications.map((c) => [c.question, c.status])).toEqual([
+      ["First question?", "answered"],
+      ["Second question?", "answered"],
+    ]);
   });
 
   test("run → approve → three repos, parallel tasks, ordered commits, provisional pointers, no push", async () => {

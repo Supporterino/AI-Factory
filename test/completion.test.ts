@@ -73,7 +73,7 @@ describe("completion candidates", () => {
       expect.arrayContaining(["-C", "-h", "--help", "-V", "--version"]),
     );
     expect(await values(["run", "--"], fx.root)).toEqual(
-      expect.arrayContaining(["--request", "--interactive", "--verbose", "--quiet"]),
+      expect.arrayContaining(["--request", "--no-interactive", "--verbose", "--quiet"]),
     );
     expect(await values(["run", "--verbose", "--"], fx.root)).not.toContain("--verbose");
     expect(await values(["run", "--verbose", "--"], fx.root)).toContain("--quiet");

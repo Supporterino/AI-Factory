@@ -32,3 +32,22 @@ export async function cliWith(runtime: AgentRuntime, cwd: string, ...argv: strin
   });
   return { code, out: out.join("\n"), err: err.join("\n") };
 }
+
+/** Runs the CLI with a scripted agent runtime and an injected `ask`. */
+export async function cliWithAsk(
+  runtime: AgentRuntime,
+  cwd: string,
+  ask: (question: string, initial?: string) => Promise<string | undefined>,
+  ...argv: string[]
+): Promise<Run> {
+  const out: string[] = [];
+  const err: string[] = [];
+  const code = await runCli(argv, {
+    cwd,
+    out: (t) => out.push(t),
+    err: (t) => err.push(t),
+    runtime: () => runtime,
+    ask,
+  });
+  return { code, out: out.join("\n"), err: err.join("\n") };
+}
