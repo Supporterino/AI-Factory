@@ -70,6 +70,9 @@ export const SECRET_PATHS = [
   ...[".netrc", ".npmrc", ".pypirc", ".git-credentials"].flatMap((n) => [n, `*/${n}`]),
   "*.tfstate",
   "*.tfstate.backup",
+  // The private opencode DB plus its WAL/SHM files (see paths.ts `isSecretPath`).
+  ".factory/opencode/*",
+  "*/.factory/opencode/*",
 ] as const;
 
 /** Read-only graph queries agents may run (graph updates are the CLI's job). */

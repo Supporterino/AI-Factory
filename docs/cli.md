@@ -100,7 +100,8 @@ A read-only health check. It looks at:
   - the `pre-push` hook in the AI repo and every submodule.
 - **Gates:** the resolved command for every repo and gate type, printed as a table. It flags a missing gate and an executable that is not on `PATH` or in the repo's tool directories (`node_modules/.bin`, `.venv/bin`). For script gates (`npm run lint`), only the runner is checked.
 - **Caches:** the sizes of the dependency caches, worktrees, logs and backups under `.factory/`.
-- **Models:** every configured model must be listed by `opencode models` when it runs with the same curated environment as the pipeline's server. A model whose provider credentials are not exported fails here.
+- **Credentials:** the stored credentials of the configured providers (from `opencode auth login`) are reported without their values. They are imported into the throwaway database used by the model check, exactly as the runtime imports them into its private server.
+- **Models:** every configured model must be listed by `opencode models` when it runs with the same curated environment as the pipeline's server. A model whose provider credentials are neither stored nor exported fails here.
 - **Gates** also warn when a TypeScript repo's `tsconfig.json` does not turn on `strict` (the types gate checks what the project's config enforces).
 - **Graph:** missing, wrong format, built by another Graphify release than the installed one, or built at another commit than `HEAD`.
 - **Changes:** an active-change lock that nothing is driving; a corrupt run file, `active.lock` or `queue.json`.

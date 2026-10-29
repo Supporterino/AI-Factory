@@ -234,8 +234,9 @@ Sources: repo at tag `v5.3.2` (commit `16352ac229eb08a9598dcae48fe9f2b342567d86`
 
 Verified: one server with many sessions in different directories [X], server auth [X], event shapes [S]. To spike in slice 5/7 (needs a model, or the stub provider):
 - whether the shell tool inherits the server's env (otherwise use the `shell.create.before` hook to inject it)
-- whether `OPENCODE_DB` alone keeps provider credentials visible
 - end-to-end blocking via `tool.execute.before`
+
+Verified later (2026-10-29, opencode 2.1.2 and 2.2.0): `OPENCODE_DB` alone does **not** keep stored provider credentials visible. `opencode auth login` writes the `credential` table inside the database (2.2 imports the legacy `auth.json` once), so a relocated DB starts without them. `opencode auth export` and `opencode auth import --standalone` bridge the user's store into a private DB; `/api/credential` plus `/api/provider` reflect imports live (ADR-0037).
 
 ## 7. Known gaps and the factory's fallback
 

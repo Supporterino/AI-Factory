@@ -46,8 +46,10 @@ describe.skipIf(!onMac)("Seatbelt profile (macOS)", () => {
     home = join(base, "home");
     mkdirSync(wt, { recursive: true });
     mkdirSync(join(ws, ".factory", "runs"), { recursive: true });
+    mkdirSync(join(ws, ".factory", "opencode"), { recursive: true });
     mkdirSync(join(home, ".aws"), { recursive: true });
     writeFileSync(join(ws, ".factory", "runs", "c.json"), "{}");
+    writeFileSync(join(ws, ".factory", "opencode", "opencode.db"), "credential");
     writeFileSync(join(home, ".aws", "credentials"), "secret");
     writeFileSync(join(home, ".zshrc"), "# rc\n");
     writeFileSync(join(wt, "AGENTS.md"), "x");
@@ -103,6 +105,8 @@ describe.skipIf(!onMac)("Seatbelt profile (macOS)", () => {
     expect(sh(strict, "cat .env").status).not.toBe(0);
     expect(sh(strict, "grep -r TOKEN . 2>/dev/null").stdout).not.toContain("TOKEN=x");
     expect(sh(strict, "python3 -c \"print(open('.env').read())\"").status).not.toBe(0);
+    expect(sh(strict, "cat ../../../../opencode/opencode.db").status).not.toBe(0);
+    expect(sh(strict, "grep -r credential ../../../../opencode 2>/dev/null").stdout).toBe("");
     expect(sh(strict, "cat .env.example").stdout).toBe("TOKEN=\n");
     expect(sh(strict, "ls -a").stdout).toContain(".env");
     // Gates keep reading them (test runners load .env themselves).

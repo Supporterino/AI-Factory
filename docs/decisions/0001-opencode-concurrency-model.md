@@ -14,7 +14,8 @@ It drives the server through its REST API (originally planned with `@opencode/cl
 
 **Consequences.** No daemon (the server lives only as long as the CLI command). The user's own opencode sessions are never touched. Three behaviours are verified in slices 5/7 with the stub provider (ADR-0009):
 - env inheritance into the shell tool (fallback: the `shell.create.before` hook)
-- credential lookup with a relocated DB
+- credential lookup with a relocated DB: env credentials work, but credentials stored by
+  `opencode auth login` live in the opencode database, so they are bridged separately (ADR-0037)
 - `tool.execute.before` blocking
 
 **Update (slice 6, verified end to end; docs/research/opencode-e2e.md).**

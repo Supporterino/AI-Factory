@@ -195,7 +195,8 @@ var SECRET_SEGMENTS = [
   /(^|\/)\.azure(\/|$)/i,
   /(^|\/)\.docker\/config\.json$/i,
   /(^|\/)\.config\/gh\/hosts\.ya?ml$/i,
-  /(^|\/)\.ssh(\/|$)/i
+  /(^|\/)\.ssh(\/|$)/i,
+  /(^|\/)\.factory\/opencode(\/|$)/i
 ];
 function isSecretPath(path) {
   const p = path.replace(/\\/g, "/");
@@ -248,7 +249,8 @@ function secretReadRules(workspace) {
     "\\.pypirc",
     "id_(rsa|dsa|ecdsa|ed25519)[^/]*",
     "[^/]*kubeconfig[^/]*",
-    "[^/]*\\.tfstate(\\.backup)?"
+    "[^/]*\\.tfstate(\\.backup)?",
+    "\\.factory/opencode(/.*)?"
   ];
   return [
     `(deny file-read-data ${secret.map((s) => `(regex #"${under}${s}$")`).join(" ")})`,

@@ -24,6 +24,12 @@ import { buildLock, type Lock, readLock } from "../lock/lock.ts";
 import { sandboxEnabled } from "../policy/sandbox.ts";
 import { parseScript, type Script } from "../policy/shell-parse.ts";
 import { PROFILES } from "../profiles/index.ts";
+import {
+  credentialProviders,
+  readStoredCredentials,
+  type StoredCredential,
+  scopeCredentials,
+} from "../runtime/auth.ts";
 import { serverEnv } from "../runtime/opencode.ts";
 import { driverAlive, readActive, readQueue } from "../state/active.ts";
 import { readOrCorrupt } from "../state/files.ts";
@@ -618,41 +624,81 @@ function checkCaches(c: Checks, root: string): void {
 }
 
 async function checkModels(c: Checks, root: string, config: FactoryConfig): Promise<void> {
-  c.in("models");
+  c.in("credentials");
   const configured = modelEntries(config);
-  // Same curated environment as the server the pipeline starts (credentials of named
-  // providers only), with a throwaway database so doctor stays read-only.
-  const tmp = mkdtempSync(join(tmpdir(), "ai-factory-doctor-"));
-  const res = await exec([toolBin("opencode"), "models", "--standalone"], {
-    cwd: root,
-    env: { ...serverEnv(root, config, "doctor"), OPENCODE_DB: join(tmp, "opencode.db") },
-    replaceEnv: true,
-    timeoutMs: 60_000,
-  }).finally(() => rmSync(tmp, { recursive: true, force: true }));
-  if (res.code !== 0) {
+  const providers = credentialProviders(config);
+  const exported = await readStoredCredentials(root, process.env);
+  let stored: StoredCredential[] = [];
+  if (exported === undefined) {
     c.add(
       "warn",
-      "models",
-      `could not list opencode's models: ${(res.stderr || res.stdout).trim().split("\n")[0] ?? ""}`,
+      "stored",
+      "could not read opencode's stored credentials; environment variables still work",
+      "check `opencode auth export`, or export the provider key",
     );
-    return;
+  } else {
+    stored = scopeCredentials(exported, providers);
+    const found = [...new Set(stored.map((entry) => entry.integrationID))];
+    if (stored.length === 0)
+      c.add("ok", "stored", `none for ${providers.join(", ")}; using environment variables only`);
+    else c.add("ok", "stored", `${stored.length} credential(s) for ${found.join(", ")}`);
   }
-  const available = new Set(
-    res.stdout
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean),
-  );
-  for (const [role, model] of configured) {
-    const id = model.split("#")[0] ?? model;
-    if (available.has(id)) c.add("ok", role, model);
-    else
+
+  // Same curated environment as the server the pipeline starts (credentials of named
+  // providers only), with a throwaway database so doctor stays read-only. Stored credentials
+  // are imported into that database exactly as the runtime imports them into its own.
+  const tmp = mkdtempSync(join(tmpdir(), "ai-factory-doctor-"));
+  try {
+    const env = { ...serverEnv(root, config, "doctor"), OPENCODE_DB: join(tmp, "opencode.db") };
+    if (stored.length > 0) {
+      const imported = await exec([toolBin("opencode"), "auth", "import", "--standalone"], {
+        cwd: root,
+        env,
+        replaceEnv: true,
+        input: JSON.stringify(stored),
+        timeoutMs: 60_000,
+      });
+      if (imported.code !== 0)
+        c.add(
+          "warn",
+          "import",
+          `could not import stored credentials into the check database: ${(imported.stderr || imported.stdout).trim().split("\n")[0] ?? ""}`,
+        );
+    }
+    c.in("models");
+    const res = await exec([toolBin("opencode"), "models", "--standalone"], {
+      cwd: root,
+      env,
+      replaceEnv: true,
+      timeoutMs: 60_000,
+    });
+    if (res.code !== 0) {
       c.add(
-        "fail",
-        role,
-        `${model} is not available to opencode`,
-        `set the provider's credentials (env or \`opencode auth login\`) or change the model in factory.config.jsonc`,
+        "warn",
+        "models",
+        `could not list opencode's models: ${(res.stderr || res.stdout).trim().split("\n")[0] ?? ""}`,
       );
+      return;
+    }
+    const available = new Set(
+      res.stdout
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean),
+    );
+    for (const [role, model] of configured) {
+      const id = model.split("#")[0] ?? model;
+      if (available.has(id)) c.add("ok", role, model);
+      else
+        c.add(
+          "fail",
+          role,
+          `${model} is not available to opencode`,
+          `set the provider's credentials (env or \`opencode auth login\`) or change the model in factory.config.jsonc`,
+        );
+    }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
 }
 

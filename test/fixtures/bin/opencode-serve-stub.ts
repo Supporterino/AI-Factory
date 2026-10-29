@@ -7,6 +7,13 @@
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 
+// The runtime exports the user's stored credentials before its first session. Tests keep
+// that bridge empty; `test/auth-sync.test.ts` exercises the reconciliation directly.
+if (process.argv[2] === "auth") {
+  if (process.argv[3] === "export") console.log("[]");
+  process.exit(0);
+}
+
 const TURN_MS = 600;
 const SESSION = "ses_test";
 
@@ -37,6 +44,7 @@ Bun.serve({
   async fetch(req) {
     const { pathname } = new URL(req.url);
     if (pathname === "/api/plugin") return new Response("ok");
+    if (pathname === "/api/credential" && req.method === "GET") return json([]);
     if (pathname === "/api/event") return new Response("");
     if (pathname === "/api/agent") return json([{ id: "implementer-app" }]);
     if (pathname === "/api/session" && req.method === "POST") return json({ id: SESSION });
