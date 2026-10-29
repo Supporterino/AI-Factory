@@ -29,6 +29,8 @@ const SECRETS = [
   ".git-credentials",
   "infra/terraform.tfstate",
   "infra/terraform.tfstate.backup",
+  ".factory/opencode/opencode.db",
+  ".factory/opencode/opencode.db-wal",
 ];
 
 describe("the secret lists agree (audit S11)", () => {

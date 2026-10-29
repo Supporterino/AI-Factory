@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FactoryConfig } from "../src/config/schema.ts";
@@ -70,5 +70,14 @@ describe("OpencodeRuntime long-poll bounds", () => {
       .split("\n")
       .filter(Boolean);
     expect(polls.length).toBeGreaterThanOrEqual(2);
+  }, 30_000);
+
+  test("startup records the credential bridge result", async () => {
+    await runtime.start();
+    const logs = readdirSync(join(root, ".factory", "logs", "add-x"))
+      .map((name) => readFileSync(join(root, ".factory", "logs", "add-x", name), "utf8"))
+      .join("\n");
+    expect(logs).toContain('"kind":"auth"');
+    expect(logs).toContain('"ok":true');
   }, 30_000);
 });

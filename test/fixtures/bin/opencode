@@ -2,5 +2,11 @@
 # Test stand-in for opencode 2.2.0: `--version`, and `models` listing the default models.
 case "$1" in
   models) printf '%s\n' anthropic/claude-haiku-5-5 anthropic/claude-opus-5-5 anthropic/claude-sonnet-5-5 ;;
+  auth)
+    case "$2" in
+      export) printf '[]\n' ;;
+      import) cat >/dev/null; printf 'Imported 0 credentials\n' ;;
+      *) exit 1 ;;
+    esac ;;
   *) echo "opencode v2.2.0" ;;
 esac

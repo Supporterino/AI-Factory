@@ -120,6 +120,7 @@ describe("doctor", () => {
     const json = await report(root);
     expect(json.gates.map((g) => g.type)).toEqual(["format", "lint", "types", "test"]);
     expect(json.checks.filter((c) => c.status === "fail")).toEqual([]);
+    expect(find(json, "stored")?.detail).toContain("using environment variables only");
   });
 
   test("reports committed records and warns when the directory is gitignored", async () => {

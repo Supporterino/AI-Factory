@@ -4,6 +4,11 @@
  * one SSE stream per turn (`/api/event`) with tool, step and usage events. Foreign sessions
  * and unknown/malformed events are mixed in on purpose; the runtime must ignore them.
  */
+if (process.argv[2] === "auth") {
+  if (process.argv[3] === "export") console.log("[]");
+  process.exit(0);
+}
+
 const TURN_MS = 120;
 const SESSION = "ses_events";
 
@@ -42,6 +47,7 @@ Bun.serve({
   async fetch(req) {
     const { pathname } = new URL(req.url);
     if (pathname === "/api/plugin") return new Response("ok");
+    if (pathname === "/api/credential" && req.method === "GET") return json([]);
     if (pathname === "/api/event")
       return new Response(stream, { headers: { "content-type": "text/event-stream" } });
     if (pathname === "/api/agent") return json([{ id: "implementer-app" }]);
