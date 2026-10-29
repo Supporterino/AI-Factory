@@ -2,6 +2,12 @@
 
 All notable changes per release. `ai-factory update` applies them to an installed workspace (see [docs/cli.md](docs/cli.md#update)).
 
+## 0.9.0
+
+### Minor Changes
+
+- 607f4f9: Use the credentials stored by `opencode auth login` in the factory's private opencode server. At startup the runtime exports the user's stored credentials, keeps only the configured providers and imports them into the private database; rotated API keys, `auth logout` and `auth switch` propagate on the next run. `doctor` imports the same credentials into its model check and reports how many it found. The private `.factory/opencode` database is now treated as a secret file, and `OPENCODE_DB` is scrubbed from agent shells.
+
 ## 0.8.0
 
 ### Minor Changes
