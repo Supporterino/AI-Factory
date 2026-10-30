@@ -92,6 +92,65 @@ ${explored || "(none)"}
 Use \`task: "design"\` in your handoff and list every file you wrote.`;
 }
 
+/**
+ * ADR-0038: adopt an OpenSpec change that already exists. The architect may only make it
+ * factory-compatible, never redesign it or change its intent.
+ */
+export function adoptPrompt(input: {
+  id: string;
+  summary: string;
+  request: string;
+  explorations: Readonly<Record<string, string>>;
+  repos: readonly RepoConfig[];
+  contracts: readonly ContractConfig[];
+  instructions?: readonly string[];
+  preserveProgress?: boolean;
+}): string {
+  const explored = Object.entries(input.explorations)
+    .map(([repo, text]) => `### ${repo}\n${text}`)
+    .join("\n\n");
+  const contracts = input.contracts.map(
+    (c) => `- ${c.kind} ${c.provider}:${c.path} → ${c.consumers.join(", ") || "no consumers"}`,
+  );
+  const instructions =
+    input.instructions === undefined || input.instructions.length === 0
+      ? "- none configured"
+      : input.instructions.map((p) => `- \`${p}\``).join("\n");
+  const progress = input.preserveProgress
+    ? "\n- Some tasks are already checked. Keep every checked task checked, keep its id and do not renumber the tasks."
+    : "";
+  return `Adopt the existing OpenSpec change \`${input.id}\` in \`openspec/changes/${input.id}/\`.
+
+Read proposal.md, design.md, specs/**/spec.md and tasks.md before editing. This change predates the factory: preserve its intent, scope, requirement text, task ids and task titles. Do not start a new design, do not rewrite the change around the request below, and do not edit project code.
+
+Make the existing change valid for the factory:
+- Every task checkbox needs \`repo:\`, \`deps:\` and \`touches:\` metadata on the indented lines below it.
+- \`repo\` must be one of the code repos below; use \`deps: none\` when a task has no dependencies; \`touches\` are repo-relative globs.
+- Keep task ids and titles stable. Fix a malformed task line without changing its meaning.
+- Fill missing proposal.md \`## Why\` and \`## What Changes\` sections from the existing content.
+- Do not remove requirements, scenarios or tasks. Repair validation problems only.${progress}
+
+Original request or proposal context:
+"""
+${input.request}
+"""
+Summary: ${input.summary}
+
+Code repos (the only valid \`repo:\` values):
+${repoLines(input.repos)}
+
+Contracts:
+${contracts.length > 0 ? contracts.join("\n") : "- none configured"}
+
+Project instructions (read these before editing):
+${instructions}
+
+Explorer findings:
+${explored || "(none)"}
+
+Use \`task: "adopt"\` in your handoff and list every file you wrote.`;
+}
+
 export function designRepairPrompt(issues: readonly string[]): string {
   return `The change does not validate yet. Fix exactly these problems in the change files, then end with a new handoff:
 ${issues.map((i) => `- ${i}`).join("\n")}`;

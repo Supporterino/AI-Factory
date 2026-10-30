@@ -11,6 +11,7 @@ import { graphFile, updateGraph } from "../../graph/graph.ts";
 import { ensureNotNewer, readLock } from "../../lock/lock.ts";
 import type { SyncAction } from "../../managed/sync.ts";
 import { planSync } from "../../managed/sync.ts";
+import { unadoptedChanges } from "../../openspec/changes.ts";
 import { renderOpenspecTools } from "../../openspec/cli.ts";
 import { renderWorkspace } from "../../render/workspace.ts";
 import { checkTools, type ToolName } from "../../tools.ts";
@@ -22,7 +23,7 @@ import {
   planWorkspace,
   syncWorkspace,
 } from "../../workspace/sync.ts";
-import { type Command, type CommandOptions, parseCommandArgs } from "../command.ts";
+import { type Command, type CommandOptions, type Io, parseCommandArgs } from "../command.ts";
 
 const OPENSPEC_CONFIG = "openspec/config.yaml";
 
@@ -46,6 +47,22 @@ Options:
   -h, --help`;
 
 const REQUIRED_TOOLS: readonly ToolName[] = ["git", "opencode", "openspec", "graphify"];
+
+/** ADR-0038: point at OpenSpec changes that predate the install, once. */
+function adoptionHint(
+  io: Io,
+  newConfig: boolean,
+  changes: readonly { readonly id: string }[],
+): void {
+  if (!newConfig || changes.length === 0) return;
+  const shown = changes
+    .slice(0, 5)
+    .map((change) => change.id)
+    .join(", ");
+  io.out(
+    `note: ${changes.length} pending OpenSpec change${changes.length === 1 ? "" : "s"} not managed by the factory: ${shown}${changes.length > 5 ? ", …" : ""}; run \`ai-factory adopt --all\` to take over`,
+  );
+}
 
 const REPORTED: Partial<Record<SyncAction, string>> = {
   create: "created",
@@ -119,6 +136,7 @@ export const initCommand: Command = {
 
     const configPath = join(root, CONFIG_FILE);
     const newConfig = !existsSync(configPath);
+    const unadopted = unadoptedChanges(root);
     const detection = newConfig ? await detectWorkspace(root) : undefined;
     // Replacing an existing set is reversible: archive agents/commands/skills the factory
     // takes over before planning, and never touch additions made after the first install.
@@ -160,6 +178,7 @@ export const initCommand: Command = {
               root,
               newConfig,
               notes: detection?.notes ?? [],
+              unadopted: unadopted.map((change) => change.id),
               plan: planned.map(({ path, action }) => ({ path, action })),
             },
             null,
@@ -171,6 +190,7 @@ export const initCommand: Command = {
         if (newConfig) io.out(`would write ${CONFIG_FILE}`);
         for (const change of planned)
           io.out(`${REPORTED[change.action] ?? change.action}: ${change.path}`);
+        adoptionHint(io, newConfig, unadopted);
       }
       return ExitCode.Ok;
     }
@@ -198,6 +218,7 @@ export const initCommand: Command = {
             newConfig,
             tools,
             notes: detection?.notes ?? [],
+            unadopted: unadopted.map((change) => change.id),
             plan: result.plan.map(({ path, action }) => ({ path, action })),
             hooks: result.hooks,
             commit: commit ?? null,
@@ -222,6 +243,7 @@ export const initCommand: Command = {
       io.out(
         `kept your ${OPENSPEC_CONFIG} (listed under "unmanaged"); add the factory's workspace context to it by hand if you want the architect to see it`,
       );
+    adoptionHint(io, newConfig, unadopted);
     if (newConfig) io.out(`wrote ${CONFIG_FILE} (review "models" and "contracts")`);
     for (const c of changed) io.out(`${REPORTED[c.action]}: ${c.path}`);
     if (changed.length === 0) io.out("managed files: up to date");

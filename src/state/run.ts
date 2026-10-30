@@ -92,6 +92,15 @@ export const RunState = z.strictObject({
   id: z.string(),
   /** Factory version the run started with; `update --force` keeps it on its snapshot. */
   factoryVersion: z.string(),
+  /** `openspec` for a change adopted from an existing OpenSpec folder (ADR-0038). */
+  origin: z.enum(["factory", "openspec"]).default("factory"),
+  /** Adoption timestamp; only set for adopted changes. */
+  adoptedAt: z.string().optional(),
+  /**
+   * An adopted change whose OpenSpec tasks are already checked: approval keeps those tasks
+   * as merged instead of restarting them (ADR-0038).
+   */
+  preserveProgress: z.boolean().default(false),
   request: z.string().default(""),
   createdAt: z.string(),
   updatedAt: z.string(),

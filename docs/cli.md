@@ -57,6 +57,28 @@ Everything needed to run the factory is in git; the runtime state is not.
 
 What does not travel: worktrees, run state, session context, opencode's database, caches, logs, backups and legacy archives under `.factory/`. Finish an in-flight change (`land`) or `abort` it before switching machines; there is no mid-change handoff. With `"artifacts": { "mode": "git" }`, each finished change's report, approval and usage ledger are committed under `factory-records/` and do arrive with the clone.
 
+## adopt
+
+```
+ai-factory adopt [<change-id>... | --all] [--dry-run] [--json] [--normalize] [--preserve-progress]
+```
+
+Takes over OpenSpec changes that existed before the factory. `init` leaves `openspec/changes/` alone, so a team that was already using OpenSpec keeps its pending changes. Without ids or `--all`, `adopt` lists them.
+
+Adoption is deliberately conservative:
+- It reads the change, runs the same validation as `approve` (OpenSpec strict, `proposal.md`, `tasks.md` DAG) and writes `.factory/runs/<id>.json`.
+- It writes no git state and starts no model. The run gets `origin: "openspec"`; `approve` creates the `change/<id>` branch lazily.
+- A valid change becomes `awaiting-approval`. An invalid or incomplete one becomes `paused` with the issues, so `status` shows it and `resume` can repair it.
+- A change whose tasks are all checked is not adopted; archive it with `openspec archive <id>`.
+- A partially implemented change is refused unless `--preserve-progress` is passed. That flag trusts the checked tasks and, at approval, creates them as `merged`; commit that work on the base branch first.
+- Custom OpenSpec schemas are refused: the factory supports the built-in `spec-driven` schema.
+
+`--normalize` runs one architect session on a change that does not validate. The prompt tells it to preserve the existing intent, requirement text, task ids and checked state, and only add or repair the factory's indented `repo`, `deps` and `touches` metadata (and missing proposal sections). It requires a clean AI repo, the change files committed, the base branch and no active change, plus model credentials; it spends tokens.
+
+`--dry-run` computes the same validation and reports the phase it would register, but writes no run state. `--json` prints the results; with `--normalize`, progress goes to stderr so stdout stays parseable.
+
+Exit codes: 0 adopted/skipped, 4 refused (partial progress without the flag, custom schema, unknown id), 6 registered but paused.
+
 ## update
 
 ```

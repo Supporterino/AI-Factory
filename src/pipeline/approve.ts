@@ -1,15 +1,16 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { type Approval, approvalFile, readApproval, specHash } from "../approval/approval.ts";
 import { PreconditionError } from "../errors.ts";
 import { git, gitOk } from "../exec.ts";
 import { commitPaths } from "../git/commit.ts";
 import { changeBranch, currentBranch } from "../git/repo.ts";
-import { checkDesign } from "../openspec/cli.ts";
+import { changePath, checkDesign } from "../openspec/cli.ts";
 import { now, type RunState, recordTask, TaskState } from "../state/run.ts";
+import { parseTasks } from "../tasks/parse.ts";
 import { snapshotDefinitions } from "../update/snapshot.ts";
 import type { Pipeline } from "./context.ts";
-import { specDir } from "./design.ts";
+import { ensureDesignBranch, specDir } from "./design.ts";
 
 /**
  * §7 step 3, the only human gate: commit the spec on the change's AI-repo branch, record the
@@ -17,8 +18,14 @@ import { specDir } from "./design.ts";
  * the task DAG into the run state.
  */
 export async function approve(p: Pipeline, id: string): Promise<Approval> {
-  const run = p.run(id);
+  let run = p.run(id);
   assertApprovable(id, run);
+  // An adopted change has no branch yet: create it (or its draft worktree) before validating
+  // and committing the spec, so the normal branch check below applies to it too (ADR-0038).
+  if (run.branches["."] === undefined) {
+    await ensureDesignBranch(p, id);
+    run = p.run(id);
+  }
   const dir = specDir(p, run.draft);
   const check = await checkDesign(
     p.root,
@@ -54,6 +61,7 @@ export async function approve(p: Pipeline, id: string): Promise<Approval> {
     hash: specHash(dir, id),
     approvedAt: now(),
   };
+  const checked = run.preserveProgress ? checkedTaskIds(dir, id) : new Set<string>();
   await p.update(id, (d) => {
     // Checked again under the run lock: another approve or resume may have moved on (P14).
     assertApprovable(id, d);
@@ -63,13 +71,14 @@ export async function approve(p: Pipeline, id: string): Promise<Approval> {
     d.phase = "queued";
     delete d.pausedReason;
     d.tasks = check.tasks.map((t) => {
+      const merged = checked.has(t.id);
       const task = TaskState.parse({
         ...t,
         deps: [...t.deps],
         touches: [...t.touches],
-        status: "pending",
+        status: merged ? "merged" : "pending",
       });
-      recordTask(task, "approved");
+      recordTask(task, merged ? "adopted: already checked in OpenSpec" : "approved");
       return task;
     });
   });
@@ -97,6 +106,17 @@ function assertApprovable(id: string, run: RunState): void {
   if (!["awaiting-approval", "paused", "queued"].includes(run.phase)) {
     throw new PreconditionError(`${id} is not ready for approval (phase ${run.phase})`);
   }
+}
+
+/** Task ids already checked in an adopted change's `tasks.md`. */
+function checkedTaskIds(dir: string, id: string): Set<string> {
+  const file = join(changePath(dir, id), "tasks.md");
+  if (!existsSync(file)) return new Set();
+  return new Set(
+    parseTasks(readFileSync(file, "utf8"))
+      .tasks.filter((task) => task.done)
+      .map((task) => task.id),
+  );
 }
 
 /** The CLI-side approval check: hash still valid and the spec commit is on the change branch. */

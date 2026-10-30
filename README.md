@@ -49,6 +49,26 @@ ai-factory completion zsh --install  # add an idempotent block to ~/.zshrc
 ai-factory completion --install      # detect the shell from $SHELL
 ```
 
+### Adopting an existing OpenSpec workspace
+
+`init` never touches the changes in `openspec/changes/`. If your team already has pending OpenSpec changes, `init` leaves them alone and prints a note. Take one over when you want the factory to finish it:
+
+```bash
+ai-factory adopt --all                 # register every pending change
+ai-factory adopt add-search            # or name them
+ai-factory adopt add-search --dry-run  # show what would happen
+```
+
+Adoption registers the change in `.factory/runs/` and validates it, but writes no git state and starts no model. `approve` then creates the change branch lazily. A change whose tasks are all checked is left alone: archive it with `openspec archive <id>`.
+
+Vanilla OpenSpec changes often lack the factory's per-task `repo`/`deps`/`touches` metadata. Add it by hand, or let the architect do it:
+
+```bash
+ai-factory adopt add-search --normalize
+```
+
+`--normalize` runs one architect session against the existing change, preserving its intent, task ids and checked state. It requires a clean AI repo, committed change files, the base branch and no active change, and it spends tokens. A partially implemented change needs `--preserve-progress`; commit that work on the base branch first, and the factory keeps the checked tasks merged and continues with the rest.
+
 ## Layouts
 
 **Single repo.** The factory lives in the repo itself (`repos: [{ "path": "." }]`). Agents may never edit the factory's own files (`.opencode/`, `.factory/`, `factory-records/`, `openspec/specs/`, the config, the lock, `AGENTS.md`), even though they sit in the same tree.
