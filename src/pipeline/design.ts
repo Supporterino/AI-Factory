@@ -20,6 +20,7 @@ import {
 } from "./clarify.ts";
 import { ChangeAborted, type Pipeline } from "./context.ts";
 import {
+  adoptPrompt,
   clarifyPrompt,
   designPrompt,
   designRepairPrompt,
@@ -154,7 +155,7 @@ export async function intake(p: Pipeline, request: string): Promise<string> {
  * The AI-repo branch the spec is written on (§7 step 1). Idempotent: a run whose branching
  * failed after intake (a dirty checkout) branches on resume instead of designing on main.
  */
-async function ensureDesignBranch(p: Pipeline, id: string): Promise<string | undefined> {
+export async function ensureDesignBranch(p: Pipeline, id: string): Promise<string | undefined> {
   const run = p.run(id);
   if (run.branches["."] !== undefined) return run.draft;
   const { base, draft } = await branchForDesign(p, id);
@@ -169,6 +170,7 @@ async function ensureDesignBranch(p: Pipeline, id: string): Promise<string | und
 export async function design(p: Pipeline, id: string): Promise<{ ok: boolean; issues: string[] }> {
   await ensureDesignBranch(p, id);
   const run = p.run(id);
+  const adopting = run.origin === "openspec" && run.tasks.length === 0;
   const dir = specDir(p, run.draft);
   const repos = p
     .codeRepos()
@@ -213,7 +215,7 @@ export async function design(p: Pipeline, id: string): Promise<{ ok: boolean; is
         `(explorer failed: ${s.reason instanceof Error ? s.reason.message : String(s.reason)})`;
   });
 
-  p.out(`▶ design: openspec/changes/${id}`);
+  p.out(`▶ ${adopting ? "adopt" : "design"}: openspec/changes/${id}`);
   await newChange(p.root, dir, id);
   if (run.clarifications.length > 0) {
     writeClarifications({ root: p.root, id, specDir: dir, records: run.clarifications });
@@ -225,18 +227,29 @@ export async function design(p: Pipeline, id: string): Promise<{ ok: boolean; is
     role: "architect",
     modelRole: "architect",
     context: { directory: dir, workspace: dir },
-    title: `design ${id}`,
-    step: "design",
-    prompt: designPrompt({
-      id,
-      summary: run.summary,
-      request: run.request,
-      explorations,
-      repos: p.codeRepos(),
-      contracts: p.config.contracts,
-      instructions: allInstructionPaths(p.config),
-      clarifications: run.clarifications,
-    }),
+    title: adopting ? `adopt ${id}` : `design ${id}`,
+    step: adopting ? "adopt" : "design",
+    prompt: adopting
+      ? adoptPrompt({
+          id,
+          summary: run.summary,
+          request: run.request,
+          explorations,
+          repos: p.codeRepos(),
+          contracts: p.config.contracts,
+          instructions: allInstructionPaths(p.config),
+          preserveProgress: run.preserveProgress,
+        })
+      : designPrompt({
+          id,
+          summary: run.summary,
+          request: run.request,
+          explorations,
+          repos: p.codeRepos(),
+          contracts: p.config.contracts,
+          instructions: allInstructionPaths(p.config),
+          clarifications: run.clarifications,
+        }),
     clarify: async (handoff, round) => {
       const current = p.run(id).clarifications;
       const questions = unansweredQuestions(handoff, current, "design");

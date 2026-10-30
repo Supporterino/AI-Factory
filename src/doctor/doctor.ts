@@ -21,6 +21,7 @@ import { prePushState } from "../git/hooks.ts";
 import { dirtyPaths } from "../git/repo.ts";
 import { graphRebuildReason, graphStatus } from "../graph/graph.ts";
 import { buildLock, type Lock, readLock } from "../lock/lock.ts";
+import { unadoptedChanges } from "../openspec/changes.ts";
 import { sandboxEnabled } from "../policy/sandbox.ts";
 import { parseScript, type Script } from "../policy/shell-parse.ts";
 import { PROFILES } from "../profiles/index.ts";
@@ -793,8 +794,20 @@ function checkChanges(c: Checks, root: string): void {
     );
   if (queued.corrupt) c.add("fail", "queue", queued.corrupt.message, queued.corrupt.fix);
   else if (queue.length > 0) c.add("ok", "queue", queue.join(", "));
-  for (const bad of scanRuns(root).corrupt)
-    c.add("fail", `run ${bad.id}`, bad.error.message, bad.error.fix);
+  const scan = scanRuns(root);
+  for (const bad of scan.corrupt) c.add("fail", `run ${bad.id}`, bad.error.message, bad.error.fix);
+  // A workspace that already has OpenSpec changes but no factory run is being adopted.
+  const pending = unadoptedChanges(root);
+  if (scan.runs.length === 0 && pending.length > 0)
+    c.add(
+      "warn",
+      "unadopted",
+      `${pending.length} pending OpenSpec change${pending.length === 1 ? "" : "s"}: ${pending
+        .slice(0, 5)
+        .map((change) => change.id)
+        .join(", ")}${pending.length > 5 ? ", …" : ""}`,
+      "ai-factory adopt --all",
+    );
 }
 
 /** Proxy variables seen applied to a 127.0.0.1 provider (docs/research/opencode-e2e.md). */

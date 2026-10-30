@@ -4,6 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { FactoryError } from "../errors.ts";
 import { FACTORY_VERSION } from "../version.ts";
 import type { Command, Io } from "./command.ts";
+import { adoptCommand } from "./commands/adopt.ts";
 import { artifactsCommand } from "./commands/artifacts.ts";
 import { benchCommand } from "./commands/bench.ts";
 import { completeCommand, completionCommand } from "./commands/completion.ts";
@@ -25,6 +26,7 @@ import { ExitCode } from "./exit-codes.ts";
 
 export const COMMANDS: readonly Command[] = [
   initCommand,
+  adoptCommand,
   updateCommand,
   rollbackCommand,
   doctorCommand,
