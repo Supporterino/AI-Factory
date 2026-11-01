@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { type Approval, approvalFile, readApproval, specHash } from "../approval/approval.ts";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { type Approval, readApproval, specHash, writeApproval } from "../approval/approval.ts";
 import { PreconditionError } from "../errors.ts";
 import { git, gitOk } from "../exec.ts";
 import { commitPaths } from "../git/commit.ts";
@@ -65,9 +65,7 @@ export async function approve(p: Pipeline, id: string): Promise<Approval> {
   await p.update(id, (d) => {
     // Checked again under the run lock: another approve or resume may have moved on (P14).
     assertApprovable(id, d);
-    const file = approvalFile(p.root, id);
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, `${JSON.stringify(approval, null, 2)}\n`);
+    writeApproval(p.root, approval);
     d.phase = "queued";
     delete d.pausedReason;
     d.tasks = check.tasks.map((t) => {
@@ -101,7 +99,9 @@ const PAST_APPROVAL: ReadonlySet<string> = new Set([
 function assertApprovable(id: string, run: RunState): void {
   const started = run.tasks.some((t) => t.status !== "pending");
   if (PAST_APPROVAL.has(run.phase) || started) {
-    throw new PreconditionError(`${id} is past approval (phase ${run.phase})`);
+    throw new PreconditionError(`${id} is past approval (phase ${run.phase})`, [
+      `use \`ai-factory reapprove ${id}\` to accept a spec edit, or \`ai-factory reword ${id}\` to let the architect apply review findings`,
+    ]);
   }
   if (!["awaiting-approval", "paused", "queued"].includes(run.phase)) {
     throw new PreconditionError(`${id} is not ready for approval (phase ${run.phase})`);
@@ -131,8 +131,9 @@ export async function verifyApproval(p: Pipeline, id: string, dir: string): Prom
       `the spec of ${id} changed after approval`,
       started
         ? [
-            "implementation has started, so it cannot be approved again; restore the approved spec:",
+            "implementation has started; either restore the approved spec:",
             `git checkout ${approval.specCommit.slice(0, 12)} -- openspec/changes/${id} && git commit -m "docs(spec): restore approved ${id}"`,
+            `or accept the current spec with \`ai-factory reapprove ${id}\` (or let the architect apply review findings with \`ai-factory reword ${id}\`)`,
             `then \`ai-factory resume ${id}\` (or \`ai-factory abort ${id}\` and start a new change)`,
           ]
         : [`review the change and run \`ai-factory approve ${id}\` again`],

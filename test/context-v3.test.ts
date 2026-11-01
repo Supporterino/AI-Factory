@@ -43,6 +43,7 @@ describe("v3 context config", () => {
     expect(cfg.workflow).toEqual({
       refine: true,
       clarifyRounds: 2,
+      reviewRounds: 1,
       quick: { enabled: true, branchPrefix: "task/" },
     });
     expect(cfg.release).toEqual({ detect: true });
@@ -54,6 +55,12 @@ describe("v3 context config", () => {
     expect(() => config({ workflow: { clarifyRounds: 0 } })).toThrow();
     expect(() => config({ workflow: { clarifyRounds: 11 } })).toThrow();
     expect(config({ workflow: { clarifyRounds: 3 } }).workflow.clarifyRounds).toBe(3);
+  });
+
+  test("reviewRounds is bounded", () => {
+    expect(() => config({ workflow: { reviewRounds: 0 } })).toThrow();
+    expect(() => config({ workflow: { reviewRounds: 11 } })).toThrow();
+    expect(config({ workflow: { reviewRounds: 3 } }).workflow.reviewRounds).toBe(3);
   });
 
   test("models resolve agent > repo > role > flat", () => {

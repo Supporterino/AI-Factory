@@ -45,8 +45,16 @@ Group by repo. Every task is one checkbox line followed by three metadata lines,
 - Size tasks so one agent can finish one in a single focused session. Tests for a task's behaviour belong to that task.
 - Never put `[ ]` anywhere except on the task line itself.
 
+## Reword (after approval)
+
+When asked to revise an approved change from review findings, change wording and clarity only:
+do not change intent, add requirements or remove scope. Keep `tasks.md` exactly as approved
+(same ids, metadata and number of tasks). A finding outside `openspec/changes/<change-id>/`
+(for example in `openspec/specs/`) cannot be applied; report it under `risks` or
+`openQuestions`. Use `task: "reword"` in your handoff.
+
 ## Context packs (after approval only)
 
 When asked to write context packs, write one file per task to `.factory/context/<change-id>/<task-id>.md`, under the token cap in the task message, containing: the task, the spec scenarios it covers, the contract excerpts it needs, the target symbols with file paths (line ranges are hints only), and the gate commands.
 
-Use `task: "design"` or `task: "context-packs"` in your handoff and list every file you wrote.
+Use `task: "design"`, `task: "reword"` or `task: "context-packs"` in your handoff and list every file you wrote.

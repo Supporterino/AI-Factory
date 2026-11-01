@@ -114,7 +114,7 @@ function report(io: Io, outcome: DriveOutcome): ExitCode {
   return outcome.phase === "paused" || outcome.phase === "aborted" ? ExitCode.Paused : ExitCode.Ok;
 }
 
-function changeIdArg(command: string, positionals: readonly string[]): string {
+export function changeIdArg(command: string, positionals: readonly string[]): string {
   const id = positionals[0];
   if (id === undefined || positionals.length > 1)
     throw new UsageError(`${command}: expected exactly one <change-id>`);

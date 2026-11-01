@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { changeShortcuts } from "../addons/shortcuts.ts";
+import { isSpecPath } from "../approval/approval.ts";
 import { maybeExport } from "../artifacts/export.ts";
 import { sessionInstructionPaths } from "../config/instructions.ts";
 import { repoLanguages } from "../config/schema.ts";
@@ -27,37 +28,63 @@ import { findingPack, findingTaskTitle, reviewPrompt } from "./prompts.ts";
 
 const MAX_SUITE_ROUNDS = 2;
 
+/** Why a change with spec findings pauses, and how to get past it. */
+export const specPauseReason = (id: string, count: number): string =>
+  `${count} review finding${count === 1 ? "" : "s"} concern the change's spec; run \`ai-factory reword ${id}\` to apply them (or edit it and run \`ai-factory reapprove ${id}\`), then \`ai-factory resume ${id}\``;
+
 const touchedRepos = (run: RunState): string[] => [...new Set(run.tasks.map((t) => t.repo))];
 
 function addTask(
   draft: RunState,
   task: Omit<TaskState, "status" | "failures" | "serial" | "history" | "gatesPassed" | "installed">,
-): void {
-  if (draft.tasks.some((t) => t.id === task.id)) return;
+): boolean {
+  if (draft.tasks.some((t) => t.id === task.id)) return false;
   const state = TaskState.parse({ ...task, status: "pending" });
   recordTask(state, "added", task.kind);
   draft.tasks.push(state);
+  return true;
 }
 
 /**
  * §7 step 8: once a repo's tasks merged, its reviewer and tester run in parallel (once per
  * repo). Must/should findings and the tester's work become tasks with their own budget.
- * Returns the number of tasks added.
+ * With `workflow.reviewRounds > 1`, every touched repo is reviewed again after a fix round
+ * until a pass reports no code findings or the cap is hit. Returns the number of tasks added.
  */
 export async function review(
   p: Pipeline,
   id: string,
 ): Promise<{ added: number; incomplete: string[] }> {
   const run = p.run(id);
-  const repos = touchedRepos(run).filter((r) => !run.reviewed.includes(r));
+  const touched = touchedRepos(run);
+  const cap = p.config.workflow.reviewRounds;
+  const first = touched.filter((r) => !run.reviewed.includes(r));
+  const again = (run.reReview.length > 0 ? touched : []).filter((r) => !first.includes(r));
+  const round = run.reviewRound + 1;
   const incomplete: string[] = [];
-  if (repos.length === 0) return { added: 0, incomplete };
-  p.out(`▶ review + tests: ${repos.join(", ")}`);
+  if (first.length === 0 && again.length === 0) {
+    if (run.reReview.length > 0) await p.update(id, (d) => (d.reReview = []));
+    return { added: 0, incomplete };
+  }
+  if (round > cap) {
+    await p.update(id, (d) => (d.reReview = []));
+    if (cap > 1) p.out(`⚠ review round cap (${cap}) reached; remaining findings are in the report`);
+    return { added: 0, incomplete };
+  }
+
+  const queue = [...new Set([...first, ...again])];
+  const firstPass = new Set(first);
+  p.out(
+    cap === 1
+      ? `▶ review + tests: ${queue.join(", ")}`
+      : `▶ review round ${round}/${cap}: ${queue.join(", ")}`,
+  );
   const spec = cappedSpec(p, id);
   let added = 0;
+  let codeFound = false;
 
   await Promise.all(
-    repos.map((name) =>
+    queue.map((name) =>
       p.agents.run(async () => {
         const repo = p.repo(name);
         const base = run.branches[name]?.base ?? "HEAD";
@@ -67,7 +94,7 @@ export async function review(
           role: "reviewer",
           modelRole: "reviewer",
           context: { directory: p.repoDir(repo), workspace: p.root, repo: name },
-          title: `${id} review ${name}`,
+          title: `${id} review ${name} round ${round}`,
           step: `review:${name}`,
           prompt: reviewPrompt({
             repo,
@@ -78,45 +105,82 @@ export async function review(
             instructions: sessionInstructionPaths(p.config, name, repo.path),
           }),
         });
-        // No valid handoff (crash, timeout, garbage) is no review: the repo stays unreviewed.
+        // No valid handoff (crash, timeout, garbage) is no review: the repo stays queued.
         if (res.handoff === undefined) {
           incomplete.push(`review of ${name} produced no result (${res.problem ?? res.outcome})`);
           return;
         }
         const handoff = res.handoff;
         const findings: Finding[] = handoff.findings ?? [];
+        const codeFindings = findings.filter((x) => x.severity !== "nice" && !isSpecPath(x.file));
+        const specFindings = findings.filter((x) => x.severity !== "nice" && isSpecPath(x.file));
+        if (codeFindings.length > 0) codeFound = true;
         await p.update(id, (d) => {
           d.handoffs[`review:${name}`] = handoff;
-          d.reviewed.push(name);
           let n = 0;
-          for (const f of findings.filter((x) => x.severity !== "nice")) {
+          for (const f of codeFindings) {
             n++;
-            const taskId = `fix-${name}-${n}`;
-            addTask(d, {
-              id: taskId,
-              title: findingTaskTitle(f),
-              repo: name,
-              deps: [],
-              touches: ["**"],
-              kind: "review-fix",
-            });
-            added++;
+            // Round-scoped: `addTask` drops duplicates, so a fixed id per round would collide.
+            const taskId = `fix-${name}-${round}-${n}`;
+            if (
+              addTask(d, {
+                id: taskId,
+                title: findingTaskTitle(f),
+                repo: name,
+                deps: [],
+                touches: ["**"],
+                kind: "review-fix",
+              })
+            )
+              added++;
             mkdirSync(join(p.root, ".factory", "context", id), { recursive: true });
             writeFileSync(packPath(p.root, id, taskId), findingPack(f));
           }
-          addTask(d, {
-            id: `test-${name}`,
-            title: `Ensure every scenario of ${name} has a test`,
-            repo: name,
-            deps: [],
-            touches: ["**"],
-            kind: "test",
-          });
-          added++;
+          // The implementer cannot edit the spec; these wait for `reword`/`reapprove`.
+          d.specFindings.push(...specFindings);
+          if (firstPass.has(name)) {
+            if (!d.reviewed.includes(name)) d.reviewed.push(name);
+            if (
+              addTask(d, {
+                id: `test-${name}`,
+                title: `Ensure every scenario of ${name} has a test`,
+                repo: name,
+                deps: [],
+                touches: ["**"],
+                kind: "test",
+              })
+            )
+              added++;
+          }
         });
       }),
     ),
   );
+
+  if (incomplete.length > 0) {
+    // Retry the whole pass after the pause; a crashed pass does not consume the cap.
+    await p.update(id, (d) => {
+      d.reReview = touched;
+    });
+  } else {
+    await p.update(id, (d) => {
+      d.reviewRound = round;
+      d.reReview = codeFound && round < cap ? touched : [];
+    });
+    if (codeFound && round >= cap && cap > 1)
+      p.out(`⚠ review round cap (${cap}) reached; remaining findings are in the report`);
+  }
+
+  const specs = p.run(id).specFindings;
+  if (specs.length > 0) {
+    p.out(
+      `  ⚐ ${specs.length} finding${specs.length === 1 ? "" : "s"} concern the spec (not code)`,
+    );
+    for (const f of specs)
+      p.out(
+        `    - [${f.severity}] ${f.file ?? "(no file)"}${f.line ? `:${f.line}` : ""} ${f.problem.split("\n")[0] ?? ""}`,
+      );
+  }
   return { added, incomplete };
 }
 
@@ -231,6 +295,18 @@ export function writePauseReport(p: Pipeline, id: string, summary: RunSummary): 
       ...(t.lastGateOutput ? ["", "Last gate output:", fence(t.lastGateOutput)] : []),
       "",
     ]),
+    ...(run.specFindings.length > 0
+      ? [
+          "## Spec findings (not fixable by an implementer)",
+          "",
+          ...run.specFindings.map(
+            (f) => `- [${f.severity}] ${f.file ?? ""}${f.line ? `:${f.line}` : ""} ${f.problem}`,
+          ),
+          "",
+          `Run \`ai-factory reword ${id}\` to let the architect apply them, or edit openspec/changes/${id}/ and run \`ai-factory reapprove ${id}\`. Then \`ai-factory resume ${id}\`.`,
+          "",
+        ]
+      : []),
     "## Next steps",
     "",
     "1. Inspect the failed task's worktree and fix the cause (or change the spec and approve again).",

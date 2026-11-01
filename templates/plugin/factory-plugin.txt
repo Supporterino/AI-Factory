@@ -6,8 +6,8 @@ import { isAbsolute as isAbsolute4, join as join8, relative as relative3, resolv
 
 // src/approval/approval.ts
 import { createHash } from "crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
 
 // src/tasks/parse.ts
 var TASK_LINE = /^- \[( |x|X)\] (\d+(?:\.\d+)+)\s+(.+?)\s*$/;
@@ -23,7 +23,20 @@ function parseApproval(value) {
     return;
   const v = value;
   const ok = typeof v.changeId === "string" && typeof v.approver === "string" && typeof v.specCommit === "string" && /^[0-9a-f]{40,64}$/.test(v.specCommit) && typeof v.hash === "string" && /^[0-9a-f]{64}$/.test(v.hash) && typeof v.approvedAt === "string";
-  return ok ? value : undefined;
+  if (!ok)
+    return;
+  if (v.history !== undefined) {
+    if (!Array.isArray(v.history))
+      return;
+    for (const entry of v.history) {
+      if (typeof entry !== "object" || entry === null)
+        return;
+      const e = entry;
+      if (typeof e.hash !== "string" || !/^[0-9a-f]{64}$/.test(e.hash) || typeof e.specCommit !== "string" || !/^[0-9a-f]{40,64}$/.test(e.specCommit) || typeof e.at !== "string" || typeof e.reason !== "string")
+        return;
+    }
+  }
+  return value;
 }
 var changeDir = (root, id) => join(root, "openspec", "changes", id);
 var approvalFile = (root, id) => join(root, ".factory", "approvals", `${id}.json`);
@@ -80,7 +93,7 @@ function checkApprovalHash(root, id) {
 import {
   appendFileSync,
   existsSync as existsSync2,
-  mkdirSync,
+  mkdirSync as mkdirSync2,
   readdirSync as readdirSync2,
   rmdirSync,
   rmSync,
@@ -146,7 +159,7 @@ function redactValue(value, env, heuristic) {
 var logDir = (root, changeId) => join2(root, ".factory", "logs", changeId);
 function appendLog(root, changeId, entry, options = {}) {
   const dir = logDir(root, changeId);
-  mkdirSync(dir, { recursive: true });
+  mkdirSync2(dir, { recursive: true });
   const at = new Date;
   const env = secretEnvValues(options.env ?? process.env);
   const line = JSON.stringify({
@@ -206,7 +219,7 @@ function isSecretPath(path) {
 
 // src/policy/realpath.ts
 import { lstatSync, readlinkSync, realpathSync } from "fs";
-import { basename, dirname, join as join3, resolve } from "path";
+import { basename, dirname as dirname2, join as join3, resolve } from "path";
 function realPathOf(abs, depth = 0) {
   if (depth > 40)
     return abs;
@@ -219,13 +232,13 @@ function realPathOf(abs, depth = 0) {
         return join3(realpathSync.native(current), ...missing.reverse());
       } catch {
         if (st.isSymbolicLink()) {
-          const target = resolve(dirname(current), readlinkSync(current));
+          const target = resolve(dirname2(current), readlinkSync(current));
           return realPathOf(join3(target, ...missing.reverse()), depth + 1);
         }
         return abs;
       }
     }
-    const parent = dirname(current);
+    const parent = dirname2(current);
     if (parent === current)
       return abs;
     missing.push(basename(current));
@@ -636,7 +649,7 @@ import { join as join6 } from "path";
 var sessionContextFile = (workspace, sessionId) => join6(workspace, ".factory", "sessions", `${sessionId}.json`);
 
 // src/policy/shell.ts
-import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute3, join as join7, normalize as normalize2, relative as relative2, resolve as resolve4 } from "path";
+import { basename as basename2, dirname as dirname3, isAbsolute as isAbsolute3, join as join7, normalize as normalize2, relative as relative2, resolve as resolve4 } from "path";
 
 // src/policy/shell-parse.ts
 class ShellParseError extends Error {
@@ -1732,7 +1745,7 @@ function checkRm(state, args) {
     const abs = resolvePath(state, t);
     if (abs === undefined)
       return block(`rm \`${t}\` depends on an unknown variable or directory`);
-    const where = locate(state, join7(real(state, dirname2(abs)), basename2(abs)));
+    const where = locate(state, join7(real(state, dirname3(abs)), basename2(abs)));
     if (where.rel === undefined) {
       if (!where.temp)
         block(`rm \`${t}\` is outside the session directory`);
@@ -1755,7 +1768,7 @@ function checkLn(state, args) {
   for (const { target, link } of pairs) {
     checkWrite(state, link, "ln creates");
     const linkAbs = resolvePath(state, link);
-    const targetAbs = symbolic && !isAbsolute3(target) && !target.startsWith("~") && !target.startsWith("$") ? linkAbs === undefined ? undefined : resolve4(dirname2(linkAbs), target) : resolvePath(state, target);
+    const targetAbs = symbolic && !isAbsolute3(target) && !target.startsWith("~") && !target.startsWith("$") ? linkAbs === undefined ? undefined : resolve4(dirname3(linkAbs), target) : resolvePath(state, target);
     if (targetAbs === undefined)
       block(`ln target \`${target}\` depends on an unknown variable`);
     const where = locate(state, targetAbs);

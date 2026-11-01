@@ -18,6 +18,7 @@ import { approveCommand, resumeCommand, runCommand } from "./commands/pipeline-c
 import { quickCommand } from "./commands/quick.ts";
 import { refineCommand } from "./commands/refine.ts";
 import { repointCommand } from "./commands/repoint.ts";
+import { reapproveCommand, rewordCommand } from "./commands/reword.ts";
 import { abortCommand, retryCommand, statusCommand } from "./commands/state-commands.ts";
 import { rollbackCommand, updateCommand } from "./commands/update.ts";
 import { usageCommand } from "./commands/usage.ts";
@@ -37,6 +38,8 @@ export const COMMANDS: readonly Command[] = [
   quickCommand,
   approveCommand,
   resumeCommand,
+  rewordCommand,
+  reapproveCommand,
   statusCommand,
   usageCommand,
   gateCommand,

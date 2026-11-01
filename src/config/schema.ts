@@ -344,6 +344,11 @@ const WorkflowConfig = z.strictObject({
   refine: z.boolean().default(true),
   /** Clarification rounds per intake/design call; extra questions are recorded unanswered. */
   clarifyRounds: z.int().min(1).max(10).default(2),
+  /**
+   * Reviewer passes per change. 1 is a single pass; N re-reviews every touched repo after a
+   * fix round until a pass finds no `must`/`should` code findings, at most N passes.
+   */
+  reviewRounds: z.int().min(1).max(10).default(1),
   quick: QuickConfig.prefault({}),
 });
 

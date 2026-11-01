@@ -7,7 +7,14 @@ import { verifyApproval } from "./approve.ts";
 import { ChangeAborted, type Pipeline } from "./context.ts";
 import { contractPhase } from "./contracts.ts";
 import { design, specDir } from "./design.ts";
-import { archivedName, close, fullSuite, review, writePauseReport } from "./finish.ts";
+import {
+  archivedName,
+  close,
+  fullSuite,
+  review,
+  specPauseReason,
+  writePauseReport,
+} from "./finish.ts";
 import { activate, ensureContextPacks, implement } from "./implement.ts";
 
 /**
@@ -110,6 +117,13 @@ const APPROVED_PHASES: ReadonlySet<Phase> = new Set([
 /** One phase transition of the state machine. */
 async function step(p: Pipeline, id: string): Promise<Step> {
   const run = p.run(id);
+  // Spec findings cannot be fixed by an implementer. Keep the pause until `reword`/`reapprove`
+  // clears them, even when the change is resumed through `aborted` or `paused`.
+  if (run.phase !== "paused" && run.specFindings.length > 0) {
+    const reason = specPauseReason(id, run.specFindings.length);
+    await setPhase(p, id, "paused", reason);
+    return stop({ id, phase: "paused", detail: reason });
+  }
   // Once archived the spec has moved (a close resumed after a crash): nothing left to check.
   if (APPROVED_PHASES.has(run.phase)) {
     await ensureDriver(p, id);
@@ -134,6 +148,9 @@ async function step(p: Pipeline, id: string): Promise<Step> {
       await setPhase(p, id, run.tasks.length > 0 ? "queued" : "design");
       return go(id);
     case "paused": {
+      if (run.specFindings.length > 0) {
+        return stop({ id, phase: "paused", detail: specPauseReason(id, run.specFindings.length) });
+      }
       if (run.tasks.length === 0) {
         // Paused in design: a hand-fixed spec goes to approval, otherwise the architect repairs it.
         const { issues } = await checkDesign(
@@ -179,7 +196,15 @@ async function step(p: Pipeline, id: string): Promise<Step> {
         await setPhase(p, id, "paused", reason);
         return stop({ id, phase: "paused", detail: reason });
       }
-      await setPhase(p, id, added > 0 ? "implementing" : "contracts");
+      const specs = p.run(id).specFindings;
+      if (specs.length > 0) {
+        const reason = specPauseReason(id, specs.length);
+        await setPhase(p, id, "paused", reason);
+        return stop({ id, phase: "paused", detail: reason });
+      }
+      // Pending fix tasks still have to run, even when this pass added none (a resumed round).
+      const pending = p.run(id).tasks.some((t) => t.status === "pending");
+      await setPhase(p, id, added > 0 || pending ? "implementing" : "contracts");
       return go(id);
     }
     case "contracts": {
@@ -192,6 +217,12 @@ async function step(p: Pipeline, id: string): Promise<Step> {
           result.reason ?? "the contract gate still fails after a fix round",
         );
         return stop({ id, phase: "paused", detail: result.issues.join("\n") });
+      }
+      const specs = p.run(id).specFindings;
+      if (specs.length > 0) {
+        const reason = specPauseReason(id, specs.length);
+        await setPhase(p, id, "paused", reason);
+        return stop({ id, phase: "paused", detail: reason });
       }
       await setPhase(p, id, result.added > 0 ? "implementing" : "full-suite");
       return go(id);

@@ -136,11 +136,24 @@ function printRun(
         : "not active";
   io.out(`change ${run.id} — ${run.phase} (${role}; factory ${run.factoryVersion})`);
   if (run.pausedReason) io.out(`  paused: ${run.pausedReason}`);
+  if (run.specFindings.length > 0) {
+    io.out(
+      `  spec findings (${run.specFindings.length}): run \`ai-factory reword ${run.id}\` or \`ai-factory reapprove ${run.id}\``,
+    );
+    for (const f of run.specFindings)
+      io.out(
+        `    [${f.severity}] ${f.file ?? ""}${f.line ? `:${f.line}` : ""} ${f.problem.split("\n")[0] ?? ""}`,
+      );
+  }
   if (run.abortRequested) io.out("  abort requested");
   const branches = Object.entries(run.branches).map(
     ([repo, b]) => `${repo} ${b.branch} @${b.base.slice(0, 12)}`,
   );
   if (branches.length > 0) io.out(`  branches: ${branches.join(" · ")}`);
+  if (run.reviewRound > 0)
+    io.out(
+      `  review round: ${run.reviewRound}${run.reReview.length > 0 ? ` (${run.reReview.join(", ")} queued for another pass)` : ""}`,
+    );
   const merged = run.tasks.filter((t) => t.status === "merged").length;
   if (run.mergeSeq > 0) {
     const lag = run.mergeSeq - run.graphSeq;

@@ -1,5 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { z } from "zod";
+import { Finding } from "../handoff/schema.ts";
 import { FACTORY_VERSION } from "../version.ts";
 import {
   CorruptStateError,
@@ -122,8 +123,20 @@ export const RunState = z.strictObject({
   likelyRepos: z.array(z.string()).default([]),
   /** Workspace-relative dir of an AI-repo draft worktree while another change is active. */
   draft: z.string().optional(),
-  /** Repos whose review and tester pass already ran (each runs once per change). */
+  /** Repos whose first reviewer and tester pass already ran (each runs once per change). */
   reviewed: z.array(z.string()).default([]),
+  /**
+   * Reviewer passes completed for the change. 1 is the first pass; the loop stops at
+   * `workflow.reviewRounds` even when findings remain.
+   */
+  reviewRound: z.int().min(0).default(0),
+  /** Repos queued for the next reviewer-only pass (all touched repos after a fix round). */
+  reReview: z.array(z.string()).default([]),
+  /**
+   * Non-nice review findings that point at the spec. Implementation cannot fix them, so they
+   * pause the change until `reword` or `reapprove` clears them.
+   */
+  specFindings: z.array(Finding).default([]),
   /** Full-suite fix rounds used. */
   suiteRounds: z.int().min(0).default(0),
   /** Latest handoff per task or step, for the report. */

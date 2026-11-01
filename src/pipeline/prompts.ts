@@ -268,6 +268,46 @@ export function findingPack(f: Finding): string {
 ${f.file ? `- Location: ${f.file}${f.line ? `:${f.line}` : ""}` : ""}`;
 }
 
+/**
+ * `ai-factory reword`: the architect revises an approved change from review findings. Wording
+ * only: the task DAG stays as approved, and the factory rejects structural edits.
+ */
+export function rewordPrompt(input: {
+  id: string;
+  spec: string;
+  findings: readonly Finding[];
+  request?: string;
+}): string {
+  const findings =
+    input.findings.length === 0
+      ? "- (none; use the request below)"
+      : input.findings
+          .map(
+            (f, i) =>
+              `${i + 1}. [${f.severity}] ${f.file ?? "(no file)"}${f.line ? `:${f.line}` : ""}\n   What the code does: ${f.what}\n   Problem: ${f.problem}\n   Fix: ${f.fix}\n   Impact if skipped: ${f.impact}`,
+          )
+          .join("\n");
+  const request =
+    input.request === undefined || input.request.trim() === ""
+      ? ""
+      : `\nAdditional instruction from the user:\n"""\n${input.request.trim()}\n"""\n`;
+  return `Revise the OpenSpec change \`${input.id}\` from these review findings:
+${findings}
+${request}
+Rules:
+- Edit only \`openspec/changes/${input.id}/\` (proposal.md, design.md, specs/**). Never touch code.
+- Change wording and clarity only. Do not change the intent, add requirements or remove scope.
+- Keep tasks.md exactly as approved: same ids, titles, metadata and number of tasks. The factory
+  rejects a reword that changes the task DAG.
+- A finding that points outside \`openspec/changes/${input.id}/\` (for example \`openspec/specs/\`)
+  cannot be applied here; mention it under \`risks\` or \`openQuestions\` instead.
+
+Current spec:
+${input.spec}
+
+Use \`task: "reword"\` in your handoff and list every file you wrote.`;
+}
+
 export function quickPrompt(input: { task: string; repo: RepoConfig }): string {
   return `Quick task in repo \`${input.repo.name}\` (no OpenSpec change):
 """
