@@ -2,6 +2,12 @@
 
 All notable changes per release. `ai-factory update` applies them to an installed workspace (see [docs/cli.md](docs/cli.md#update)).
 
+## 0.10.1
+
+### Patch Changes
+
+- 90e9c5c: Fix zsh and bash completion passing the whole command line as a single word, which broke flag and file completion after a command name. Pressing Tab on an empty word after a command now also offers its flags (but not after `--`).
+
 ## 0.10.0
 
 ### Minor Changes
