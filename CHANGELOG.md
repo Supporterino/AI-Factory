@@ -2,6 +2,13 @@
 
 All notable changes per release. `ai-factory update` applies them to an installed workspace (see [docs/cli.md](docs/cli.md#update)).
 
+## 0.11.0
+
+### Minor Changes
+
+- 6217ff9: Add `workflow.reviewRounds` (1–10, default 1). Above 1, every touched repo is re-reviewed after a fix round until a pass finds no `must`/`should` code findings or the cap is reached; the last fix round still runs and remaining findings stay in the report. The tester still runs once per repo. Fix task ids are now round-scoped so later passes cannot collide with earlier ones.
+- 6217ff9: Spec findings no longer dead-end at the implementer. Review findings that point at `openspec/changes/<id>/` are recorded and pause the change; `ai-factory reword <id>` lets the architect apply them (wording and clarity only, task DAG unchanged) and `ai-factory reapprove <id>` accepts a hand edit. Both commit `docs(spec): reword <id>` and re-stamp the approval hash without reloading task progress, and a failed attempt restores the spec.
+
 ## 0.10.2
 
 ### Patch Changes
