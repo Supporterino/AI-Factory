@@ -34,6 +34,8 @@ interface Walk {
   readonly used: Set<string>;
   /** A value-taking option immediately before the current word. */
   readonly pending?: string;
+  /** `--` was seen: later words are literals, so flags must not be offered. */
+  readonly literal: boolean;
 }
 
 /** Walks completed tokens, separating positionals from flags and their values. */
@@ -41,6 +43,7 @@ function walk(command: Command, tokens: readonly string[]): Walk {
   const positionals: string[] = [];
   const used = new Set<string>();
   let pending: string | undefined;
+  let literal = false;
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i] ?? "";
     if (pending !== undefined) {
@@ -48,6 +51,7 @@ function walk(command: Command, tokens: readonly string[]): Walk {
       continue;
     }
     if (token === "--") {
+      literal = true;
       positionals.push(...tokens.slice(i + 1));
       break;
     }
@@ -57,13 +61,16 @@ function walk(command: Command, tokens: readonly string[]): Walk {
       if (option !== undefined) {
         used.add(name);
         if (option.type !== "boolean" && inline === undefined) pending = name;
-      }
+      } else if (name === "help") used.add("help");
       continue;
     }
-    if (token.startsWith("-") && token.length > 1) continue;
+    if (token.startsWith("-") && token.length > 1) {
+      if (token === "-h") used.add("help");
+      continue;
+    }
     positionals.push(token);
   }
-  return { positionals, used, ...(pending === undefined ? {} : { pending }) };
+  return { positionals, used, literal, ...(pending === undefined ? {} : { pending }) };
 }
 
 const byPrefix = (values: readonly Candidate[], prefix: string): Candidate[] =>
@@ -189,23 +196,26 @@ async function commandCandidates(
   if (current.startsWith("-") && current.length > 1)
     return { candidates: byPrefix([{ value: "-h", description: "Show help" }], current) };
 
-  if (
-    command.subcommands !== undefined &&
-    subcommand === undefined &&
-    state.positionals.length === 0
-  ) {
-    return {
-      candidates: byPrefix(
-        command.subcommands.map((name) => ({ value: name })),
-        current,
-      ),
-    };
-  }
-  return (
-    positionalValue(command, await context(), state.positionals.length, current) ?? {
-      candidates: [],
-    }
-  );
+  const positional =
+    command.subcommands !== undefined && subcommand === undefined && state.positionals.length === 0
+      ? {
+          candidates: byPrefix(
+            command.subcommands.map((name) => ({ value: name })),
+            current,
+          ),
+        }
+      : positionalValue(command, await context(), state.positionals.length, current);
+
+  // On an empty word, offer every unused flag next to positional values. A pending
+  // option value and `--` literals are handled above; a path fallback wins over flags.
+  if (current !== "" || state.literal) return positional ?? { candidates: [] };
+  if (positional?.fallback !== undefined) return positional;
+  return {
+    candidates: [
+      ...(positional?.candidates ?? []),
+      ...flagCandidates(command, current, state.used),
+    ],
+  };
 }
 
 async function splitGlobals(

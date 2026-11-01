@@ -139,7 +139,7 @@ ai-factory completion [<bash|zsh|fish>] [--install] [--rc <file>]
 
 Prints a completion script, or with `--install` adds a marked, idempotent block to the shell's rc file. Completion covers:
 - every visible command;
-- every optional flag of the selected command, skipping non-repeatable flags already used;
+- every optional flag of the selected command (on an empty word too), skipping non-repeatable flags already used and staying silent after `--`;
 - values: change ids and task ids from the workspace state, repo and agent names from the config, configured model ids, bench cases and levels, shells, and file/directory paths;
 - comma-list values (`--levels lite,f`, `--by change,agent`).
 

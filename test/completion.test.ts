@@ -79,8 +79,23 @@ describe("completion candidates", () => {
     expect(await values(["run", "--verbose", "--"], fx.root)).toContain("--quiet");
   });
 
+  test("an empty word after a command offers flags and positional values", async () => {
+    expect(await values(["run", ""], fx.root)).toEqual(
+      expect.arrayContaining(["--request", "--no-interactive", "--verbose", "--quiet", "--help"]),
+    );
+    expect(await values(["run", "--verbose", ""], fx.root)).not.toContain("--verbose");
+    expect(await values(["run", "--help", ""], fx.root)).not.toContain("--help");
+    expect(await values(["completion", ""], fx.root)).toEqual(
+      expect.arrayContaining(["bash", "zsh", "fish", "--install", "--rc", "--help"]),
+    );
+    // After `--`, words are literals, so no flags are suggested.
+    expect(await values(["run", "--", ""], fx.root)).toEqual([]);
+  });
+
   test("value providers and static choices", async () => {
-    expect(await values(["completion", ""], fx.root)).toEqual(["bash", "zsh", "fish"]);
+    expect(await values(["completion", ""], fx.root)).toEqual(
+      expect.arrayContaining(["bash", "zsh", "fish"]),
+    );
     expect(await values(["completion", "z"], fx.root)).toEqual(["zsh"]);
     expect(await values(["status", ""], fx.root)).toContain("add-x");
     expect(await values(["usage", "--change", ""], fx.root)).toContain("add-x");
@@ -97,7 +112,9 @@ describe("completion candidates", () => {
       "change,model",
       "change,day",
     ]);
-    expect(await values(["bench", ""], fx.root)).toEqual(["ponytail"]);
+    expect(await values(["bench", ""], fx.root)).toEqual(
+      expect.arrayContaining(["ponytail", "--runs", "--case", "--levels"]),
+    );
     expect(await values(["bench", "ponytail", "--"], fx.root)).toContain("--runs");
     expect(await values(["bench", "--levels", "l"], fx.root)).toEqual(["lite"]);
     expect(await values(["bench", "--levels", "lite,"], fx.root)).toEqual([
@@ -146,6 +163,46 @@ describe("completion install and scripts", () => {
       const zsh = spawnSync("zsh", ["-n"], { input: completionScript("zsh"), encoding: "utf8" });
       expect(zsh.status).toBe(0);
     }
+  });
+
+  test("the bash script forwards each word and falls back to files", () => {
+    if (spawnSync("bash", ["--version"], { encoding: "utf8" }).status !== 0) return;
+    const harness = `
+ai-factory() { printf 'ARGC=%s\\n' "$#" >&2; echo candidate; }
+compopt() { echo COMPOPT; }
+complete() { :; }
+${completionScript("bash")}
+COMP_WORDS=(ai-factory run --req); COMP_CWORD=2; _ai_factory_complete
+printf 'REPLY=%s\\n' "\${COMPREPLY[@]}" >&2
+ai-factory() { echo ":files"; }
+COMP_WORDS=(ai-factory run --request ""); COMP_CWORD=3; _ai_factory_complete
+printf 'FALLBACK=%s\\n' "\${#COMPREPLY[@]}" >&2
+`;
+    const run = spawnSync("bash", ["-f", "-c", harness], { encoding: "utf8" });
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("ARGC=4");
+    expect(run.stderr).toContain("REPLY=candidate");
+    expect(run.stdout).toContain("COMPOPT");
+    expect(run.stderr).toContain("FALLBACK=0");
+  });
+
+  test("the zsh script forwards each word and falls back to files", () => {
+    if (spawnSync("zsh", ["--version"], { encoding: "utf8" }).status !== 0) return;
+    const harness = `
+ai-factory() { print -r -- "ARGC=$#" >&2; print -r -- "--request"; }
+compadd() { print -r -- "COMPADD=\${(j:,:)values}" >&2; }
+_files() { print -r -- "FILES_CALLED" >&2; }
+compdef() { :; }
+${completionScript("zsh")}
+words=(ai-factory run --req); CURRENT=3; _ai_factory
+ai-factory() { print -r -- ":files" }
+words=(ai-factory run --request ""); CURRENT=4; _ai_factory
+`;
+    const run = spawnSync("zsh", ["-f", "-c", harness], { encoding: "utf8" });
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain("ARGC=4");
+    expect(run.stderr).toContain("COMPADD=--request");
+    expect(run.stderr).toContain("FILES_CALLED");
   });
 
   test("installs one idempotent block and preserves the rc file", async () => {

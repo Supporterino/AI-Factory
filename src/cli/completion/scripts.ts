@@ -19,9 +19,12 @@ export function isShell(value: string): value is Shell {
 }
 
 const BASH = `_ai_factory_complete() {
+  local -a args lines
+  # Build the slice before changing IFS: with a non-default IFS, bash joins an
+  # "@" slice into a single word, which would pass the whole line as one argument.
+  args=( "\${COMP_WORDS[@]:1:$COMP_CWORD}" )
   local IFS=$'\\n'
-  local -a lines
-  lines=( $(ai-factory __complete bash "\${COMP_WORDS[@]:1:$COMP_CWORD}") )
+  lines=( $(ai-factory __complete bash "\${args[@]}") )
   if [ "\${lines[0]:-}" = ":files" ]; then
     COMPREPLY=()
     compopt -o default 2>/dev/null
@@ -44,7 +47,7 @@ complete -F _ai_factory_complete ai-factory
 const ZSH = `#compdef ai-factory
 _ai_factory() {
   local -a lines values descriptions
-  lines=("\${(@f)$(ai-factory __complete zsh "\${words[2,CURRENT]}")}")
+  lines=("\${(@f)$(ai-factory __complete zsh "\${(@)words[2,CURRENT]}")}")
   if [[ "\${lines[1]:-}" == ":files" ]]; then _files; return; fi
   if [[ "\${lines[1]:-}" == ":dirs" ]]; then _files -/; return; fi
   local line
