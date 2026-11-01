@@ -168,27 +168,29 @@ describe("syncCredentials", () => {
   });
 
   test("updates a rotated API key but keeps a refreshed OAuth token", async () => {
+    const now = Date.now();
     const api = new FakeApi();
-    api.entries = [key("k", "deepseek", "old"), oauth("o", "opencode", Date.now() + 60_000)];
+    api.entries = [key("k", "deepseek", "old"), oauth("o", "opencode", now + 60_000)];
     const summary = await syncCredentials(api, [
       key("k", "deepseek", "new"),
-      oauth("o", "opencode", Date.now() + 30_000),
+      oauth("o", "opencode", now + 30_000),
     ]);
     expect(summary.updated).toBe(1);
     expect(summary.skipped).toBe(1);
     expect(api.entries.find((entry) => entry.id === "k")?.value).toMatchObject({ key: "new" });
     expect(api.entries.find((entry) => entry.id === "o")?.value).toMatchObject({
-      expires: Date.now() + 60_000,
+      expires: now + 60_000,
     });
   });
 
   test("replaces an expired OAuth token when the user's copy is newer", async () => {
+    const now = Date.now();
     const api = new FakeApi();
-    api.entries = [oauth("o", "opencode", Date.now() - 1_000)];
-    const summary = await syncCredentials(api, [oauth("o", "opencode", Date.now() + 60_000)]);
+    api.entries = [oauth("o", "opencode", now - 1_000)];
+    const summary = await syncCredentials(api, [oauth("o", "opencode", now + 60_000)]);
     expect(summary.updated).toBe(1);
     expect(api.entries.find((entry) => entry.id === "o")?.value).toMatchObject({
-      expires: Date.now() + 60_000,
+      expires: now + 60_000,
     });
   });
 
