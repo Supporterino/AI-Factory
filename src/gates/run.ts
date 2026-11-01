@@ -1,9 +1,11 @@
+import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { newShortcuts } from "../addons/shortcuts.ts";
 import type { FactoryConfig, GateType, RepoConfig } from "../config/schema.ts";
 import { exec } from "../exec.ts";
 import { dependentFiles } from "../graph/graph.ts";
 import { redactProcess } from "../logs/redact.ts";
+import { isGeneratedLockfile } from "../policy/paths.ts";
 import { checkoutPolicy, sandboxArgv, sandboxEnabled, seatbeltProfile } from "../policy/sandbox.ts";
 import { agentProcessEnv } from "../runtime/credentials.ts";
 import { opencodeGlobRegExp } from "../tasks/glob.ts";
@@ -30,6 +32,8 @@ export interface GateResult {
   readonly output: string;
   /** Files a non-check-only gate modified (they were restored). */
   readonly modified?: readonly string[];
+  /** Generated lockfiles the gate refreshed; they stay in the change. */
+  readonly regenerated?: readonly string[];
 }
 
 export interface GateReport {
@@ -88,6 +92,11 @@ const FAILING: ReadonlySet<GateStatus> = new Set(["fail", "missing", "not-check-
 
 /** Tests run only when format, lint and types passed; their output would be noise otherwise. */
 const TEST_GATES: ReadonlySet<GateType> = new Set(["test", "testAffected"]);
+
+function staleLockfileNote(paths: readonly string[]): string {
+  const one = paths.length === 1;
+  return `stale lockfile${one ? "" : "s"} regenerated: ${paths.join(", ")} (kept in the change; do not delete or revert ${one ? "it" : "them"})`;
+}
 
 async function runOne(input: RunGatesInput, gate: ResolvedGate): Promise<GateResult> {
   const before = await snapshot(input.worktree);
@@ -173,13 +182,45 @@ async function runOne(input: RunGatesInput, gate: ResolvedGate): Promise<GateRes
   }
 
   if (modified.length > 0 && gate.checkOnly !== false) {
-    await restore(before, modified);
-    return {
-      ...base,
-      status: "not-check-only",
-      modified,
-      output: `gate is not check-only: \`${gate.command}\` modified ${modified.join(", ")} (restored)`,
-    };
+    // A gate may refresh a lockfile from a manifest edit. Keep it in a task worktree (the
+    // factory commits it); in full mode the checkout must stay clean before `land`.
+    const regenerated =
+      input.mode === "task"
+        ? modified.filter((p) => isGeneratedLockfile(p) && existsSync(join(input.worktree, p)))
+        : [];
+    const others = modified.filter((p) => !regenerated.includes(p));
+    const note = regenerated.length > 0 ? staleLockfileNote(regenerated) : "";
+    if (others.length > 0) {
+      await restore(before, others);
+      const restoredLockfiles = others.filter(isGeneratedLockfile);
+      const fullModeNote =
+        input.mode !== "task" && restoredLockfiles.length > 0
+          ? `\nstale lockfile${restoredLockfiles.length === 1 ? "" : "s"}: ${restoredLockfiles.join(", ")} (restored; regenerate and commit ${restoredLockfiles.length === 1 ? "it" : "them"} with the manifest)`
+          : "";
+      return {
+        ...base,
+        status: "not-check-only",
+        modified: others,
+        output: `gate is not check-only: \`${gate.command}\` modified ${others.join(", ")} (restored)${note}${fullModeNote}`,
+        ...(regenerated.length > 0 ? { regenerated } : {}),
+      };
+    }
+    // Only generated lockfiles changed: keep them and judge the gate itself.
+    if (res.timedOut)
+      return {
+        ...base,
+        status: "timeout",
+        output: `gate timed out: \`${gate.command}\`\n${note}`,
+        regenerated,
+      };
+    if (res.code !== 0)
+      return {
+        ...base,
+        status: "fail",
+        output: `${output || `gate failed: \`${gate.command}\``}\n${note}`,
+        regenerated,
+      };
+    return { ...base, status: "pass", output: note, regenerated };
   }
   if (res.timedOut)
     return { ...base, status: "timeout", output: `gate timed out: \`${gate.command}\`` };

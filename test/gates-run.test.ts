@@ -115,6 +115,80 @@ describe("runGates (single repo, override commands)", () => {
     expect(await gitOut(fx.root, "status", "--porcelain")).toBe("M src/sum.ts");
   });
 
+  test("a gate that only refreshes a lockfile passes and keeps it", async () => {
+    const report = await run({
+      format: "mkdir -p src-tauri && printf 'lock\\n' > src-tauri/Cargo.lock",
+      lint: "true",
+      types: "true",
+      testAffected: "true",
+    });
+    const format = report.results.find((r) => r.type === "format");
+    expect(report.passed).toBe(true);
+    expect(format?.status).toBe("pass");
+    expect(format?.regenerated).toEqual(["src-tauri/Cargo.lock"]);
+    expect(format?.output).toContain("stale lockfile regenerated: src-tauri/Cargo.lock");
+    expect(readFileSync(join(fx.root, "src-tauri/Cargo.lock"), "utf8")).toBe("lock\n");
+  });
+
+  test("a gate that edits code too is not check-only; the lockfile still stays", async () => {
+    const agentWork = readFileSync(join(fx.root, "src/sum.ts"), "utf8");
+    const report = await run({
+      format: "printf 'lock\\n' > Cargo.lock; echo '// reformatted' >> src/sum.ts",
+      lint: "true",
+      types: "true",
+      testAffected: "true",
+    });
+    const format = report.results.find((r) => r.type === "format");
+    expect(format?.status).toBe("not-check-only");
+    expect(format?.modified).toEqual(["src/sum.ts"]);
+    expect(format?.regenerated).toEqual(["Cargo.lock"]);
+    expect(format?.output).toContain("stale lockfile regenerated: Cargo.lock");
+    expect(readFileSync(join(fx.root, "Cargo.lock"), "utf8")).toBe("lock\n");
+    expect(readFileSync(join(fx.root, "src/sum.ts"), "utf8")).toBe(agentWork);
+  });
+
+  test("a failing gate keeps the regenerated lockfile and reports the failure", async () => {
+    const report = await run({
+      format: "printf 'lock\\n' > Cargo.lock; echo 'type error' >&2; exit 1",
+      lint: "true",
+      types: "true",
+      testAffected: "true",
+    });
+    const format = report.results.find((r) => r.type === "format");
+    expect(format?.status).toBe("fail");
+    expect(format?.output).toContain("type error");
+    expect(format?.output).toContain("stale lockfile regenerated: Cargo.lock");
+    expect(format?.regenerated).toEqual(["Cargo.lock"]);
+    expect(readFileSync(join(fx.root, "Cargo.lock"), "utf8")).toBe("lock\n");
+  });
+
+  test("full mode restores a stale lockfile so the checkout stays clean", async () => {
+    const config = singleConfig({
+      format: "printf 'lock\\n' > Cargo.lock",
+      lint: "skip",
+      types: "skip",
+      test: "skip",
+      testAffected: "skip",
+    });
+    const repo = config.repos[0];
+    if (repo === undefined) throw new Error("no repo");
+    const report = await runGates({
+      root: fx.root,
+      config,
+      repo,
+      worktree: fx.root,
+      mode: "full",
+      base,
+    });
+    const format = report.results.find((r) => r.type === "format");
+    expect(format?.status).toBe("not-check-only");
+    expect(format?.modified).toEqual(["Cargo.lock"]);
+    expect(format?.output).toContain(
+      "stale lockfile: Cargo.lock (restored; regenerate and commit it with the manifest)",
+    );
+    expect(existsSync(join(fx.root, "Cargo.lock"))).toBe(false);
+  });
+
   test("gates run without credentials, with pushes blocked, and (macOS) sandboxed", async () => {
     process.env.ANTHROPIC_API_KEY = "sk-test";
     mkdirSync(join(fx.root, ".factory"), { recursive: true });

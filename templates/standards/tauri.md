@@ -22,6 +22,7 @@
 ## Summary
 
 - Rust lives in `src-tauri/`: code in `src/lib.rs` and its modules; `src/main.rs` only calls `run()`.
+- A task that changes `Cargo.toml` lists `Cargo.lock` in its `touches` (and the frontend's lockfile when its `package.json` changes); generated lockfiles are committed, never hand-edited. <!-- factory -->
 - Commands take serde arguments (camelCase keys in JS) and return `Result<T, E>` where `E` implements `Serialize`.
 - Slow commands are `async`; async commands with borrowed arguments such as `State<'_, T>` must return `Result`.
 - Use commands for request/response, channels for ordered or large streams, events only for small notifications.

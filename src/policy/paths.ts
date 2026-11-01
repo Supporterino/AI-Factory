@@ -57,3 +57,43 @@ export function isSecretPath(path: string): boolean {
   const base = p.slice(p.lastIndexOf("/") + 1);
   return SECRET_BASENAMES.some((re) => re.test(base)) || SECRET_SEGMENTS.some((re) => re.test(p));
 }
+
+/**
+ * Dependency lockfiles are generated from a manifest (`Cargo.toml`, `package.json`, …), so
+ * editing one is never really outside a task's scope. Matching is by basename at any depth,
+ * case-insensitively (macOS and Windows treat the variants as one file).
+ */
+const GENERATED_LOCKFILES: ReadonlySet<string> = new Set([
+  "bun.lock",
+  "bun.lockb",
+  "cargo.lock",
+  "cartfile.resolved",
+  "chart.lock",
+  "composer.lock",
+  "conda-lock.yml",
+  "deno.lock",
+  "flake.lock",
+  "gemfile.lock",
+  "go.sum",
+  "gopkg.lock",
+  "gradle.lockfile",
+  "mix.lock",
+  "npm-shrinkwrap.json",
+  "package-lock.json",
+  "package.resolved",
+  "packages.lock.json",
+  "pdm.lock",
+  "pipfile.lock",
+  "pnpm-lock.yaml",
+  "podfile.lock",
+  "poetry.lock",
+  "pubspec.lock",
+  "uv.lock",
+  "yarn.lock",
+]);
+
+/** A generated dependency lockfile, not the manifest next to it. */
+export function isGeneratedLockfile(path: string): boolean {
+  const p = path.replace(/\\/g, "/");
+  return GENERATED_LOCKFILES.has(p.slice(p.lastIndexOf("/") + 1).toLowerCase());
+}

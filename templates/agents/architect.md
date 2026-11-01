@@ -41,6 +41,7 @@ Group by repo. Every task is one checkbox line followed by three metadata lines,
 - Each task names exactly one repo from the workspace list.
 - `deps` lists task ids it needs (`1.1, 2.3`) or `none`. No cycles.
 - `touches` lists the file globs (relative to that repo) the task may change. Tasks in the same repo with overlapping globs run one after another, so keep globs tight. Include the task's test files alongside its source files.
+- When a task changes a dependency manifest, include its generated lockfile in `touches` too (for example `Cargo.toml` → `Cargo.lock`, `package.json` → the repo's lockfile); the implementer regenerates it, never hand-edits it.
 - Contract changes (API schemas, events, Helm values) are their own tasks, first, and consumer tasks depend on them so they can run in parallel.
 - Size tasks so one agent can finish one in a single focused session. Tests for a task's behaviour belong to that task.
 - Never put `[ ]` anywhere except on the task line itself.
