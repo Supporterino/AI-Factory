@@ -46,17 +46,23 @@ complete -F _ai_factory_complete ai-factory
 
 const ZSH = `#compdef ai-factory
 _ai_factory() {
-  local -a lines values descriptions
+  local -a lines described plain
   lines=("\${(@f)$(ai-factory __complete zsh "\${(@)words[2,CURRENT]}")}")
   if [[ "\${lines[1]:-}" == ":files" ]]; then _files; return; fi
   if [[ "\${lines[1]:-}" == ":dirs" ]]; then _files -/; return; fi
   local line
   for line in "\${lines[@]}"; do
     [[ -z "$line" ]] && continue
-    values+=("\${line%%$'\\t'*}")
-    if [[ "$line" == *$'\\t'* ]]; then descriptions+=("\${line#*$'\\t'}"); else descriptions+=(""); fi
+    if [[ "$line" == *$'\\t'* ]]; then
+      described+=("\${line%%$'\\t'*}:\${line#*$'\\t'}")
+    else
+      plain+=("$line")
+    fi
   done
-  compadd -d descriptions -a values
+  # _describe renders "value  -- description" like Homebrew; plain values use compadd so a
+  # colon in a path or id is not mistaken for the value/description separator.
+  (( \${#described} )) && _describe -t ai-factory 'ai-factory' described
+  (( \${#plain} )) && compadd -a plain
 }
 compdef _ai_factory ai-factory
 `;

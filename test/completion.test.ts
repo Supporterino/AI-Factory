@@ -189,19 +189,26 @@ printf 'FALLBACK=%s\\n' "\${#COMPREPLY[@]}" >&2
   test("the zsh script forwards each word and falls back to files", () => {
     if (spawnSync("zsh", ["--version"], { encoding: "utf8" }).status !== 0) return;
     const harness = `
-ai-factory() { print -r -- "ARGC=$#" >&2; print -r -- "--request"; }
-compadd() { print -r -- "COMPADD=\${(j:,:)values}" >&2; }
+ai-factory() {
+  printf 'ARGC=%s\\n' "$#" >&2
+  printf '%s\\t%s\\n' "--request" "Read the request from a file"
+}
+_describe() { print -r -- "DESCRIBE=\${(j:,:)described}" >&2; }
+compadd() { print -r -- "COMPADD=\${(j:,:)plain}" >&2; }
 _files() { print -r -- "FILES_CALLED" >&2; }
 compdef() { :; }
 ${completionScript("zsh")}
 words=(ai-factory run --req); CURRENT=3; _ai_factory
+ai-factory() { print -r -- "plainvalue" }
+words=(ai-factory completion ""); CURRENT=3; _ai_factory
 ai-factory() { print -r -- ":files" }
 words=(ai-factory run --request ""); CURRENT=4; _ai_factory
 `;
     const run = spawnSync("zsh", ["-f", "-c", harness], { encoding: "utf8" });
     expect(run.status).toBe(0);
     expect(run.stderr).toContain("ARGC=4");
-    expect(run.stderr).toContain("COMPADD=--request");
+    expect(run.stderr).toContain("DESCRIBE=--request:Read the request from a file");
+    expect(run.stderr).toContain("COMPADD=plainvalue");
     expect(run.stderr).toContain("FILES_CALLED");
   });
 
