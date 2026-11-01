@@ -2,6 +2,12 @@
 
 All notable changes per release. `ai-factory update` applies them to an installed workspace (see [docs/cli.md](docs/cli.md#update)).
 
+## 0.10.2
+
+### Patch Changes
+
+- c761329: Show each completion candidate with its description in zsh, in Homebrew's `value  -- description` style, instead of replacing the candidate with its description.
+
 ## 0.10.1
 
 ### Patch Changes
