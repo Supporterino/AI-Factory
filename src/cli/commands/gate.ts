@@ -84,7 +84,10 @@ function printReport(io: Io, report: GateReport): void {
     io.out(
       `  ${MARK[r.status]} ${r.name ?? r.type}${where}${what}${time}${r.status === "skipped" ? ` (${r.output})` : ""}`,
     );
-    if (r.status !== "pass" && r.status !== "skipped" && r.output) {
+    if (
+      r.output &&
+      ((r.status !== "pass" && r.status !== "skipped") || (r.regenerated?.length ?? 0) > 0)
+    ) {
       for (const line of r.output.split("\n")) io.out(`      ${line}`);
     }
   }

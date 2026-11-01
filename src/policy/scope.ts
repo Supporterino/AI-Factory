@@ -1,6 +1,6 @@
 import { isAbsolute, normalize, relative, resolve } from "node:path";
 import { matchesAny, opencodeGlobRegExp } from "../tasks/glob.ts";
-import { isProtectedPath, isSecretPath } from "./paths.ts";
+import { isGeneratedLockfile, isProtectedPath, isSecretPath } from "./paths.ts";
 import type { AgentRole } from "./permissions.ts";
 
 /**
@@ -105,6 +105,9 @@ export function checkEdit(
   const approved = approval();
   if (approved !== true)
     return { allowed: false, reason: `${approved}; implementation edits are blocked` };
+
+  // A manifest edit always regenerates its lockfile; keeping it is never out of scope.
+  if (isGeneratedLockfile(rel)) return { allowed: true, rel };
 
   if (ctx.role === "tester") {
     const globs = ctx.testGlobs ?? [];

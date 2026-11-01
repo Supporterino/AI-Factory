@@ -2,6 +2,12 @@
 
 All notable changes per release. `ai-factory update` applies them to an installed workspace (see [docs/cli.md](docs/cli.md#update)).
 
+## 0.11.1
+
+### Patch Changes
+
+- Keep generated lockfiles in scope. Implementers and testers may keep `Cargo.lock` and other package-manager lockfiles even when a task's `touches` omits them, and a gate that only refreshes a stale lockfile now passes instead of failing as "not check-only"; task worktrees keep the regenerated file, while full-suite gates still require a clean checkout. The Rust and Tauri standards and the architect prompt now say that a task changing a dependency manifest lists its lockfile in `touches`.
+
 ## 0.11.0
 
 ### Minor Changes

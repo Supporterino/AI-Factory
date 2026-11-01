@@ -18,6 +18,7 @@
 ## Summary
 
 - Code is `cargo fmt` formatted and passes `cargo clippy --all-targets -- -D warnings`; keep the repo's existing crate layout.
+- A task that changes `Cargo.toml` lists `Cargo.lock` in its `touches`; the lockfile is generated, committed with the manifest change, and never hand-edited. <!-- factory -->
 - Return `Result` for expected failures; panic only on broken invariants; no `unwrap` outside tests, `expect("… should …")` for proven invariants.
 - Error types implement `Error` + `Display` with lowercase messages; never use `()` as an error type.
 - Borrow parameters (`&str`, `&[T]`), take ownership only when stored, and never `clone()` just to satisfy the borrow checker.

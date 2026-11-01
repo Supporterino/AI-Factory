@@ -216,6 +216,38 @@ function isSecretPath(path) {
   const base = p.slice(p.lastIndexOf("/") + 1);
   return SECRET_BASENAMES.some((re) => re.test(base)) || SECRET_SEGMENTS.some((re) => re.test(p));
 }
+var GENERATED_LOCKFILES = new Set([
+  "bun.lock",
+  "bun.lockb",
+  "cargo.lock",
+  "cartfile.resolved",
+  "chart.lock",
+  "composer.lock",
+  "conda-lock.yml",
+  "deno.lock",
+  "flake.lock",
+  "gemfile.lock",
+  "go.sum",
+  "gopkg.lock",
+  "gradle.lockfile",
+  "mix.lock",
+  "npm-shrinkwrap.json",
+  "package-lock.json",
+  "package.resolved",
+  "packages.lock.json",
+  "pdm.lock",
+  "pipfile.lock",
+  "pnpm-lock.yaml",
+  "podfile.lock",
+  "poetry.lock",
+  "pubspec.lock",
+  "uv.lock",
+  "yarn.lock"
+]);
+function isGeneratedLockfile(path) {
+  const p = path.replace(/\\/g, "/");
+  return GENERATED_LOCKFILES.has(p.slice(p.lastIndexOf("/") + 1).toLowerCase());
+}
 
 // src/policy/realpath.ts
 import { lstatSync, readlinkSync, realpathSync } from "fs";
@@ -498,6 +530,8 @@ function checkEdit(ctx, path, approval) {
   const approved = approval();
   if (approved !== true)
     return { allowed: false, reason: `${approved}; implementation edits are blocked` };
+  if (isGeneratedLockfile(rel))
+    return { allowed: true, rel };
   if (ctx.role === "tester") {
     const globs = ctx.testGlobs ?? [];
     if (globs.some((g) => opencodeGlobRegExp(g).test(rel)))
