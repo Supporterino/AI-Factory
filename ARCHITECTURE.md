@@ -69,7 +69,7 @@ flowchart LR
 | `.factory/runs/<id>.json`                                  | no           | CLI only: phase, tasks, attempts, history                                                             |
 | `.factory/runs/<id>/snapshot/gates.json`                   | no           | `approve`: gate config + profile tables the change keeps                                              |
 | `.factory/active.lock`, `.factory/queue.json`              | no           | the one active change and the approval-ordered queue                                                  |
-| `.factory/approvals/<id>.json`                             | no           | `approve`: approver, spec commit, spec hash                                                           |
+| `.factory/approvals/<id>.json`                             | no           | `approve`, `reword`, `reapprove`: approver, spec commit, spec hash, replaced approvals                |
 | `.factory/worktrees/<id>/<repo>/<task>/`                   | no           | task worktrees (and `.factory/worktrees/<id>/.opencode/{agents,skills}`, the snapshotted definitions) |
 | `.factory/drafts/<id>/`                                    | no           | AI-repo worktree for a change designed while another one is active                                    |
 | `.factory/clarifications/<id>.md`                          | no           | questions the intake orchestrator and architect raised, and the user's answers                        |
@@ -97,8 +97,8 @@ stateDiagram-v2
   awaiting_approval --> queued: approve (hash + spec commit)
   queued --> implementing: active lock claimed (now, or when the active change closes)
   implementing --> reviewing: all tasks merged
-  reviewing --> implementing: must/should findings → fix tasks
-  reviewing --> contracts: no findings left
+  reviewing --> implementing: must/should findings → fix tasks (re-review until clean, ≤ reviewRounds)
+  reviewing --> contracts: clean pass, or review cap reached
   contracts --> implementing: gate fails → one fix round; review findings → fix tasks
   contracts --> full_suite: contract gate + contract review pass
   full_suite --> implementing: failures → suite fix tasks (≤ 2 rounds)
@@ -113,7 +113,7 @@ stateDiagram-v2
   done --> [*]
 ```
 
-The diagram writes `awaiting-approval` as `awaiting_approval` and `full-suite` as `full_suite`, because the diagram syntax needs it. `approve` is the only human gate. It hashes the spec (task checkboxes are normalised out of the hash) and commits it as `docs(spec): <id>`. Before any implementation edit, the CLI and the plugin both re-check the hash, and that the spec commit is on `change/<id>`.
+The diagram writes `awaiting-approval` as `awaiting_approval` and `full-suite` as `full_suite`, because the diagram syntax needs it. `approve` is the only human gate. It hashes the spec (task checkboxes are normalised out of the hash) and commits it as `docs(spec): <id>`. Before any implementation edit, the CLI and the plugin both re-check the hash, and that the spec commit is on `change/<id>`. After implementation starts, an intended spec edit is accepted with `reapprove` (hand edit) or `reword` (architect applies review findings): both validate, commit `docs(spec): reword <id>`, re-stamp the approval with the new commit and hash, and keep the run's task progress. Review findings that point at the spec never become implementer tasks; they pause the change until one of those commands clears them. `workflow.reviewRounds` (default 1) makes `reviewing` loop: a round with code findings becomes fix tasks, then every touched repo is reviewed again on the full diff, until a clean pass or the cap. The tester runs once per repo, and at the cap the last fixes still run and the remaining findings stay in the report.
 
 ### Task state machine
 
@@ -173,11 +173,11 @@ The parser judges what a command _says_. The sandbox enforces what any program i
 
 Branches and commits for one change `<id>`:
 
-| Repo                                        | Branch                                                                                                                                                                  | Commits, in order                                                                                                                                                                                             |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| AI repo                                     | `change/<id>`, created **before design**                                                                                                                                | `docs(spec): <id>` at approval. At close: `chore(submodules): bump for <id> [provisional]` (submodule layout), then `chore(spec): archive <id>`. After the upstream merges: `chore(submodules): repoint <id>` |
-| each touched submodule (or the single repo) | `change/<id>`, created from the tracked branch in `.gitmodules` or the default branch, after a fetch; the newer of local and `origin/` wins (also from a detached HEAD) | one Conventional Commit per task (`feat:`/`fix:`/`test:`…) with `Change-Id: <id>` and `Task: <n>` trailers, fast-forwarded in merge-queue order                                                               |
-| per task                                    | `change/<id>--<task>` in a worktree                                                                                                                                     | deleted after its fast-forward (`git branch -d`)                                                                                                                                                              |
+| Repo                                        | Branch                                                                                                                                                                  | Commits, in order                                                                                                                                                                                                                                                 |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AI repo                                     | `change/<id>`, created **before design**                                                                                                                                | `docs(spec): <id>` at approval; `docs(spec): reword <id>` for `reword`/`reapprove`. At close: `chore(submodules): bump for <id> [provisional]` (submodule layout), then `chore(spec): archive <id>`. After the upstream merges: `chore(submodules): repoint <id>` |
+| each touched submodule (or the single repo) | `change/<id>`, created from the tracked branch in `.gitmodules` or the default branch, after a fetch; the newer of local and `origin/` wins (also from a detached HEAD) | one Conventional Commit per task (`feat:`/`fix:`/`test:`…) with `Change-Id: <id>` and `Task: <n>` trailers, fast-forwarded in merge-queue order                                                                                                                   |
+| per task                                    | `change/<id>--<task>` in a worktree                                                                                                                                     | deleted after its fast-forward (`git branch -d`)                                                                                                                                                                                                                  |
 
 Every commit is local. You push and open merge requests yourself. Afterwards `ai-factory repoint <id>` fetches each submodule and finds where its change landed upstream: a fast-forward, a merge commit, the `Change-Id` trailer after a rebase merge, or the patch-id of a squash. It then commits the real pointers.
 

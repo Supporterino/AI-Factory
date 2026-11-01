@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { isSpecPath } from "../approval/approval.ts";
 import {
   type ContractResult,
   checkContract,
@@ -149,11 +150,15 @@ export async function contractPhase(p: Pipeline, id: string): Promise<ContractOu
     return { ok: false, added: 0, issues: [reason], reason };
   }
   const findings: Finding[] = (res.handoff.findings ?? []).filter((f) => f.severity !== "nice");
+  const specFindings = findings.filter((f) => isSpecPath(f.file));
+  const codeFindings = findings.filter((f) => !isSpecPath(f.file));
   let added = 0;
   await p.update(id, (d) => {
     d.contractReviewed = true;
     if (res.handoff) d.handoffs["contract-review"] = res.handoff;
-    findings.forEach((f, i) => {
+    // The contract reviewer runs in the workspace root, so its `file` is workspace-relative.
+    d.specFindings.push(...specFindings);
+    codeFindings.forEach((f, i) => {
       const repo =
         p.codeRepos().find((r) => r.path !== "." && f.file?.startsWith(`${r.path}/`)) ??
         p.repo(contracts[0]?.provider ?? "");
@@ -167,5 +172,9 @@ export async function contractPhase(p: Pipeline, id: string): Promise<ContractOu
       added++;
     });
   });
+  if (specFindings.length > 0)
+    p.out(
+      `  ⚐ ${specFindings.length} contract finding${specFindings.length === 1 ? "" : "s"} concern the spec (not code)`,
+    );
   return { ok: true, added, issues: [] };
 }

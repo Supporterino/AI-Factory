@@ -24,6 +24,10 @@ export interface ScriptOptions {
   /** Per-task override of the implementer step; return undefined for the default. */
   readonly implement?: (task: ScriptedTask, call: ScriptCall) => ScriptStep | undefined;
   readonly findings?: Readonly<Record<string, Finding[]>>;
+  /** Findings the contract reviewer reports (workspace-relative `file`). */
+  readonly contractFindings?: readonly Finding[];
+  /** Override for the `reword` architect step; default is a no-op handoff. */
+  readonly reword?: (call: ScriptCall) => ScriptStep;
   /** Test file the tester writes per repo (relative to the repo). */
   readonly testFiles?: Readonly<Record<string, string>>;
   readonly onCall?: (call: ScriptCall) => void | Promise<void>;
@@ -85,6 +89,9 @@ export function factoryScript(opts: ScriptOptions): Script {
       if (prompt.startsWith("Write the OpenSpec change")) {
         return { edits: specFiles(opts.changeId, opts.tasks), handoff: { task: "design" } };
       }
+      if (prompt.startsWith("Revise the OpenSpec change")) {
+        return opts.reword?.(call) ?? { handoff: { task: "reword" } };
+      }
       if (prompt.includes("Write one context pack")) {
         const ids = [...prompt.matchAll(/^- (\S+) \[/gm)].map((m) => m[1] ?? "");
         const edits = Object.fromEntries(
@@ -116,6 +123,11 @@ export function factoryScript(opts: ScriptOptions): Script {
     if (agent === "reviewer") {
       const repo = call.spec.context.repo ?? "";
       return { handoff: { task: `review:${repo}`, findings: opts.findings?.[repo] ?? [] } };
+    }
+    if (agent === "contract-reviewer") {
+      return {
+        handoff: { task: "contract-review", findings: [...(opts.contractFindings ?? [])] },
+      };
     }
     if (agent === "tester") {
       const repo = call.spec.context.repo ?? "";

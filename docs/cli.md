@@ -339,13 +339,36 @@ ai-factory approve <change-id> [--no-continue] [--verbose|--quiet]
 
 Validates the change and commits the spec (`docs(spec): <id>`). Records the approval in `.factory/approvals/<id>.json`: the approver (git `user.email`), the spec commit and a content hash with task checkboxes normalised out. Then it continues automatically: activation, implementation, review and tests, contracts, full suite, close. If another change is active, this one is queued and starts when that one closes. When the pipeline finishes the change, the output ends with `next: ai-factory land <id>`.
 
+`approve` is the initial gate only. Once implementation has started, a spec edit is accepted with `reapprove` (hand edit) or `reword` (architect applies review findings).
+
+Review runs once per touched repo by default. `workflow.reviewRounds` (1–10) raises that: after a round with `must`/`should` code findings, every touched repo gets another reviewer-only pass on the full `base..change/<id>` diff until a pass is clean or the cap is hit. The last fix round always runs; at the cap the remaining findings stay in the report and the pipeline proceeds. The tester still runs once per repo.
+
+## reword
+
+```
+ai-factory reword <change-id> [--finding <n,...>] [--prompt <text>] [--dry-run]
+```
+
+Review findings that point at `openspec/changes/<id>/` cannot be fixed by an implementer, so they do not become tasks. They pause the change and are listed in the pause output (and in the run state as `specFindings`). `reword` runs one architect session over the change folder to apply them. Only wording and clarity may change: the task list (ids, deps, touches and count) must stay as approved, and the architect may not write outside the change folder. On success the result is validated, committed on `change/<id>` as `docs(spec): reword <id>` and the approval is re-stamped with the new commit and hash (same approver; the replaced hash is kept in `history`). A failed, blocked or structural attempt restores the change folder and keeps the findings. Continue with `ai-factory resume <id>`.
+- `--finding <n,...>` applies only the listed findings (1-based, as shown at the pause). The others stay recorded, so the change stays paused and a second `reword` can apply them.
+- `--prompt <text>` adds an instruction for the architect.
+- `--dry-run` runs the architect, shows the diff, then restores the spec and keeps the findings.
+
+## reapprove
+
+```
+ai-factory reapprove <change-id> [--dry-run]
+```
+
+Validates the current spec, commits any edit in `openspec/changes/<id>/` on `change/<id>` (same `docs(spec): reword <id>` subject) and records a new approval: new spec commit and hash, same approver, the old hash kept in `history`. The run's tasks and their progress are kept, unlike `approve`, which reloads the task DAG, so the approved task plan (ids, repos, deps, touches) must not change; start a new change for a new plan. Shows the diff it is accepting. Use it after editing the spec by hand; use `reword` to let the architect apply review findings. `--dry-run` validates and shows the diff without committing or re-stamping.
+
 ## resume
 
 ```
 ai-factory resume <change-id> [--verbose|--quiet]
 ```
 
-Continues a paused, aborted, interrupted or queued change from its last consistent state. The spec is re-checked against its approval first, and any edit other than a task checkbox voids the approval. A run that reaches `done` ends with `next: ai-factory land <id>`. A change that is already done prints the same hint: `land` deletes the run state, so a `done` state means it has not been landed yet.
+Continues a paused, aborted, interrupted or queued change from its last consistent state. The spec is re-checked against its approval first, and any edit other than a task checkbox voids the approval (`reapprove` accepts an intended edit). A change paused on spec findings stays paused until `reword` or `reapprove` clears them. A run that reaches `done` ends with `next: ai-factory land <id>`. A change that is already done prints the same hint: `land` deletes the run state, so a `done` state means it has not been landed yet.
 
 ## graph
 

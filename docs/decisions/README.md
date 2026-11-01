@@ -42,3 +42,5 @@ Short ADRs for every choice the build prompt did not lock. Format: Context / Dec
 | [0036](0036-agent-raised-clarification.md)      | Agent-raised clarification during intake and design                |
 | [0037](0037-opencode-credential-bridge.md)      | Stored opencode credentials for the private server                 |
 | [0038](0038-adopting-existing-changes.md)       | Adopting existing OpenSpec changes                                 |
+| [0039](0039-spec-findings-and-reapproval.md)    | Spec findings and re-approval after implementation starts          |
+| [0040](0040-review-loop.md)                     | Re-reviewing after a fix round                                     |
