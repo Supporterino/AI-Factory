@@ -97,6 +97,7 @@ export async function review(
           title: `${id} review ${name} round ${round}`,
           step: `review:${name}`,
           prompt: reviewPrompt({
+            id,
             repo,
             base,
             head: changeBranch(id),
@@ -130,6 +131,7 @@ export async function review(
                 deps: [],
                 touches: ["**"],
                 kind: "review-fix",
+                finding: f,
               })
             )
               added++;

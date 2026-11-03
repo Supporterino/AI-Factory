@@ -140,6 +140,7 @@ export async function contractPhase(p: Pipeline, id: string): Promise<ContractOu
     title: `${id} contract review`,
     step: "contract-review",
     prompt: contractReviewPrompt({
+      id,
       contracts: results.map((r) => ({ key: r.key, summary: summarize(r) })),
       diffs,
     }),

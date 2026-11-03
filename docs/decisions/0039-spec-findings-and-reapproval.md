@@ -19,3 +19,5 @@ The other half is the approval itself. `approve` is the initial gate and refuses
 - Wording can change, but the task plan cannot: adding or changing tasks after approval needs a new change.
 - Approvals gain an optional `history` array; older records remain valid, and the plugin only reads `hash`.
 - The final report still lists every finding, including resolved spec findings, via the harvested handoffs.
+
+**Follow-up: the reviewer must point at the spec.** Path classification only works when the reviewer sets `file` to the spec. The reviewer and contract-reviewer prompts now say: when the fix is a wording change in `openspec/changes/<id>/`, use that path (and line), never the code file where the mismatch shows. `review-fix` tasks also keep their source `Finding` on the task state. If such a task blocks with a reason naming `openspec` anyway, the factory moves that finding into `specFindings`, drops the impossible task (and its worktree/branch) and pauses with `specPauseReason`. This is a fallback, not a second approval path: `reword`/`reapprove` still decide the wording. A blocked task of any other kind is unchanged.

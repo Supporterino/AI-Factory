@@ -66,6 +66,8 @@ export const TaskState = z.strictObject({
   commit: z.string().optional(),
   /** Merge sequence number of this task's merge (graph coverage, ADR-0007). */
   mergeSeq: z.int().min(0).optional(),
+  /** The review finding a follow-up task was created from (blocked-fix spec routing). */
+  finding: Finding.optional(),
   /** Compacted output of the last failed gate run; fed back on the next attempt. */
   lastGateOutput: z.string().optional(),
   lastError: z.string().optional(),

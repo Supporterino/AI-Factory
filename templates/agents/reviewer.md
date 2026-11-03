@@ -22,3 +22,5 @@ Only report what you verified in the code. Do not report formatting or lint issu
 ## Output
 
 Every problem becomes one entry in `findings` with `severity` (`must` = breaks a scenario, security or contract; `should` = real risk; `nice` = cleanup), `file`, `line`, `what` the code does, the `problem`, the `fix` and the `impact` if skipped. Use `task: "review:<repo>"`; `status: "done"` even when you report findings.
+
+A finding whose fix is a wording change in this change's proposal, design or specs (`openspec/changes/<id>/`) must set `file` to that spec path (and `line` when known), never to the code file where the mismatch shows. When code and spec disagree, flag the side that must change. The factory sends spec-path findings to the architect and code-path findings to an implementer.

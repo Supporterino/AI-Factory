@@ -181,6 +181,18 @@ async function step(p: Pipeline, id: string): Promise<Step> {
         if (p.abortRequested(id)) return stop(await stopAborted(p, id));
         return stop({ id, phase: p.run(id).phase, detail: "interrupted" });
       }
+      const specs = p.run(id).specFindings;
+      if (specs.length > 0) {
+        const failed = summary.failed.length > 0 ? `failed: ${summary.failed.join(", ")}; ` : "";
+        const reason = `${failed}${specPauseReason(id, specs.length)}`;
+        await setPhase(p, id, "paused", reason);
+        const report = summary.status === "paused" ? writePauseReport(p, id, summary) : undefined;
+        return stop({
+          id,
+          phase: "paused",
+          detail: report === undefined ? reason : `${reason}; report: ${report}`,
+        });
+      }
       if (summary.status === "paused") {
         const report = writePauseReport(p, id, summary);
         const failed = summary.failed.length > 0 ? `failed: ${summary.failed.join(", ")}; ` : "";

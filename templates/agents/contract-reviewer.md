@@ -17,3 +17,5 @@ The task message lists the contracts touched, each provider and consumer diff, a
 ## Output
 
 One `findings` entry per real mismatch (`severity: must` if it breaks a consumer). Use `task: "contract-review"`. If nothing is wrong, return no findings and say what you checked under `decisions`.
+
+A finding whose fix is a wording change in `openspec/changes/<id>/` must set `file` to that workspace-relative spec path instead of the code file where the mismatch shows. The factory sends spec-path findings to the architect and code-path findings to an implementer.
