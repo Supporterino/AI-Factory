@@ -39,6 +39,20 @@ const finding: Finding = {
   impact: "A regression would go unnoticed.",
 };
 
+const specWordingFinding: Finding = {
+  severity: "should",
+  file: "src/mul.ts",
+  line: 1,
+  what: "The helper returns the product.",
+  problem: "The change's spec and design still describe the old wording.",
+  fix: "Reword the spec and design to match the code.",
+  impact: "The approved spec disagrees with the implementation.",
+};
+
+const SPEC = `openspec/changes/${ID}/specs/health/spec.md`;
+const REWORDED_SPEC =
+  "## ADDED Requirements\n\n### Requirement: Health endpoint\nThe service SHALL expose GET /health returning 200 with body status ok.\n\n#### Scenario: Healthy service\n- **WHEN** a client calls GET /health\n- **THEN** the response is 200 with body status ok\n";
+
 async function configure(
   root: string,
   options: { reviewRounds?: number; gates?: Record<string, unknown> },
@@ -139,6 +153,75 @@ describe("review loop: single repo", () => {
     expect(reviews.get("app")).toBe(1);
     expect(tests.get("app")).toBe(1);
     expect(run?.tasks.some((t) => t.kind === "review-fix")).toBe(true);
+  });
+
+  test("a blocked implementation task still fails even when it names openspec", async () => {
+    const team = factoryScript({
+      changeId: ID,
+      summary: "Math helpers",
+      repos: ["app"],
+      tasks: TASKS,
+      implement: () => ({
+        handoff: {
+          status: "blocked",
+          task: "1.1",
+          risks: [`${SPEC} needs a human decision`],
+        },
+      }),
+    });
+    const runtime = new ScriptedRuntime(team);
+    await cliWith(runtime, fx.root, "run", "Add math helpers");
+    expect((await cliWith(runtime, fx.root, "approve", ID)).code).toBe(ExitCode.Paused);
+
+    const paused = loadRun(fx.root, ID);
+    expect(paused?.specFindings).toHaveLength(0);
+    expect(paused?.tasks.find((t) => t.id === "1.1")?.status).toBe("failed");
+    expect(paused?.pausedReason).toContain("failed: 1.1");
+  });
+
+  test("a blocked review-fix that names openspec becomes a spec finding", async () => {
+    await configure(fx.root, { reviewRounds: 2 });
+    let reviews = 0;
+    const team = factoryScript({
+      changeId: ID,
+      summary: "Math helpers",
+      repos: ["app"],
+      tasks: TASKS,
+      reword: () => ({ edits: { [SPEC]: REWORDED_SPEC }, handoff: { task: "reword" } }),
+    });
+    const runtime = new ScriptedRuntime((call) => {
+      if (call.agent === "reviewer") {
+        reviews++;
+        const findings = reviews === 1 ? [specWordingFinding] : [];
+        return { handoff: { task: `review:${call.spec.context.repo}`, findings } };
+      }
+      if (call.agent.startsWith("implementer-") && call.prompt.startsWith("Task fix-app-1-1:")) {
+        return {
+          handoff: {
+            status: "blocked",
+            task: "fix-app-1-1",
+            risks: [`${SPEC} and design.md need the wording change`],
+            openQuestions: ["can the architect apply it?"],
+          },
+        };
+      }
+      return team(call);
+    });
+
+    await cliWith(runtime, fx.root, "run", "Add math helpers");
+    expect((await cliWith(runtime, fx.root, "approve", ID)).code).toBe(ExitCode.Paused);
+
+    const paused = loadRun(fx.root, ID);
+    expect(paused?.phase).toBe("paused");
+    expect(paused?.specFindings).toHaveLength(1);
+    expect(paused?.pausedReason).toContain(`ai-factory reword ${ID}`);
+    expect(paused?.tasks.some((t) => t.id === "fix-app-1-1")).toBe(false);
+    expect(paused?.tasks.some((t) => t.status === "failed")).toBe(false);
+
+    expect((await cliWith(runtime, fx.root, "reword", ID)).code).toBe(ExitCode.Ok);
+    expect(loadRun(fx.root, ID)?.specFindings).toHaveLength(0);
+    expect((await cliWith(runtime, fx.root, "resume", ID)).code).toBe(ExitCode.Ok);
+    expect(loadRun(fx.root, ID)?.phase).toBe("done");
   });
 });
 
