@@ -211,6 +211,7 @@ Resolve every conflict so both changes are kept and correct. Remove all conflict
 }
 
 export function reviewPrompt(input: {
+  id: string;
   repo: RepoConfig;
   base: string;
   head: string;
@@ -227,6 +228,8 @@ Standards in force: ${input.profiles.join(", ") || "none"} (the full standards a
 ${instructions}
 Spec of the change:
 ${input.spec}
+
+If a finding's fix is a wording change in this change's proposal, design or specs (\`openspec/changes/${input.id}/\`), set \`file\` to that spec path and \`line\`, not the code file where the mismatch shows. Those findings pause the change for the architect; code findings become implementer tasks.
 
 Use \`task: "review:${input.repo.name}"\`.`;
 }
@@ -330,6 +333,7 @@ Use \`task: "quick-review"\` and the normal findings handoff.`;
 }
 
 export function contractReviewPrompt(input: {
+  id: string;
   contracts: readonly { key: string; summary: string }[];
   diffs: readonly string[];
 }): string {
@@ -339,5 +343,5 @@ ${input.contracts.map((c) => c.summary).join("\n")}
 Read the provider and consumer changes (run these from the workspace root):
 ${input.diffs.map((d) => `- \`${d}\``).join("\n")}
 
-Report only real mismatches between providers and consumers as findings, with \`file\` as a workspace-relative path. Use \`task: "contract-review"\`.`;
+Report only real mismatches between providers and consumers as findings, with \`file\` as a workspace-relative path. If a finding's fix is a wording change in \`openspec/changes/${input.id}/\`, set \`file\` to that spec path instead of the code file where the mismatch shows. Use \`task: "contract-review"\`.`;
 }

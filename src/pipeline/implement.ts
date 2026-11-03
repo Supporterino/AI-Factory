@@ -26,6 +26,7 @@ import { changeBranch, currentBranch, ensureClean, refExists } from "../git/repo
 import { addTaskWorktree, taskBranch, worktreePath } from "../git/worktrees.ts";
 import { updateGraph } from "../graph/graph.ts";
 import { GraphUpdater } from "../graph/updater.ts";
+import type { Finding } from "../handoff/schema.ts";
 import { appendLog } from "../logs/log.ts";
 import { auditChanges, type SessionContext } from "../policy/scope.ts";
 import { profilesFor } from "../profiles/index.ts";
@@ -591,6 +592,53 @@ export class PipelineTaskRunner implements TaskRunner {
   }
 }
 
+const findingKey = (f: Finding): string => `${f.file ?? ""}:${f.line ?? ""}:${f.problem}`;
+
+/**
+ * A review-fix task that blocks because the real fix belongs to the spec is not a code
+ * failure: the reviewer pointed at a code file but asked for a wording change the implementer
+ * may not make. Move its finding to `specFindings`, drop the impossible task (so a later
+ * `resume` cannot dead-end on it), and let the caller pause for `reword`/`reapprove`.
+ */
+async function routeBlockedSpecFixes(
+  p: Pipeline,
+  id: string,
+  runner: PipelineTaskRunner,
+): Promise<ReadonlySet<string>> {
+  const run = p.run(id);
+  const routed = run.tasks.filter(
+    (t) =>
+      t.status === "failed" &&
+      t.kind === "review-fix" &&
+      t.finding !== undefined &&
+      /\bopenspec\b/i.test(t.lastError ?? ""),
+  );
+  if (routed.length === 0) return new Set();
+  const ids = new Set(routed.map((t) => t.id));
+  for (const task of routed) {
+    await runner.reset(task);
+    appendLog(p.root, id, {
+      kind: "spec-routed",
+      task: task.id,
+      reason: task.lastError ?? "",
+      finding: task.finding,
+    });
+  }
+  await p.update(id, (d) => {
+    const seen = new Set(d.specFindings.map(findingKey));
+    for (const task of routed) {
+      const finding = task.finding;
+      if (finding === undefined) continue;
+      const key = findingKey(finding);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      d.specFindings.push(finding);
+    }
+    d.tasks = d.tasks.filter((t) => !ids.has(t.id));
+  });
+  return ids;
+}
+
 /** §7 step 6–7: run the task DAG until every task merged, or the change pauses. */
 export async function implement(p: Pipeline, id: string): Promise<RunSummary> {
   const run = loadRun(p.root, id);
@@ -615,6 +663,7 @@ export async function implement(p: Pipeline, id: string): Promise<RunSummary> {
   );
   // After a crash, merges the graph has not seen yet are covered first.
   if (run.mergeSeq > run.graphSeq) graph.request(run.mergeSeq);
+  const runner = new PipelineTaskRunner(p, id, graph);
   const scheduler = new Scheduler({
     root: p.root,
     id,
@@ -623,22 +672,35 @@ export async function implement(p: Pipeline, id: string): Promise<RunSummary> {
     ...(p.config.parallel.withinRepo === "serial"
       ? { serialRepos: p.codeRepos().map((r) => r.name) }
       : {}),
-    runner: new PipelineTaskRunner(p, id, graph),
+    runner,
     signal: p.deps.signal,
     observe: (event) => p.progress.task(event),
   });
   const summary = await scheduler.run();
   // Reviews and later tasks read the graph; let the last update finish.
   await graph.idle();
+  const routed =
+    summary.status === "aborted" ? new Set<string>() : await routeBlockedSpecFixes(p, id, runner);
+  const remaining = p.run(id).tasks;
+  const merged = remaining.filter((t) => t.status === "merged").map((t) => t.id);
+  const adjusted: RunSummary =
+    summary.status === "aborted"
+      ? summary
+      : {
+          ...summary,
+          status: remaining.every((t) => t.status === "merged") ? "complete" : "paused",
+          merged,
+          failed: summary.failed.filter((taskId) => !routed.has(taskId)),
+        };
   p.progress.implementSummary(
     {
-      merged: summary.merged.length,
-      failed: summary.failed.length,
-      cancelled: summary.cancelled.length,
-      pending: summary.pending.length,
-      total: p.run(id).tasks.length,
+      merged: adjusted.merged.length,
+      failed: adjusted.failed.length,
+      cancelled: adjusted.cancelled.length,
+      pending: adjusted.pending.length,
+      total: remaining.length,
     },
     p.progress.now() - started,
   );
-  return summary;
+  return adjusted;
 }
