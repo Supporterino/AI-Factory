@@ -1,5 +1,5 @@
 /** Must equal "version" in package.json (checked by a test). */
-export const FACTORY_VERSION = "0.11.1";
+export const FACTORY_VERSION = "0.12.0";
 
 /** Must equal "name" in package.json (checked by a test). The CLI command is `ai-factory`. */
 export const PACKAGE_NAME = "@supporterino/ai-factory";
